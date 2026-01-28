@@ -1,0 +1,18 @@
+{
+  "name": "groundwork",
+  "description": "Comprehensive skills library for Claude Code: planning, design, TDD, debugging, collaboration patterns, and proven techniques",
+  "version": "1.0.0",
+  "author": {
+    "name": "Groundwork Contributors"
+  },
+  "license": "MIT",
+  "keywords": ["skills", "planning", "design", "tdd", "debugging", "collaboration", "best-practices", "workflows"],
+  "homepage": "https://github.com/anthropics/groundwork",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/anthropics/groundwork.git"
+  },
+  "bugs": {
+    "url": "https://github.com/anthropics/groundwork/issues"
+  }
+}

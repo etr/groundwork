@@ -1,0 +1,46 @@
+name: Test
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run tests
+        run: bash tests/run-tests.sh
+
+      - name: Validate plugin
+        run: node lib/validate-plugin.js
+
+      - name: Check shell scripts syntax
+        run: |
+          for script in hooks/*.sh skills/*/hooks/*.sh skills/*/agents/*.sh; do
+            if [ -f "$script" ]; then
+              echo "Checking: $script"
+              bash -n "$script"
+            fi
+          done
+
+      - name: Check JSON validity
+        run: |
+          for json in hooks/hooks.json .claude-plugin/plugin.json skills/*/config.json; do
+            if [ -f "$json" ]; then
+              echo "Checking: $json"
+              node -e "JSON.parse(require('fs').readFileSync('$json', 'utf8'))"
+            fi
+          done
