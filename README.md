@@ -252,9 +252,6 @@ This plugin consolidates work from multiple sources:
 ### Core Foundation
 - **[superpowers](https://github.com/obra/superpowers)** by Jesse Vincent - Base structure, 14 skills, 3 commands, 1 agent, hooks, lib (MIT License)
 
-### Architecture & Planning
-- **architecture-to-tasks-workflow** - 5 skills (product-design, architecture, tasks, sync-specs, sync-architecture)
-
 ### Official Claude Plugins
 - **[claude-plugins-official](https://github.com/anthropics/claude-plugins-official)** by Anthropic
   - code-review plugin
