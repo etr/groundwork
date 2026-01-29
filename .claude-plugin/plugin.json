@@ -7,12 +7,6 @@
   },
   "license": "MIT",
   "keywords": ["skills", "planning", "design", "tdd", "debugging", "collaboration", "best-practices", "workflows"],
-  "homepage": "https://github.com/anthropics/groundwork",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/anthropics/groundwork.git"
-  },
-  "bugs": {
-    "url": "https://github.com/anthropics/groundwork/issues"
-  }
+  "homepage": "https://github.com/etr/groundwork",
+  "repository": "https://github.com/etr/groundwork"
 }
