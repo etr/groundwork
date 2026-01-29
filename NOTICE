@@ -11,12 +11,7 @@ License: MIT
 
 Components used:
 - Base plugin structure
-- 14 skills (brainstorming, writing-plans, executing-plans, dispatching-parallel-agents,
-  subagent-driven-development, using-git-worktrees, finishing-a-development-branch,
-  receiving-code-review, requesting-code-review, verification-before-completion,
-  writing-skills, systematic-debugging, test-driven-development, using-superpowers)
-- 1 agent (plan-reviewer)
-- 3 commands (brainstorm, write-plan, execute-plan)
+- test-driven-development skill (substantially modified with merged tdd-workflow)
 - Hooks and lib files
 
 ================================================================================
@@ -27,29 +22,3 @@ License: MIT
 
 Components used:
 - code-review plugin (code-review command)
-- code-simplifier plugin (code-simplifier agent)
-- claude-md-management plugin (claude-md-improver skill, revise-claude-md command)
-- frontend-design plugin (frontend-design skill)
-- pr-review-toolkit plugin (6 agents: standards-reviewer, code-simplifier, comment-analyzer,
-  pr-test-analyzer, silent-failure-hunter, type-design-analyzer; review-pr command)
-- security-guidance plugin (security_reminder_hook.py)
-
-================================================================================
-everything-claude-code
-License: MIT
-
-Components used:
-- continuous-learning skill (v1 and v2 combined)
-- tdd-workflow skill (merged into test-driven-development)
-- strategic-compact skill
-- iterative-retrieval skill
-- suggest-compact.js hook
-
-================================================================================
-superpowers-skills
-License: MIT
-
-Components used:
-- Problem-solving skills (when-stuck, collision-zone-thinking, inversion-exercise,
-  meta-pattern-recognition, scale-game, simplification-cascades)
-- testing-anti-patterns skill

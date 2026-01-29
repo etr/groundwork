@@ -97,7 +97,7 @@ Mark with:
 3. Verify Claude follows the workflow
 4. Adjust based on results
 
-Use the `writing-skills` skill for a TDD approach to skill development.
+Use the `test-driven-development` skill as a model for disciplined skill development.
 
 ## Personal Skills
 

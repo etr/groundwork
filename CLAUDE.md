@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Groundwork is a Claude Code plugin that provides a skills library for structured development workflows. It contains 30+ skills, 7 agents, 14 commands, and hooks for planning, TDD, debugging, code review, and problem-solving.
+Groundwork is a Claude Code plugin that provides a skills library for structured development workflows. It contains 10 skills and 13 commands for planning, TDD, debugging, and synchronization.
 
 ## Project Structure
 
@@ -14,10 +14,9 @@ This is a **Claude Code plugin**, not a traditional software project. No build s
 groundwork/
 ├── .claude-plugin/plugin.json  # Plugin manifest
 ├── skills/                     # Markdown-based workflow skills (SKILL.md files)
-├── agents/                     # Specialized review agents (plan-adherence-reviewer, etc.)
 ├── commands/                   # User-invoked slash commands
-├── hooks/                      # Event-driven automation (SessionStart, PreToolUse)
-├── lib/skills-core.js          # Skill file parsing utilities
+├── hooks/                      # Event-driven automation (SessionStart, PreCompact)
+├── lib/                        # JavaScript utilities
 └── docs/                       # Documentation templates
 ```
 
@@ -34,16 +33,6 @@ requires: optional-skill-1, optional-skill-2
 ```
 
 The optional `requires` field declares skill dependencies. These are validated by `lib/validate-plugin.js`.
-
-### Agents (`agents/<name>.md`)
-```markdown
----
-name: agent-name
-description: "Detailed description with usage examples"
-model: inherit
----
-[Agent system prompt]
-```
 
 ### Commands (`commands/<name>.md`)
 ```markdown
@@ -73,9 +62,6 @@ argument-hint: "[optional-args]"
 
 The plugin uses these hook events:
 - **SessionStart**: Loads skill context, checks for updates, detects project state
-- **PreToolUse (Edit/Write)**: Security reminders and compaction suggestions
-- **PostToolUse**: Continuous learning observation (enabled by default)
-- **Stop**: Session evaluation for learning patterns (enabled by default)
 - **PreCompact**: Preserves skill state before context compaction
 
 ## Key Architectural Patterns
@@ -96,10 +82,10 @@ Hooks are defined in `hooks/hooks.json` and use `${CLAUDE_PLUGIN_ROOT}` for port
 | `lib/skills-core.js` | Skill discovery, frontmatter parsing, path resolution |
 | `lib/validate-plugin.js` | Plugin validation (frontmatter, references, permissions) |
 | `lib/check-updates.js` | Git-based update checking (throttled to 1x/day) |
+| `lib/frontmatter.js` | YAML frontmatter parsing utilities |
 
 ## External Dependencies
 
 - `git` - Repository operations
 - `gh` - GitHub CLI for PR workflows
 - `node` - JavaScript runtime (for hooks and lib)
-- `python3` - Security reminder hook

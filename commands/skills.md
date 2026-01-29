@@ -34,14 +34,10 @@ Group skills into categories based on keywords in their names/descriptions:
 
 | Category | Keywords |
 |----------|----------|
-| Planning & Design | plan, design, product, architecture, task, brainstorm |
-| Implementation | implement, develop, agent, parallel, worktree, execute |
-| Testing & Debugging | test, debug, verification, anti-pattern, root-cause |
-| Code Review | review, receiving, requesting |
-| Maintenance & Sync | sync, finish, branch, claude-md, alignment, check |
-| Learning & Context | learning, continuous, compact, retrieval, iterative |
-| Problem-Solving | stuck, collision, inversion, pattern, scale, simplif |
-| Meta & Design | using, writing-skills, frontend |
+| Planning & Design | plan, design, product, architecture, task |
+| Testing & Debugging | test, debug, root-cause |
+| Maintenance & Sync | sync, alignment, check, verify |
+| Meta | using |
 
 If a skill doesn't match any category, place it in "Other".
 
@@ -69,10 +65,6 @@ Invoke a skill using the Skill tool or slash command:
 - `Skill: skill-name`
 - `/skill-name` (if command exists)
 
-## Agents
-
-Also discover and list agents from the `agents/` directory.
-
 ## Commands
 
 Run `/help` to see all available slash commands.
@@ -86,25 +78,19 @@ Run `/help` to see all available slash commands.
 ## Planning & Design
 | Skill | Description |
 |-------|-------------|
-| `task-brainstorm` | Use when exploring ideas collaboratively |
-| `writing-plans` | Use when you have a spec or requirements |
 | `product-design` | Use when defining product requirements |
+| `architecture` | Use when designing technical approach |
+| `tasks` | Use when generating implementation tasks |
 
 ## Testing & Debugging
 | Skill | Description |
 |-------|-------------|
 | `test-driven-development` | Use when implementing any feature |
-| `systematic-debugging` | Use when encountering any bug |
+| `root-cause-tracing` | Use when debugging issues |
 
 ---
 
-**Total:** 34 skills available
-
-## Agents
-
-- `plan-adherence-reviewer` - Review code against plan and requirements
-- `standards-reviewer` - Review code against project standards
-- `silent-failure-hunter` - Find silent failures in error handling
+**Total:** 10 skills available
 
 ## Commands
 

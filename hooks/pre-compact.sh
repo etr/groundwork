@@ -62,15 +62,6 @@ if [ -f "$SKILL_CONTEXT_FILE" ]; then
   fi
 fi
 
-# Check for continuous learning observations
-OBS_FILE="${HOME}/.claude/homunculus/observations.jsonl"
-if [ -f "$OBS_FILE" ]; then
-  OBS_COUNT=$(wc -l < "$OBS_FILE" 2>/dev/null || echo "0")
-  if [ "$OBS_COUNT" -gt 0 ]; then
-    CONTEXT_ITEMS+=("Observations pending analysis: $OBS_COUNT")
-  fi
-fi
-
 # Build additional context for compaction
 if [ ${#CONTEXT_ITEMS[@]} -gt 0 ]; then
   CONTEXT_STR=$(printf "%s\n" "${CONTEXT_ITEMS[@]}" | tr '\n' '; ')

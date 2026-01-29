@@ -61,7 +61,7 @@ try:
             issues.append(f"Agent output contains error indicator matching: {pattern}")
 
     # 3. Check if review agents provided a verdict
-    if agent_type in ["code-reviewer", "plan-adherence-reviewer", "spec-reviewer"]:
+    if agent_type in ["code-reviewer", "spec-reviewer"]:
         has_verdict = any(v in output_lower for v in ["approved", "rejected", "issues:", "compliant", "non-compliant"])
         if not has_verdict:
             issues.append("Review agent may be missing clear verdict (approved/rejected)")

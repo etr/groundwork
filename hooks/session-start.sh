@@ -18,16 +18,6 @@ main() {
   SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
   PLUGIN_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-# ============================================
-# Auto-Setup: Create required directories
-# ============================================
-HOMUNCULUS_DIR="${HOME}/.claude/homunculus"
-mkdir -p "${HOMUNCULUS_DIR}/instincts/personal" 2>/dev/null || true
-mkdir -p "${HOMUNCULUS_DIR}/instincts/inherited" 2>/dev/null || true
-mkdir -p "${HOMUNCULUS_DIR}/evolved/agents" 2>/dev/null || true
-mkdir -p "${HOMUNCULUS_DIR}/evolved/skills" 2>/dev/null || true
-mkdir -p "${HOMUNCULUS_DIR}/evolved/commands" 2>/dev/null || true
-
 # State directory for session restoration
 STATE_DIR="${HOME}/.claude/groundwork-state"
 mkdir -p "$STATE_DIR" 2>/dev/null || true
@@ -42,7 +32,7 @@ if ! command -v node &> /dev/null; then
 fi
 
 if ! command -v python3 &> /dev/null; then
-  missing_deps="${missing_deps}\n- python3 (required for security hook)"
+  missing_deps="${missing_deps}\n- python3 (required for validation hooks)"
 fi
 
 # gh is optional but recommended
@@ -75,167 +65,6 @@ if [ -f "${PLUGIN_ROOT}/lib/check-updates.js" ]; then
     update_notice="\n\n**Plugin Update Available:** Run \`git pull\` in the groundwork plugin directory to get the latest features and fixes."
   fi
 fi
-
-# ============================================
-# Observations Analysis (Auto-triggered)
-# ============================================
-obs_notice=""
-OBS_FILE="${HOMUNCULUS_DIR}/observations.jsonl"
-LAST_ANALYSIS="${HOMUNCULUS_DIR}/.last-analysis"
-ANALYSIS_THRESHOLD=30
-
-if [ -f "$OBS_FILE" ] && [ -s "$OBS_FILE" ]; then
-  obs_count=$(wc -l < "$OBS_FILE" 2>/dev/null || echo "0")
-
-  # Check if analysis is needed (threshold reached and not analyzed recently)
-  should_analyze=false
-  if [ "$obs_count" -ge "$ANALYSIS_THRESHOLD" ]; then
-    if [ ! -f "$LAST_ANALYSIS" ]; then
-      should_analyze=true
-    else
-      # Check if last analysis was more than 1 hour ago
-      last_analysis_time=$(stat -c %Y "$LAST_ANALYSIS" 2>/dev/null || stat -f %m "$LAST_ANALYSIS" 2>/dev/null || echo "0")
-      current_time=$(date +%s)
-      time_diff=$((current_time - last_analysis_time))
-      if [ "$time_diff" -gt 3600 ]; then
-        should_analyze=true
-      fi
-    fi
-  fi
-
-  # Run analysis in background if needed
-  if [ "$should_analyze" = true ] && [ -f "${PLUGIN_ROOT}/lib/analyze-observations.js" ]; then
-    (node "${PLUGIN_ROOT}/lib/analyze-observations.js" > /dev/null 2>&1 &)
-    obs_notice="\n\n**Analyzing ${obs_count} observations** for patterns..."
-  elif [ "$obs_count" -gt 100 ]; then
-    obs_notice="\n\n**Note:** ${obs_count} observations collected. Run /instinct-status --analyze to process them."
-  fi
-fi
-
-# ============================================
-# Evolved Components Available
-# ============================================
-evolved_notice=""
-evolved_dir="${HOMUNCULUS_DIR}/evolved"
-evolved_count=0
-for type in skills commands agents; do
-  if [ -d "${evolved_dir}/${type}" ]; then
-    count=$(find "${evolved_dir}/${type}" -name "*.md" -o -name "SKILL.md" 2>/dev/null | wc -l)
-    evolved_count=$((evolved_count + count))
-  fi
-done
-
-if [ "$evolved_count" -gt 0 ]; then
-  evolved_notice="\n\n**${evolved_count} evolved components available.** Run /evolve --status to see them or copy to ~/.claude/ to activate."
-fi
-
-# ============================================
-# Load and Inject Active Instincts
-# ============================================
-instincts_context=""
-PROJECT_DIR="${PWD}"
-MIN_CONFIDENCE=0.5
-
-# Use Node.js helper for proper YAML frontmatter parsing
-if [ -f "${PLUGIN_ROOT}/lib/load-instincts.js" ] && command -v node &> /dev/null; then
-  # Build directory arguments with labels
-  INSTINCT_DIRS=""
-  [ -d "${HOMUNCULUS_DIR}/instincts/personal" ] && INSTINCT_DIRS="${INSTINCT_DIRS} ${HOMUNCULUS_DIR}/instincts/personal:personal"
-  [ -d "${HOMUNCULUS_DIR}/instincts/inherited" ] && INSTINCT_DIRS="${INSTINCT_DIRS} ${HOMUNCULUS_DIR}/instincts/inherited:inherited"
-  [ -d "${PROJECT_DIR}/.claude/instincts" ] && INSTINCT_DIRS="${INSTINCT_DIRS} ${PROJECT_DIR}/.claude/instincts:project"
-
-  if [ -n "$INSTINCT_DIRS" ]; then
-    # Load instincts via Node helper and format for display
-    INSTINCTS_JSON=$(node "${PLUGIN_ROOT}/lib/load-instincts.js" $INSTINCT_DIRS --min-confidence=$MIN_CONFIDENCE 2>/dev/null || echo "[]")
-
-    # Format instincts for context injection
-    instincts_context=$(echo "$INSTINCTS_JSON" | python3 -c '
-import json
-import sys
-
-try:
-    instincts = json.load(sys.stdin)
-    for i in instincts:
-        conf = i.get("confidence", 0.5)
-        print(f"- **{i[\"id\"]}** ({i[\"source\"]}, {conf}): {i[\"trigger\"]} → {i[\"action\"]}")
-except:
-    pass
-' 2>/dev/null || echo "")
-  fi
-fi
-
-# Build instincts notice
-project_instincts_notice=""
-if [ -n "$instincts_context" ]; then
-  # Count loaded instincts
-  instinct_count=$(echo -e "$instincts_context" | grep -c "^\-" || echo "0")
-  project_instincts_notice="\n\n**Active Instincts (${instinct_count}):** These learned patterns should guide your behavior:\n${instincts_context}"
-elif [ -d "${PROJECT_DIR}/.claude/instincts" ]; then
-  project_instinct_count=$(find "${PROJECT_DIR}/.claude/instincts" -name "*.md" 2>/dev/null | wc -l)
-  if [ "$project_instinct_count" -gt 0 ]; then
-    project_instincts_notice="\n\n**${project_instinct_count} project-specific instincts found** (below confidence threshold). Run /instinct-status to see all."
-  fi
-fi
-
-# ============================================
-# New Instinct Notification
-# ============================================
-new_instinct_notice=""
-INSTINCT_CHECK_FILE="${STATE_DIR}/.instinct-notification-last-check"
-
-# Get last check timestamp (default to 0 if never checked)
-last_instinct_check=0
-if [ -f "$INSTINCT_CHECK_FILE" ]; then
-  last_instinct_check=$(cat "$INSTINCT_CHECK_FILE" 2>/dev/null || echo "0")
-fi
-
-# Find new instinct files (created after last check)
-new_instincts=()
-for dir in personal inherited; do
-  instinct_dir="${HOMUNCULUS_DIR}/instincts/${dir}"
-  if [ -d "$instinct_dir" ]; then
-    while IFS= read -r file; do
-      if [ -n "$file" ]; then
-        if [[ "$OSTYPE" == "darwin"* ]]; then
-          file_time=$(stat -f "%m" "$file" 2>/dev/null || echo "0")
-        else
-          file_time=$(stat -c "%Y" "$file" 2>/dev/null || echo "0")
-        fi
-        if [ "$file_time" -gt "$last_instinct_check" ]; then
-          instinct_name=$(basename "$file" .md)
-          new_instincts+=("$instinct_name")
-        fi
-      fi
-    done < <(find "$instinct_dir" -name "*.md" -type f 2>/dev/null)
-  fi
-done
-
-# Also check project-specific instincts
-if [ -d "${PROJECT_DIR}/.claude/instincts" ]; then
-  while IFS= read -r file; do
-    if [ -n "$file" ]; then
-      if [[ "$OSTYPE" == "darwin"* ]]; then
-        file_time=$(stat -f "%m" "$file" 2>/dev/null || echo "0")
-      else
-        file_time=$(stat -c "%Y" "$file" 2>/dev/null || echo "0")
-      fi
-      if [ "$file_time" -gt "$last_instinct_check" ]; then
-        instinct_name=$(basename "$file" .md)
-        new_instincts+=("${instinct_name} (project)")
-      fi
-    fi
-  done < <(find "${PROJECT_DIR}/.claude/instincts" -name "*.md" -type f 2>/dev/null)
-fi
-
-# Build new instinct notice if any found
-if [ ${#new_instincts[@]} -gt 0 ]; then
-  instinct_list=$(printf ", %s" "${new_instincts[@]}")
-  instinct_list="${instinct_list:2}"  # Remove leading ", "
-  new_instinct_notice="\n\n**New instincts discovered:** ${instinct_list}. Run /instinct-status to see all instincts."
-fi
-
-# Update last check timestamp
-echo "$(date +%s)" > "$INSTINCT_CHECK_FILE" 2>/dev/null || true
 
 # ============================================
 # Session State Restoration
@@ -288,13 +117,8 @@ else
     specs_notice="\n\n**Getting started:** Run /product-design to define your product requirements."
 fi
 
-# Add gh warning, update notice, observations, evolved components, project instincts, new instincts, and restored state if applicable
-specs_notice="${specs_notice}${gh_warning}${update_notice}${obs_notice}${evolved_notice}${project_instincts_notice}${new_instinct_notice}${restored_state}"
-
-# ============================================
-# Load using-groundwork skill content
-# ============================================
-using_groundwork_content=$(cat "${PLUGIN_ROOT}/skills/using-groundwork/SKILL.md" 2>&1 || echo "Error reading using-groundwork skill")
+# Add gh warning, update notice, and restored state if applicable
+specs_notice="${specs_notice}${gh_warning}${update_notice}${restored_state}"
 
 # Escape outputs for JSON - use jq if available, fallback to bash
 escape_for_json() {
@@ -323,7 +147,6 @@ escape_for_json() {
     printf '%s' "$output"
 }
 
-using_groundwork_escaped=$(escape_for_json "$using_groundwork_content")
 warning_escaped=$(escape_for_json "$warning_message")
 specs_notice_escaped=$(escape_for_json "$specs_notice")
 
@@ -332,7 +155,7 @@ cat <<EOF
 {
   "hookSpecificOutput": {
     "hookEventName": "SessionStart",
-    "additionalContext": "<EXTREMELY_IMPORTANT>\nYou have groundwork skills.\n\n**Below is the full content of your 'groundwork:using-groundwork' skill - your introduction to using skills. For all other skills, use the 'Skill' tool:**\n\n${using_groundwork_escaped}\n\n${warning_escaped}${specs_notice_escaped}\n</EXTREMELY_IMPORTANT>"
+    "additionalContext": "<groundwork-context>\n${warning_escaped}${specs_notice_escaped}\n</groundwork-context>"
   }
 }
 EOF

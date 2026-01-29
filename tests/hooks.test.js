@@ -122,51 +122,6 @@ describe('session-start.sh', () => {
   });
 });
 
-describe('suggest-compact.js', () => {
-  test('is executable', () => {
-    const scriptPath = path.join(HOOKS_DIR, 'suggest-compact.js');
-    const stats = fs.statSync(scriptPath);
-    const isExecutable = (stats.mode & parseInt('111', 8)) !== 0;
-
-    assert.ok(isExecutable, 'suggest-compact.js should be executable');
-  });
-
-  test('runs without error', () => {
-    const scriptPath = path.join(HOOKS_DIR, 'suggest-compact.js');
-
-    // Should run without throwing
-    execSync(`node ${scriptPath}`, {
-      cwd: PLUGIN_ROOT,
-      encoding: 'utf8',
-      stdio: 'pipe',
-      env: { ...process.env, CLAUDE_SESSION_ID: 'test-session' }
-    });
-  });
-});
-
-describe('security_reminder_hook.py', () => {
-  test('is executable', () => {
-    const scriptPath = path.join(HOOKS_DIR, 'security_reminder_hook.py');
-    const stats = fs.statSync(scriptPath);
-    const isExecutable = (stats.mode & parseInt('111', 8)) !== 0;
-
-    assert.ok(isExecutable, 'security_reminder_hook.py should be executable');
-  });
-
-  test('has valid Python syntax', () => {
-    const scriptPath = path.join(HOOKS_DIR, 'security_reminder_hook.py');
-
-    try {
-      execSync(`python3 -m py_compile ${scriptPath}`, {
-        encoding: 'utf8',
-        stdio: 'pipe'
-      });
-    } catch (error) {
-      throw new Error('security_reminder_hook.py has syntax errors');
-    }
-  });
-});
-
 describe('lib/utils.js', () => {
   test('exports required functions', () => {
     const utils = require('../lib/utils');

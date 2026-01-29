@@ -68,11 +68,11 @@ These thoughts mean STOP—you're rationalizing:
 
 When multiple skills could apply, use this order:
 
-1. **Process skills first** (task-brainstorm, systematic-debugging) - these determine HOW to approach the task
-2. **Implementation skills second** (frontend-design, writing-skills) - these guide execution
+1. **Process skills first** (product-design, root-cause-tracing) - these determine HOW to approach the task
+2. **Implementation skills second** (tasks, test-driven-development) - these guide execution
 
-"Let's build X" -> task-brainstorm first, then implementation skills.
-"Fix this bug" -> systematic-debugging first, then domain-specific skills.
+"Let's build X" -> product-design first, then implementation skills.
+"Fix this bug" -> root-cause-tracing first, then domain-specific skills.
 
 ## Skill Types
 

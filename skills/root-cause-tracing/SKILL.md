@@ -192,5 +192,4 @@ npm test 2>&1 | grep 'DEBUG riskyOperation'
 
 ## Related Skills
 
-- **systematic-debugging** - Complete debugging process (root cause tracing is one phase)
-- **verification-before-completion** - Verify fix actually worked
+- **test-driven-development** - Write tests to verify fix and prevent regression

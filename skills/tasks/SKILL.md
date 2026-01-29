@@ -73,27 +73,30 @@ Present proposed milestones to user for feedback before generating tasks.
 
 ## Step 3: Generate Tasks
 
-For each milestone, generate tasks using this structure:
+For each milestone, generate tasks using the format specified in the "Required Task Format" section below.
+
+## Required Task Format
+
+Every task MUST follow this exact format to ensure compatibility with `/next-task` and other skills:
 
 ```markdown
 ### TASK-NNN: [Task Title]
 
 **Milestone:** M[X] - [Milestone Name]
-**Component:** [From architecture]
-**Estimate:** [T-shirt size: S/M/L/XL]
-**EARS Requirements:** [EARS requirements identifiers]
+**Component:** [Component from architecture]
+**Estimate:** S | M | L | XL
 
-**Goal:** 
+**Goal:**
 [One sentence describing the outcome]
 
 **Action Items:**
-- [ ] [Specific action 1]
-- [ ] [Specific action 2]
-- [ ] [Specific action 3]
+- [ ] [Action 1]
+- [ ] [Action 2]
+- [ ] [Action 3]
 
 **Dependencies:**
-- Blocked by: TASK-XXX, TASK-YYY (if any)
-- Blocks: TASK-ZZZ (if any)
+- Blocked by: [TASK-XXX, TASK-YYY or None]
+- Blocks: [TASK-ZZZ or None]
 
 **Acceptance Criteria:**
 - [Testable criterion 1]
@@ -101,7 +104,34 @@ For each milestone, generate tasks using this structure:
 
 **Related Requirements:** PRD-XXX-REQ-NNN
 **Related Decisions:** DR-NNN
+
+**Status:** Not Started | In Progress | Complete | Blocked
 ```
+
+### Format Requirements
+
+| Field | Required | Valid Values |
+|-------|----------|--------------|
+| Task ID | Yes | `TASK-NNN` (3+ digit number) |
+| Milestone | Yes | `M[N] - [Name]` |
+| Component | Yes | From architecture document |
+| Estimate | Yes | `S`, `M`, `L`, or `XL` |
+| Goal | Yes | Single sentence |
+| Action Items | Yes | Checkbox list |
+| Dependencies | Yes | Task IDs or "None" |
+| Acceptance Criteria | Yes | Testable statements |
+| Related Requirements | Recommended | PRD IDs |
+| Related Decisions | Recommended | DR IDs |
+| Status | Yes | Exactly one of the four values |
+
+### Status Values
+
+- `**Status:** Not Started` - Task hasn't begun
+- `**Status:** In Progress` - Currently being worked on
+- `**Status:** Complete` - Task finished and verified
+- `**Status:** Blocked` - Cannot proceed due to dependencies
+
+**Important:** The `next-task` skill parses these status values exactly. Any variation will cause parse errors.
 
 ## Task Generation Principles
 

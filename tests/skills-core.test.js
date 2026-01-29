@@ -42,10 +42,10 @@ function describe(name, fn) {
 // Tests
 describe('extractFrontmatter', () => {
   test('extracts name and description from valid skill file', () => {
-    const skillFile = path.join(SKILLS_DIR, 'using-groundwork', 'SKILL.md');
+    const skillFile = path.join(SKILLS_DIR, 'product-design', 'SKILL.md');
     const result = extractFrontmatter(skillFile);
 
-    assert.strictEqual(result.name, 'using-groundwork');
+    assert.strictEqual(result.name, 'product-design');
     assert.ok(result.description.includes('Use when'));
   });
 
@@ -76,7 +76,7 @@ describe('findSkillsInDir', () => {
     const skills = findSkillsInDir(SKILLS_DIR, 'plugin');
 
     assert.ok(skills.length > 0, 'Should find at least one skill');
-    assert.ok(skills.some(s => s.name === 'using-groundwork'), 'Should find using-groundwork');
+    assert.ok(skills.some(s => s.name === 'product-design'), 'Should find product-design');
   });
 
   test('returns empty array for nonexistent directory', () => {

@@ -17,14 +17,12 @@ Read the plugin manifest and scan directories:
 1. Read `${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json` for overview
 2. Scan `${CLAUDE_PLUGIN_ROOT}/commands/` for available commands
 3. Scan `${CLAUDE_PLUGIN_ROOT}/skills/` for available skills
-4. Scan `${CLAUDE_PLUGIN_ROOT}/agents/` for available agents
 
 ### Step 2: Extract Descriptions
 
 For each component, extract the name and description from YAML frontmatter:
 - Commands: Look for `name` and `description` fields
 - Skills: Look for `name` and `description` fields in SKILL.md
-- Agents: Look for `name` and `description` fields
 
 ### Step 3: Group and Present
 
@@ -40,30 +38,22 @@ List commands organized by purpose:
 - `/tasks` - Generate implementation tasks
 - `/next-task` - Work on the next task
 
-**Planning & Execution:**
-- `/write-plan` - Create implementation plans
-- `/execute-plan` - Execute plans step by step
-- `/task-brainstorm` - Brainstorm task approaches
+**Task Execution:**
+- `/task [N]` - Work on a specific task by number
 
 **Sync & Alignment:**
 - `/sync-specs` - Sync specs with code changes
 - `/sync-architecture` - Update architecture docs
-- `/check-alignment` - Verify spec alignment
+- `/check-alignment` - Verify spec alignment (full audit)
+- `/verify` - Quick verification checkpoint for current work
 
 **Code Review:**
 - `/code-review` - Review code changes
-- `/review-pr` - Review pull requests
 
 **Plugin Management:**
 - `/groundwork-check` - Validate plugin health
 - `/groundwork-help` - Show this help
 - `/skills` - List available skills
-
-**Continuous Learning:**
-- `/instinct-status` - Check learning status
-- `/instinct-export` - Export learned instincts
-- `/instinct-import` - Import instincts
-- `/evolve` - Manage evolved components
 
 #### Skills (Invoked via Skill Tool)
 
@@ -77,14 +67,6 @@ Skills are invoked using the Skill tool and provide structured workflows for:
 
 Use `/skills` to see the full list of available skills.
 
-#### Agents (Background/Review Agents)
-
-Agents are specialized reviewers used via the Task tool:
-- `plan-adherence-reviewer` - Reviews code against plan/requirements
-- `standards-reviewer` - Reviews code against project standards
-- `code-simplifier` - Simplifies and refines code
-- And others...
-
 ### Step 4: Usage Examples
 
 Provide usage examples:
@@ -94,8 +76,6 @@ Provide usage examples:
 /architecture            # Design the technical approach
 /tasks                   # Generate implementation tasks
 /next-task               # Work on the next task
-/write-plan feature.md   # Create a plan for a feature
-/execute-plan            # Execute the current plan
 /groundwork-check        # Check plugin health
 ```
 
@@ -103,5 +83,4 @@ Provide usage examples:
 
 Point users to:
 - `README.md` in the plugin root for full documentation
-- The `using-groundwork` skill for workflow guidance
 - GitHub issues for support

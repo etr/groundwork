@@ -2,55 +2,18 @@
 
 This guide explains when to use similar commands that serve related purposes.
 
-## Code Review Commands
-
-### `/code-review` vs `/review-pr`
-
-| Aspect | `/code-review` | `/review-pr` |
-|--------|---------------|--------------|
-| **Primary Use** | Review PRs on GitHub and post comments | Local PR review before pushing |
-| **Target** | Existing GitHub PR | Local changes (staged/unstaged) |
-| **Output** | Comments posted to GitHub PR | Summary report in terminal |
-| **Review Approach** | 5 parallel Sonnet agents focused on bugs + CLAUDE.md | Specialized agents for different aspects |
-| **Agents Used** | Custom bug-finding agents | comment-analyzer, pr-test-analyzer, silent-failure-hunter, type-design-analyzer, standards-reviewer, code-simplifier |
-| **GitHub Integration** | Posts findings as PR comments | No automatic GitHub integration |
-| **Confidence Filtering** | Filters issues below 80% confidence | All findings reported |
-
-**When to use `/code-review`:**
-- PR already exists on GitHub
-- You want findings posted as PR comments
-- Reviewing someone else's PR
-- CI/CD integration for automated reviews
-
-**When to use `/review-pr`:**
-- Before creating a PR (catch issues early)
-- Want comprehensive review (tests, types, comments, errors)
-- Reviewing your own changes locally
-- Need to run specific review aspects (e.g., just tests or just errors)
-
-**Typical workflow:**
-```
-1. Write code
-2. /review-pr code errors    # Quick local check
-3. Fix issues found
-4. /review-pr all            # Comprehensive review before PR
-5. Create PR
-6. /code-review              # Post review comments to GitHub
-```
-
----
-
 ## Spec Synchronization Commands
 
-### `/sync-specs` vs `/check-alignment`
+### `/sync-specs` vs `/check-alignment` vs `/verify`
 
-| Aspect | `/sync-specs` | `/check-alignment` |
-|--------|--------------|-------------------|
-| **Primary Use** | Update specs to match decisions | Check code matches specs |
-| **Direction** | Session decisions → Specs | Specs ← → Code |
-| **Output** | Proposed PRD changes | Alignment report |
-| **Modifies Files** | Yes (specs/product_specs.md) | No (read-only analysis) |
-| **Trigger** | After product discussions | After implementation |
+| Aspect | `/sync-specs` | `/check-alignment` | `/verify` |
+|--------|--------------|-------------------|-----------|
+| **Primary Use** | Update specs to match decisions | Full audit of code vs specs | Quick checkpoint for current work |
+| **Direction** | Session decisions → Specs | Specs ← → Code | Current task → Specs |
+| **Output** | Proposed PRD changes | Full alignment report | Pass/fail recommendation |
+| **Modifies Files** | Yes (specs/product_specs.md) | No (read-only analysis) | No (read-only analysis) |
+| **Scope** | Session decisions | Entire codebase | Current task or recent changes |
+| **Trigger** | After product discussions | Periodic full audit | Before completing a task |
 
 **When to use `/sync-specs`:**
 - After discussions that changed requirements
@@ -59,10 +22,16 @@ This guide explains when to use similar commands that serve related purposes.
 - End of session to capture product decisions
 
 **When to use `/check-alignment`:**
-- After implementing features
-- Before marking tasks complete
+- Periodic full audit of codebase vs specs
 - To find undocumented features in codebase
-- To verify code follows architecture decisions
+- To verify entire architecture is being followed
+- When you suspect significant drift
+
+**When to use `/verify`:**
+- Before marking a task complete
+- Before committing changes
+- When unsure if current work matches specs
+- Quick sanity check during implementation
 
 **Typical workflow:**
 ```
@@ -70,8 +39,10 @@ This guide explains when to use similar commands that serve related purposes.
 2. /sync-specs              # Capture decisions in PRD
 3. /architecture            # Update architecture if needed
 4. /tasks                   # Generate new tasks
-5. Implement features
-6. /check-alignment         # Verify implementation matches specs
+5. Implement a task
+6. /verify                  # Quick check before completing
+7. ... more tasks ...
+8. /check-alignment         # Periodic full audit
 ```
 
 ---
@@ -122,9 +93,9 @@ This guide explains when to use similar commands that serve related purposes.
 | If you want to... | Use this command |
 |-------------------|------------------|
 | Review a PR on GitHub | `/code-review` |
-| Review local changes before PR | `/review-pr` |
 | Update PRD after product discussion | `/sync-specs` |
-| Check if code matches specs | `/check-alignment` |
+| Full audit of code vs specs | `/check-alignment` |
+| Quick check before completing task | `/verify` |
 | Generate tasks from specs | `/tasks` |
 | Work on next available task | `/next-task` |
 | Work on a specific task | `/task [N]` |

@@ -10,8 +10,9 @@ Interactive workflow for iteratively designing and documenting product requireme
 ## Workflow Overview
 
 1. **Understand** - Clarify the feature/change request through targeted questions
-2. **Design** - Collaboratively draft EARS requirements with the user
-3. **Commit** - Edit the PRD document when requirements are approved
+2. **Design** - Draft EARS requirements and check for contradictions
+3. **Approve** - Present draft for user approval
+4. **Commit** - Edit the PRD document when requirements are approved
 
 ## Step 1: Understand the Request
 
@@ -21,6 +22,13 @@ When the user proposes a feature or change, ask clarifying questions to understa
 - What problem does this solve for the user?
 - Who is the target user/persona?
 - What is the expected outcome or behavior?
+
+**Exploratory Questions (for open-ended or vague requests):**
+- "What inspired this feature idea?"
+- "Have you seen this done well elsewhere? What did you like about it?"
+- "What would make this feature 'delightful' vs just 'adequate'?"
+- "What's the simplest version that would provide value?"
+- "If you had to cut half the scope, what would you keep?"
 
 **Conditional Questions (ask as relevant):**
 - What triggers this behavior? (for event-driven features)
@@ -66,6 +74,51 @@ Examples from the project:
 - `PRD-DEL-REQ-001` (Data deletion)
 
 For new features, propose a short code (3-4 chars) and confirm with user.
+
+## Step 2.5: Check for Contradictions
+
+Before presenting the draft, review for conflicts:
+
+### Internal Contradictions
+Requirements within this feature that may contradict each other:
+- Conflicting behaviors (e.g., "shall be real-time" AND "shall work offline-first")
+- Incompatible constraints (e.g., "shall complete in <100ms" AND "shall process 10,000 items")
+- Mutually exclusive states
+
+### Cross-Feature Conflicts
+Compare new requirements against existing PRD:
+- **Behavioral conflicts:** New behavior contradicts existing behavior
+- **Resource competition:** Features that compete for same limited resources
+- **UX inconsistency:** Different patterns for similar interactions
+- **Data conflicts:** Contradictory data ownership or access rules
+
+Example: New "anonymous posting" requirement conflicts with existing "all user actions must be audited"
+
+### Technical Incompatibilities
+Requirements that may be technically difficult to satisfy together:
+- Performance constraints that conflict
+- Security requirements that limit functionality
+- Scalability needs that conflict with simplicity
+
+**If conflicts found, surface them:**
+> "I noticed a potential conflict:
+> - [Existing requirement or pattern] requires [X]
+> - This new requirement requires [Y]
+> These may be incompatible because [reason].
+>
+> Options:
+> 1. Modify the new requirement to [alternative]
+> 2. Update the existing requirement
+> 3. Accept the conflict as a known trade-off
+>
+> How should we resolve this?"
+
+**After resolution:**
+- If user chooses option 1 (modify new): Update the draft requirement and re-present
+- If user chooses option 2 (update existing): Note the PRD change needed and proceed
+- If user chooses option 3 (accept trade-off): Document the trade-off in the feature block and proceed
+
+Do not proceed to Step 3 until conflicts are resolved or explicitly accepted.
 
 ## Step 3: Present Draft for Approval
 

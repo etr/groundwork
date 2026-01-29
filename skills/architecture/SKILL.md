@@ -83,10 +83,41 @@ For each decision point, present **2-4 options** using this format:
 What are your thoughts? Any constraints I should know about?
 ```
 
+### Exploratory Questions
+
+When presenting options, ask questions to surface hidden constraints:
+- "What's your team's experience with [technology X vs Y]?"
+- "Are there constraints I should know about? (existing systems, team skills, budget, timeline)"
+- "What would you regret in 2 years if we chose wrong here?"
+- "Is there organizational momentum toward any particular approach?"
+- "What's the cost of changing this decision later if it proves wrong?"
+
+### Decision Conflict Detection
+
+Before recording a decision, check for conflicts with earlier decisions:
+
+**Check against existing decisions:**
+- Does this decision contradict or undermine a previous DR?
+- Are we choosing a technology incompatible with earlier choices?
+- Does this create inconsistency in the architecture?
+
+**If conflict detected:**
+> "This decision may conflict with DR-NNN:
+> - DR-NNN chose [X] for [reason]
+> - This decision would require [Y], which is incompatible because [explanation]
+>
+> Options:
+> 1. Proceed with new decision and update DR-NNN
+> 2. Modify this decision to align with DR-NNN
+> 3. Accept both and document the exception
+>
+> Which approach?"
+
 **After user input:**
 - If user agrees: Record decision and move to next
 - If user has concerns: Discuss, possibly add new options
 - If user wants to defer: Note as open question, continue
+- If conflict identified: Resolve before proceeding
 
 ## Step 4: Document Architecture
 
