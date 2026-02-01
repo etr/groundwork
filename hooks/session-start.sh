@@ -87,9 +87,9 @@ specs_notice=""
 # Detect what exists
 has_prd=false; has_arch=false; has_tasks=false; has_code=false
 
-[ -f "specs/product_specs.md" ] && has_prd=true
-[ -f "specs/architecture.md" ] && has_arch=true
-[ -f "specs/tasks.md" ] && has_tasks=true
+([ -f "specs/product_specs.md" ] || [ -d "specs/product_specs" ]) && has_prd=true
+([ -f "specs/architecture.md" ] || [ -d "specs/architecture" ]) && has_arch=true
+([ -f "specs/tasks.md" ] || [ -d "specs/tasks" ]) && has_tasks=true
 
 # Check for code files (quick check - just see if any exist)
 for ext in py ts js go rs java rb php c cpp tsx jsx; do

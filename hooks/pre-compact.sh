@@ -38,7 +38,8 @@ CONTEXT_ITEMS=()
 
 # Check for active tasks
 # Note: Claude Code doesn't expose CLAUDE_TODO_FILE to hooks, so we check
-# the known default location for task state
+# the known default location for task state. This path is internal to Claude Code
+# and may change in future versions.
 POTENTIAL_TODO_FILE="${HOME}/.claude/todos/current.json"
 if [ -f "${POTENTIAL_TODO_FILE}" ]; then
   # Validate JSON before counting

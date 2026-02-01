@@ -37,13 +37,21 @@ If multiple apply, verify all relevant scopes.
 
 ### Step 2: Check Plan Adherence
 
-Load relevant specs:
-- `specs/product_specs.md` - PRD with EARS requirements
-- `specs/architecture.md` - Architecture decisions
+Load relevant specs (each may be a single file or directory):
 
-**If specs files are missing:**
-- Report which files exist and which are missing
-- Suggest commands to create missing files:
+- **Product specs** - PRD with EARS requirements
+  - Single file: `specs/product_specs.md`
+  - Directory: `specs/product_specs/` (aggregate all `.md` files)
+
+- **Architecture** - Architecture decisions
+  - Single file: `specs/architecture.md`
+  - Directory: `specs/architecture/` (aggregate all `.md` files)
+
+**Detection:** Check for file first (takes precedence), then directory. When reading a directory, aggregate all `.md` files recursively with `_index.md` first, then numerically-prefixed files, then alphabetically.
+
+**If specs are missing:**
+- Report which specs exist and which are missing
+- Suggest commands to create missing specs:
   - PRD missing: "Run `/product-design` to create the PRD"
   - Architecture missing: "Run `/architecture` to create the architecture"
   - Tasks missing: "Run `/tasks` to generate the task list"

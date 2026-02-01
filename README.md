@@ -131,6 +131,7 @@ The plugin's shell scripts (`.sh` files) use bash and won't work directly in Pow
 | `/skills` | List all available skills |
 | `/groundwork-check` | Validate plugin installation |
 | `/groundwork-help` | List all commands and skills with descriptions |
+| `/split-spec` | Split single-file spec into directory structure |
 
 ## Configuration
 

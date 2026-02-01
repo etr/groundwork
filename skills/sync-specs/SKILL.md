@@ -9,8 +9,12 @@ Keeps `specs/product_specs.md` synchronized with product decisions made during s
 
 ## File Locations
 
-- **Target:** `specs/product_specs.md`
+- **Target:** Product specs (may be single file or directory)
+  - Single file: `specs/product_specs.md`
+  - Directory: `specs/product_specs/` (content split across files)
 - **Context:** Current session history
+
+**Detection:** Check for single file first (takes precedence), then directory.
 
 ## When to Trigger
 
@@ -118,13 +122,23 @@ Approve these updates? (yes/no/modify)
 ## Step 4: Apply Changes
 
 On approval:
-1. Read current `specs/product_specs.md`
-2. Apply each update to the appropriate section
-3. Maintain requirement ID sequence (find highest PRD-XXX-REQ-NNN, increment)
-4. Update "Last updated" timestamp
-5. Update "Doc status" if appropriate
 
-**Important:** 
+1. **Detect spec format** - Check if PRD is single file or directory
+2. **Read current content:**
+   - Single file: Read `specs/product_specs.md`
+   - Directory: Aggregate all `.md` files from `specs/product_specs/`
+3. **Route updates to appropriate files:**
+   - **Single file mode:** Edit `specs/product_specs.md` directly
+   - **Directory mode:** Route each update:
+     - Features with ID (e.g., PRD-AUTH-*) → Find or create in `specs/product_specs/03-features/<feature-code>.md`
+     - Open questions → `specs/product_specs/05-open-questions.md`
+     - NFR changes → `specs/product_specs/02-non-functional.md`
+     - Updates to existing content → Find the file containing that content
+4. Maintain requirement ID sequence (find highest PRD-XXX-REQ-NNN, increment)
+5. Update "Last updated" timestamp
+6. Update "Doc status" if appropriate
+
+**Important:**
 - New requirements get the next available ID in their feature's sequence
 - Never reuse deleted requirement IDs (maintain traceability)
 - Preserve EARS format for all requirements

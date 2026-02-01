@@ -21,10 +21,12 @@ Interactive workflow for translating product requirements into architecture thro
 
 ## Step 1: Load Context
 
-Read `specs/product_specs.md` and extract:
+Read the product specs (may be single file or directory) and extract:
 - Non-functional requirements (latency, scale, security, compliance)
 - Feature list and EARS requirements
 - Implicit constraints (budget, team size, timeline if mentioned)
+
+**Detection:** Check for `specs/product_specs.md` first (single file), then `specs/product_specs/` directory. When reading a directory, aggregate all `.md` files recursively with `_index.md` first, then numerically-prefixed files, then alphabetically.
 
 If PRD doesn't exist, prompt user to run `/product-design` first.
 
@@ -121,7 +123,10 @@ Before recording a decision, check for conflicts with earlier decisions:
 
 ## Step 4: Document Architecture
 
-When all major decisions are made, create `specs/architecture.md` using template in `references/architecture-template.md`.
+When all major decisions are made, create the architecture document using template in `references/architecture-template.md`.
+
+**Output location:** `specs/architecture.md` (single file by default)
+- For large architectures, user can later run `/split-spec architecture` to convert to directory format
 
 **Critical:** Include ALL decision records with discarded options and reasoning. This is essential for future maintainers to understand *why* choices were made.
 

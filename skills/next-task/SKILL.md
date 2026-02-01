@@ -11,15 +11,25 @@ Executes the next uncompleted task from `specs/tasks.md` with full project conte
 
 ### Step 1: Load Project Context
 
-Read the following files to understand the full project context:
+Read the following specs to understand the full project context. Each spec may exist as either a single file or a directory:
 
-1. **`specs/product_specs.md`** - PRD with EARS requirements
-2. **`specs/architecture.md`** - Architecture decisions and component design
-3. **`specs/tasks.md`** - Task list with statuses and dependencies
+1. **Product specs** - PRD with EARS requirements
+   - Single file: `specs/product_specs.md`
+   - Directory: `specs/product_specs/` (aggregated in sorted order)
 
-**If files are missing:**
-- Report which files exist and which are missing
-- Suggest commands to create missing files:
+2. **Architecture** - Architecture decisions and component design
+   - Single file: `specs/architecture.md`
+   - Directory: `specs/architecture/` (aggregated in sorted order)
+
+3. **Tasks** - Task list with statuses and dependencies
+   - Single file: `specs/tasks.md`
+   - Directory: `specs/tasks/` (aggregated in sorted order)
+
+**Detection:** Check for file first (takes precedence), then directory. When reading a directory, aggregate all `.md` files recursively with `_index.md` first, then numerically-prefixed files, then alphabetically.
+
+**If specs are missing:**
+- Report which specs exist and which are missing
+- Suggest commands to create missing specs:
   - PRD missing: "Run `/product-design` to create the PRD"
   - Architecture missing: "Run `/architecture` to create the architecture"
   - Tasks missing: "Run `/tasks` to generate the task list"
@@ -92,14 +102,18 @@ Wait for user confirmation before proceeding.
 
 ### Step 4: Execute Task
 
-1. **Update status** - Edit `specs/tasks.md` to change task status to `**Status:** In Progress`
+1. **Update status** - Edit the appropriate tasks file to change task status to `**Status:** In Progress`
+   - For single file: Edit `specs/tasks.md`
+   - For directory: Find the file containing the task (e.g., `specs/tasks/M1-authentication/TASK-001.md`)
 2. **Complete action items** - Work through each action item systematically
 3. **Verify acceptance criteria** - Ensure each criterion is met before marking complete
 4. **Run relevant tests** - If tests exist, run them to verify implementation
 
 ### Step 5: Complete Task
 
-1. **Update status** - Edit `specs/tasks.md` to change task status to `**Status:** Complete`
+1. **Update status** - Edit the appropriate tasks file to change task status to `**Status:** Complete`
+   - For single file: Edit `specs/tasks.md`
+   - For directory: Edit the specific task file
 2. **Report completion** - Summarize what was accomplished
 3. **Offer to continue** - Ask if user wants to proceed to the next task
 

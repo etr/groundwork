@@ -83,14 +83,24 @@ except:
     exit 0
   fi
 
-  # Check for active tasks file (specs/tasks.md or similar)
+  # Check for active tasks file (specs/tasks.md, specs/tasks/, or similar)
   TASKS_FILE=""
+  TASKS_IS_DIR=false
   for candidate in "specs/tasks.md" "docs/tasks.md" "TASKS.md" ".tasks.md"; do
     if [ -f "$candidate" ]; then
       TASKS_FILE="$candidate"
       break
     fi
   done
+
+  # Check for directory-based tasks if no file found
+  if [ -z "$TASKS_FILE" ] && [ -d "specs/tasks" ]; then
+    # Use the _index.md or aggregate files in tasks directory
+    if [ -f "specs/tasks/_index.md" ]; then
+      TASKS_FILE="specs/tasks/_index.md"
+      TASKS_IS_DIR=true
+    fi
+  fi
 
   # Build alignment context
   CONTEXT_ITEMS=()

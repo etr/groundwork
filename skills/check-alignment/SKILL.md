@@ -11,10 +11,21 @@ Verifies that implementation aligns with product specs and architecture, surfaci
 
 ### Step 1: Load All Context
 
-Read the following files:
-- `specs/product_specs.md` - PRD with EARS requirements
-- `specs/architecture.md` - Architecture decisions
-- `specs/tasks.md` - Task list (if exists)
+Read the following specs (each may be a single file or directory):
+
+- **Product specs** - PRD with EARS requirements
+  - Single file: `specs/product_specs.md`
+  - Directory: `specs/product_specs/` (aggregate all `.md` files)
+
+- **Architecture** - Architecture decisions
+  - Single file: `specs/architecture.md`
+  - Directory: `specs/architecture/` (aggregate all `.md` files)
+
+- **Tasks** - Task list (if exists)
+  - Single file: `specs/tasks.md`
+  - Directory: `specs/tasks/` (aggregate all `.md` files)
+
+**Detection:** Check for file first (takes precedence), then directory. When reading a directory, aggregate all `.md` files recursively with `_index.md` first, then numerically-prefixed files, then alphabetically.
 
 Scan codebase for implementation:
 - Source files in common locations (src/, lib/, app/, etc.)
@@ -22,9 +33,9 @@ Scan codebase for implementation:
 - Database schemas/migrations
 - API definitions
 
-**If specs files are missing:**
-> "Cannot check alignment - missing specs files:
-> - [List missing files]
+**If specs are missing:**
+> "Cannot check alignment - missing specs:
+> - [List missing specs]
 >
 > Run the appropriate commands to create them:
 > - PRD: `/product-design`

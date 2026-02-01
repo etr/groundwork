@@ -157,17 +157,27 @@ Ask: "Does this capture your requirements? Any changes before I update the PRD?"
 
 ## Step 4: Commit to PRD
 
-**PRD Location:** `specs/product_specs.md` (always use this path)
+**PRD Location:** The PRD may be stored as:
+- Single file: `specs/product_specs.md`
+- Directory: `specs/product_specs/` (with content split across files)
 
 When the user approves:
 
-1. **Check if PRD exists** - Look for `specs/product_specs.md`
-   - If missing, create it using the template in `references/prd-template.md`
+1. **Check if PRD exists** - Look for single file first, then directory
+   - If missing, create `specs/product_specs.md` using the template in `references/prd-template.md`
    - Ensure `specs/` directory exists first
-2. **Find insertion point** - New features go in Section 3 (Feature list) after existing features
-3. **Edit the document** - Use `str_replace` to insert the new feature block
-4. **Update open questions** - If any remain, add to Section 5 (Open questions log)
-5. **Update traceability note** - Mention new requirement IDs if relevant
+
+2. **Route the content** - Determine where to write based on spec format:
+   - **Single file mode:** Edit `specs/product_specs.md` directly
+   - **Directory mode:** Route to appropriate file:
+     - Features with ID (e.g., PRD-AUTH-*) → `specs/product_specs/03-features/<feature-code>.md`
+     - Open questions → `specs/product_specs/05-open-questions.md`
+     - If unsure, append to `specs/product_specs/_index.md`
+
+3. **Find insertion point** - New features go in Section 3 (Feature list) after existing features
+4. **Edit the document** - Use `str_replace` to insert the new feature block
+5. **Update open questions** - If any remain, add to Section 5 (Open questions log)
+6. **Update traceability note** - Mention new requirement IDs if relevant
 
 After editing, confirm: "I've added [feature] to the PRD with requirements PRD-XXX-REQ-001 through PRD-XXX-REQ-NNN."
 

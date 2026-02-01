@@ -24,20 +24,22 @@ Translates product specs and architecture into actionable implementation tasks.
 
 ## Step 1: Load Context
 
-Read both input files and extract:
+Read both input specs (each may be a single file or directory) and extract:
 
-**From PRD (`specs/product_specs.md`):**
-- Feature list with EARS requirements
-- Non-functional requirements
-- Release strategy (Alpha → Beta → GA)
+**From PRD:**
+- Single file: `specs/product_specs.md`
+- Directory: `specs/product_specs/` (aggregate all `.md` files)
+- Extract: Feature list with EARS requirements, Non-functional requirements, Release strategy (Alpha → Beta → GA)
 
-**From Architecture (`specs/architecture.md`):**
-- Component list and responsibilities
-- Technology choices
-- Decision records (understand constraints)
+**From Architecture:**
+- Single file: `specs/architecture.md`
+- Directory: `specs/architecture/` (aggregate all `.md` files)
+- Extract: Component list and responsibilities, Technology choices, Decision records (understand constraints)
 
-If either file is missing, prompt user:
-> "I need both the PRD and architecture to generate tasks. 
+**Detection:** Check for file first (takes precedence), then directory. When reading a directory, aggregate all `.md` files recursively with `_index.md` first, then numerically-prefixed files, then alphabetically.
+
+If either spec is missing, prompt user:
+> "I need both the PRD and architecture to generate tasks.
 > - PRD missing? Run `/product-design`
 > - Architecture missing? Run `/architecture`"
 

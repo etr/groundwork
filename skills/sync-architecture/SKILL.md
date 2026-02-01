@@ -9,8 +9,12 @@ Keeps `specs/architecture.md` synchronized with actual implementation decisions.
 
 ## File Locations
 
-- **Target:** `specs/architecture.md`
+- **Target:** Architecture document (may be single file or directory)
+  - Single file: `specs/architecture.md`
+  - Directory: `specs/architecture/` (content split across files)
 - **Context:** Current session history, codebase changes
+
+**Detection:** Check for single file first (takes precedence), then directory.
 
 ## When to Trigger
 
@@ -118,10 +122,21 @@ Approve these updates? (yes/no/modify)
 ## Step 4: Apply Changes
 
 On approval:
-1. Read current `specs/architecture.md`
-2. Apply each update to the appropriate section
-3. Update "Last updated" timestamp
-4. Add entry to change log if present
+
+1. **Detect spec format** - Check if architecture is single file or directory
+2. **Read current content:**
+   - Single file: Read `specs/architecture.md`
+   - Directory: Aggregate all `.md` files from `specs/architecture/`
+3. **Route updates to appropriate files:**
+   - **Single file mode:** Edit `specs/architecture.md` directly
+   - **Directory mode:** Route each update:
+     - Decision records (DR-NNN) → Find or create in `specs/architecture/11-decisions/<DR-NNN>.md`
+     - Components → `specs/architecture/04-components/<component>.md`
+     - Data architecture → `specs/architecture/05-data.md`
+     - Security → `specs/architecture/07-security.md`
+     - Updates to existing content → Find the file containing that content
+4. Update "Last updated" timestamp
+5. Add entry to change log if present
 
 **Important:** Preserve existing content. Add to sections, don't replace unless explicitly correcting an error.
 
