@@ -2,6 +2,7 @@
 name: groundwork-help
 description: List all Groundwork commands and skills with descriptions
 allowed-tools: ["Glob", "Read", "Grep"]
+disable-model-invocation: false
 ---
 
 # Groundwork Help

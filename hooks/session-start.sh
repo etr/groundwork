@@ -92,16 +92,13 @@ has_prd=false; has_arch=false; has_tasks=false; has_code=false
 ([ -f "specs/tasks.md" ] || [ -d "specs/tasks" ]) && has_tasks=true
 
 # Check for code files (quick check - just see if any exist)
-for ext in py ts js go rs java rb php c cpp tsx jsx; do
-  if ls *.$ext 2>/dev/null | head -1 >/dev/null 2>&1; then
-    has_code=true
-    break
-  fi
-done
-if [ "$has_code" = false ]; then
-  if find . -maxdepth 3 \( -name "*.py" -o -name "*.ts" -o -name "*.js" -o -name "*.go" -o -name "*.rs" -o -name "*.java" -o -name "*.tsx" -o -name "*.jsx" \) 2>/dev/null | head -1 | grep -q .; then
-    has_code=true
-  fi
+# Use find as primary method for reliability, with extensions including kotlin, swift, scala
+if find . -maxdepth 3 \( \
+  -name "*.py" -o -name "*.ts" -o -name "*.js" -o -name "*.go" -o -name "*.rs" \
+  -o -name "*.java" -o -name "*.rb" -o -name "*.php" -o -name "*.c" -o -name "*.cpp" \
+  -o -name "*.tsx" -o -name "*.jsx" -o -name "*.kt" -o -name "*.swift" -o -name "*.scala" \
+  \) 2>/dev/null | head -1 | grep -q .; then
+  has_code=true
 fi
 
 # Generate suggestion message based on state
@@ -119,6 +116,16 @@ fi
 
 # Add gh warning, update notice, and restored state if applicable
 specs_notice="${specs_notice}${gh_warning}${update_notice}${restored_state}"
+
+# ============================================
+# Spec Content Injection
+# ============================================
+specs_content=""
+if $has_prd || $has_arch; then
+  if [ -f "${PLUGIN_ROOT}/lib/inject-specs.js" ]; then
+    specs_content=$(timeout 3 node "${PLUGIN_ROOT}/lib/inject-specs.js" 2>/dev/null || echo '')
+  fi
+fi
 
 # Escape outputs for JSON - use jq if available, fallback to bash
 escape_for_json() {
@@ -149,13 +156,20 @@ escape_for_json() {
 
 warning_escaped=$(escape_for_json "$warning_message")
 specs_notice_escaped=$(escape_for_json "$specs_notice")
+specs_content_escaped=$(escape_for_json "$specs_content")
+
+# Build product context section if we have spec content
+product_context=""
+if [ -n "$specs_content" ]; then
+  product_context="\\n\\n<product-context>\\n${specs_content_escaped}\\n</product-context>"
+fi
 
 # Output context injection as JSON
 cat <<EOF
 {
   "hookSpecificOutput": {
     "hookEventName": "SessionStart",
-    "additionalContext": "<groundwork-context>\n${warning_escaped}${specs_notice_escaped}\n</groundwork-context>"
+    "additionalContext": "<groundwork-context>\n${warning_escaped}${specs_notice_escaped}${product_context}\n</groundwork-context>"
   }
 }
 EOF

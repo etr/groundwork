@@ -162,6 +162,27 @@ Prefer tasks that deliver working functionality over horizontal layers:
 - Parallelize where possible
 - Flag critical path tasks
 
+### Acceptance Criteria
+
+Each criterion must be something that can be **verified** - checked or tested, not vague.
+
+**Good criteria (verifiable):**
+- "Add status column to tasks table with default 'pending'"
+- "Filter dropdown has options: All, Active, Completed"
+- "Clicking delete shows confirmation dialog"
+- "Typecheck passes"
+- "Tests pass"
+
+**Bad criteria (vague):**
+- "Works correctly"
+- "User can do X easily"
+- "Good UX"
+- "Handles edge cases"
+
+**Standard criteria to include:**
+- Always end with: "Typecheck passes"
+- For stories with testable logic, also include: "Tests pass"
+
 ## Step 4: Map Dependencies
 
 Create a dependency graph showing:

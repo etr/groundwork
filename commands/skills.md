@@ -2,6 +2,7 @@
 name: skills
 description: List all available Groundwork skills with descriptions
 allowed-tools: ["Bash", "Read", "Glob"]
+disable-model-invocation: false
 ---
 
 # Skills Discovery Command
