@@ -1,6 +1,6 @@
 ---
 name: execute-task
-description: Use when executing a specific task - MUST prompt for worktree isolation first, then loads context, executes with TDD, runs validation
+description: Use when executing a specific task - always uses worktree isolation, loads context, executes with TDD, runs validation
 ---
 
 # Execute Task Skill
@@ -20,7 +20,29 @@ Parse the task identifier from the argument:
 **Error Handling:**
 - Invalid format: "Please specify a task number, e.g., `/execute-task 4` or `/execute-task TASK-004`"
 
-### Step 2: Load Tasks File
+### Step 2: Create Worktree Isolation
+
+All task execution uses git worktree isolation. This ensures:
+- Changes don't affect main workspace until merge
+- Clean baseline for reproducible results
+- Safe experimentation without impacting other work
+
+**Pre-load required skills:**
+Before proceeding, load these skills for reference:
+- `groundwork:use-git-worktree` - Worktree creation and management
+- `groundwork:validation-loop` - Multi-agent verification
+
+**Determine merge mode:**
+- **Batch mode** (`GROUNDWORK_AUTO_MERGE=true` from `/just-do-it`): Auto-merge after verification
+- **Interactive mode** (all other invocations): Manual verification before merge
+
+**Create the worktree:**
+1. Invoke `groundwork:use-git-worktree` with the task ID
+2. Record merge mode (auto or manual) for Step 12
+3. Change working directory to the worktree path
+4. Continue with remaining steps in worktree context
+
+### Step 3: Load Tasks File
 
 Read the tasks file to locate the specified task:
 - Single file: `specs/tasks.md`
@@ -31,7 +53,7 @@ Search for `### TASK-NNN:` pattern matching the requested task identifier.
 **Error Handling:**
 - Task not found: "TASK-NNN not found in specs/tasks.md"
 
-### Step 3: Validate Task is Workable
+### Step 4: Validate Task is Workable
 
 Check the task's current state before proceeding:
 
@@ -48,7 +70,7 @@ Check the task's current state before proceeding:
 
 Wait for user confirmation before proceeding with blocked or completed tasks.
 
-### Step 4: Load Project Context
+### Step 5: Load Project Context
 
 Read the following specs to understand the full project context. Each spec may exist as either a single file or a directory:
 
@@ -73,40 +95,27 @@ Read the following specs to understand the full project context. Each spec may e
   - Architecture missing: "Run `/architecture` to create the architecture"
   - Tasks missing: "Run `/tasks` to generate the task list"
 
-### Step 5: Configure Worktree Isolation
+### Step 6: Plan Implementation
 
-Git worktrees provide isolated working directories for task execution:
-- Changes don't affect main workspace until explicitly merged
-- Clean baseline ensures reproducible results
-- Safe to experiment without impacting other work
+Before presenting the task summary, create an implementation plan using the Plan agent.
 
-**Check for batch mode context:**
-If `GROUNDWORK_AUTO_MERGE=true` is set in the conversation context (from `/just-do-it`):
-- Skip the user prompt
-- Automatically use worktree isolation with auto-merge enabled
-- Proceed directly to worktree creation
+**Launch Plan agent with:**
+- Task definition (goal, action items, acceptance criteria)
+- Relevant product specs
+- Relevant architecture decisions
+- Available test patterns in codebase
 
-**Otherwise, present options to user:**
+**Plan requirements (non-negotiable):**
+The plan MUST include:
+1. **Worktree execution** - All work happens in the isolated worktree
+2. **TDD methodology** - Tests written before implementation
+3. **Validation loop execution** - Plan must end with `groundwork:validation-loop`
 
-> "Would you like to work in an isolated git worktree?
->
-> **Benefits:** Clean baseline, changes isolated until merge, can switch tasks freely.
->
-> 1. **Auto-merge** (Recommended) - Merge automatically after successful verification
-> 2. **Manual verification** - You review and merge manually when ready
-> 3. **No worktree** - Execute in current directory"
+**If plan doesn't include these, reject it and re-plan.**
 
-**If worktree selected (option 1 or 2):**
-1. Invoke the `groundwork:use-git-worktree` skill with the task ID
-2. Record the merge preference (auto or manual)
-3. Change working directory to the worktree path
-4. Continue with remaining steps in the worktree context
+Store the approved plan for reference during execution.
 
-**If no worktree selected (option 3):**
-- Continue in current directory
-- Skip Step 11 (worktree finalization)
-
-### Step 6: Present Task Summary
+### Step 7: Present Task Summary
 
 Present a summary including:
 
@@ -118,9 +127,9 @@ Present a summary including:
 **Estimate:** [T-shirt size]
 
 ### Execution Context
-**Working Directory:** [Current directory or worktree path]
-**Branch:** [Current branch or task/TASK-NNN]
-**Merge Mode:** [auto-merge | manual | n/a]
+**Working Directory:** [Worktree path]
+**Branch:** task/TASK-NNN
+**Merge Mode:** [auto-merge | manual]
 
 ### Goal
 [Task goal from tasks.md]
@@ -147,7 +156,7 @@ Ready to begin?
 
 Wait for user confirmation before proceeding.
 
-### Step 7: Execute Task
+### Step 8: Execute Task
 
 1. **Update status** - Edit the appropriate tasks file to change task status to `**Status:** In Progress`
    - For single file: Edit `specs/tasks.md`
@@ -166,7 +175,7 @@ Wait for user confirmation before proceeding.
    - Don't be lazy. No temporary fixes. All code is production code.
 5. **Verify acceptance criteria** - Ensure each criterion is met before marking complete
 
-### Step 8: Verify Implementation
+### Step 9: Verify Implementation
 
 Before marking the task complete, systematically verify all work:
 
@@ -208,7 +217,7 @@ Before marking the task complete, systematically verify all work:
 Ready to mark task complete.
 ```
 
-### Step 9: Multi-Agent Verification
+### Step 10: Multi-Agent Verification
 
 Invoke the `groundwork:validation-loop` skill to run autonomous verification.
 
@@ -218,19 +227,17 @@ This skill will:
 - Re-run validation until all agents approve
 - Escalate to user only when stuck (same issue 3x)
 
-**Do not proceed to Step 10 until validation-loop returns PASS.**
+**Do not proceed to Step 11 until validation-loop returns PASS.**
 
-### Step 10: Complete Task
+### Step 11: Complete Task
 
 1. **Update status** - Edit the appropriate tasks file to change task status to `**Status:** Complete`
    - For single file: Edit `specs/tasks.md`
    - For directory: Edit the specific task file
 2. **Report completion** - Summarize what was accomplished
-3. **Proceed to worktree finalization** (if using worktree)
+3. **Proceed to worktree finalization**
 
-### Step 11: Worktree Finalization
-
-**Skip this step if not using a worktree.**
+### Step 12: Worktree Finalization
 
 Before finalizing, ensure all changes are committed:
 ```bash
@@ -276,7 +283,7 @@ git branch -d task/TASK-NNN
 ```
 ```
 
-### Step 12: Offer to Continue
+### Step 13: Offer to Continue
 
 ```markdown
 ## Completed: [TASK-NNN] [Task Title]
@@ -289,7 +296,7 @@ git branch -d task/TASK-NNN
 - [x] [Criterion 1] - [How verified]
 - [x] [Criterion 2] - [How verified]
 
-**Worktree status:** [Merged and cleaned up | Pending manual merge at .worktrees/TASK-NNN | N/A]
+**Worktree status:** [Merged and cleaned up | Pending manual merge at .worktrees/TASK-NNN]
 
 Would you like to continue with the next task? (Run `/next-task` or `/execute-task N`)
 ```
