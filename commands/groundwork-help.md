@@ -1,8 +1,8 @@
 ---
-name: groundwork-help
-description: List all Groundwork commands and skills with descriptions
+name: groundwork:groundwork-help
+description: List all Groundwork commands and skills with descriptions. Usage /groundwork:groundwork-help
 allowed-tools: ["Glob", "Read", "Grep"]
-disable-model-invocation: false
+disable-model-invocation: true
 ---
 
 # Groundwork Help

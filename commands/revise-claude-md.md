@@ -1,8 +1,8 @@
 ---
-name: revise-claude-md
-description: Update CLAUDE.md with learnings from this session
+name: groundwork:revise-claude-md
+description: Update CLAUDE.md with learnings from this session. Usage /groundwork:revise-claude-md
 allowed-tools: ["Read", "Edit", "Glob"]
-disable-model-invocation: false
+disable-model-invocation: true
 ---
 
 Review this session for learnings about working with Claude Code in this codebase. Update CLAUDE.md with context that would help future Claude sessions be more effective.

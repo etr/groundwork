@@ -1,6 +1,6 @@
 ---
-name: split-spec
-description: Convert a single-file spec to directory-based format for better organization
+name: groundwork:split-spec
+description: Convert a single-file spec to directory-based format for better organization. Usage /groundwork:split-spec
 argument-hint: "[product_specs|architecture|tasks]"
 allowed-tools: ["Read", "Edit", "Bash", "Glob", "Grep", "Write"]
 disable-model-invocation: true

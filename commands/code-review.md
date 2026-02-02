@@ -1,8 +1,8 @@
 ---
-name: code-review
-description: Code review a pull request
+name: groundwork:code-review
+description: Code review a pull request. Usage /groundwork:code-review
 allowed-tools: ["Bash(gh issue view:*)", "Bash(gh search:*)", "Bash(gh issue list:*)", "Bash(gh pr comment:*)", "Bash(gh pr diff:*)", "Bash(gh pr view:*)", "Bash(gh pr list:*)"]
-disable-model-invocation: false
+disable-model-invocation: true
 ---
 
 Provide a code review for the given pull request.
