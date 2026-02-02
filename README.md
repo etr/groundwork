@@ -160,9 +160,6 @@ See `docs/hooks-configuration.md` for full documentation.
 
 This plugin consolidates work from multiple sources:
 
-### Core Foundation
-- **[superpowers](https://github.com/obra/superpowers)** by Jesse Vincent - Base structure, skills, commands, hooks, lib (MIT License)
-
 ### Official Claude Plugins
 - **[claude-plugins-official](https://github.com/anthropics/claude-plugins-official)** by Anthropic
   - code-review plugin
@@ -171,5 +168,3 @@ This plugin consolidates work from multiple sources:
 ## License
 
 MIT License - See [LICENSE](LICENSE) for details.
-
-Individual components retain their original licenses as noted in attribution.
