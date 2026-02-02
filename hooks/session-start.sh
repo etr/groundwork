@@ -22,6 +22,9 @@ main() {
 STATE_DIR="${HOME}/.claude/groundwork-state"
 mkdir -p "$STATE_DIR" 2>/dev/null || true
 
+# Loaded announcement
+loaded_message="**Groundwork loaded.** "
+
 # ============================================
 # Dependency Validation
 # ============================================
@@ -169,7 +172,7 @@ cat <<EOF
 {
   "hookSpecificOutput": {
     "hookEventName": "SessionStart",
-    "additionalContext": "<groundwork-context>\n${warning_escaped}${specs_notice_escaped}${product_context}\n</groundwork-context>"
+    "additionalContext": "<groundwork-context>\n${loaded_message}${warning_escaped}${specs_notice_escaped}${product_context}\n</groundwork-context>"
   }
 }
 EOF
