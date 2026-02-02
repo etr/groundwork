@@ -1,6 +1,6 @@
 ---
 name: verify
-description: Use when user invokes `/verify` or asks to verify work, check completion, validate task is done, or assess readiness before committing
+description: Use when user asks to verify work, check completion, validate task is done, or assess readiness before committing
 ---
 
 # Verify Skill
@@ -52,9 +52,9 @@ Load relevant specs (each may be a single file or directory):
 **If specs are missing:**
 - Report which specs exist and which are missing
 - Suggest commands to create missing specs:
-  - PRD missing: "Run `/product-design` to create the PRD"
-  - Architecture missing: "Run `/architecture` to create the architecture"
-  - Tasks missing: "Run `/tasks` to generate the task list"
+  - PRD missing: "Run `/groundwork:design-product` to create the PRD"
+  - Architecture missing: "Run `/groundwork:design-architecture` to create the architecture"
+  - Tasks missing: "Run `/groundwork:create-tasks` to generate the task list"
 - If only checking recent changes (no task context), proceed with code review only
 
 For the current task or recent changes, verify:
@@ -164,7 +164,7 @@ Present findings with clear recommendation:
 [One of:]
 - "Ready to mark complete. All criteria met and implementation aligns with specs."
 - "Address these issues before completing: [list]"
-- "Consider running `/check-alignment` for deeper spec alignment verification."
+- "Consider running `/groundwork:check-specs-alignment` for deeper spec alignment verification."
 ```
 
 ## Integration with Other Skills
@@ -174,17 +174,17 @@ Present findings with clear recommendation:
 - `verify` = quick checkpoint for current work only
 
 **Suggested workflow:**
-1. Work on task with `/next-task`
-2. Before marking complete, run `/verify`
-3. Periodically run `/check-alignment` for full audit
+1. Work on task with `groundwork:next-task`
+2. Before marking complete, run `groundwork:verify`
+3. Periodically run `groundwork:check-alignment` for full audit
 
 **Prompting from next-task:**
-The `next-task` skill Step 5 can suggest: "Consider running `/verify` before marking this complete."
+The `next-task` skill Step 5 can suggest: "Consider running `/groundwork:verify-executed-work` before marking this complete."
 
 ## When to Escalate
 
 If verify finds significant issues:
 - Many acceptance criteria failing → revisit task scope
-- Major architecture deviation → may need `/sync-architecture`
-- Missing requirements coverage → may need `/product-design`
-- Widespread issues → run full `/check-alignment`
+- Major architecture deviation → may need skill `groundwork:sync-architecture`
+- Missing requirements coverage → may need skill `groundwork:product-design`
+- Widespread issues → run full skill `groundwork:check-alignment`

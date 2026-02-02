@@ -68,9 +68,9 @@ The plugin's shell scripts (`.sh` files) use bash and won't work directly in Pow
 
 ```
 /product-design    # Define requirements (PRD)
-/architecture      # Design technical approach
-/tasks             # Generate implementation tasks
-/next-task         # Start working on first task
+/design-architecture      # Design technical approach
+/create-tasks             # Generate implementation tasks
+/work-on-next-task        # Start working on first task
 ```
 
 ### Development Workflow
@@ -116,21 +116,21 @@ The plugin's shell scripts (`.sh` files) use bash and won't work directly in Pow
 
 | Command | Description |
 |---------|-------------|
-| `/product-design` | Create PRD |
-| `/architecture` | Create architecture document |
-| `/tasks` | Generate tasks from architecture |
-| `/sync-specs` | Sync PRD with codebase |
-| `/sync-architecture` | Sync architecture with codebase |
-| `/code-review` | Quick single-PR code review |
-| `/revise-claude-md` | Update CLAUDE.md with learnings |
-| `/check-alignment` | Verify alignment between code and specs |
-| `/verify` | Quick verification checkpoint for current work |
-| `/next-task` | Execute next uncompleted task |
-| `/task` | Work on a specific task by number |
-| `/skills` | List all available skills |
-| `/groundwork-check` | Validate plugin installation |
-| `/groundwork-help` | List all commands and skills with descriptions |
-| `/split-spec` | Split single-file spec into directory structure |
+| `/groundwork:product-design` | Create PRD |
+| `/groundwork:design-architecture` | Create architecture document |
+| `/groundwork:create-tasks` | Generate tasks from architecture |
+| `/groundwork:source-product-specs-from-code` | Sync PRD with codebase |
+| `/groundwork:source-architecture-from-code` | Sync architecture with codebase |
+| `/groundwork:code-review` | Quick single-PR code review |
+| `/groundwork:revise-claude-md` | Update CLAUDE.md with learnings |
+| `/groundwork:check-specs-alignment` | Verify alignment between code and specs |
+| `/groundwork:verify-executed-work` | Quick verification checkpoint for current work |
+| `/groundwork:work-on-next-task` | Execute next uncompleted task |
+| `/groundwork:work-on` | Work on a specific task by number |
+| `/groundwork:skills` | List all available skills |
+| `/groundwork:groundwork-check` | Validate plugin installation |
+| `/groundwork:groundwork-help` | List all commands and skills with descriptions |
+| `/groundwork:split-spec` | Split single-file spec into directory structure |
 
 ## Configuration
 

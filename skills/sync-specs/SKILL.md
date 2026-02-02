@@ -1,6 +1,6 @@
 ---
 name: sync-specs
-description: Use when user invokes `/sync-specs` or at session end when product requirements, features, or scope changed during the session
+description: Use when at session end when product requirements, features, or scope changed during the session
 ---
 
 # Sync Product Specs Skill
@@ -19,7 +19,7 @@ Keeps `specs/product_specs.md` synchronized with product decisions made during s
 ## When to Trigger
 
 This skill should activate when:
-- User explicitly invokes `/sync-specs`
+- User explicitly invokes `/groundwork:source-product-specs-from-code`
 - Session involved product decisions (new features, requirement changes)
 - User feedback changed scope or priorities
 - New edge cases or requirements were discovered
@@ -232,10 +232,10 @@ Alternatively, use a **hook** for lightweight triggering:
 ## Interaction with Other Skills
 
 This skill works in concert with:
-- `/product-design` - For deliberate, interactive requirement creation
-- `/sync-architecture` - PRD changes may trigger architecture updates
+- `groundwork:product-design` - For deliberate, interactive requirement creation
+- `groundwork:sync-architecture` - PRD changes may trigger architecture updates
 
-When both `/sync-specs` and `/sync-architecture` run:
-1. Run `/sync-specs` first (product drives architecture)
+When both `groundwork:sync-specs` and `groundwork:sync-architecture` run:
+1. Run `groundwork:sync-specs` first (product drives architecture)
 2. Note any new requirements that may need architectural support
-3. Run `/sync-architecture` with awareness of PRD changes
+3. Run `groundwork:sync-architecture` with awareness of PRD changes

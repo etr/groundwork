@@ -60,8 +60,8 @@ This ensures each task starts from a clean baseline and changes are integrated i
 **Ask for confirmation before proceeding.**
 
 If user declines, stop and suggest alternatives:
-- `/execute-task N` to work on a specific task
-- `/next-task` to work on just the next available task
+- `/groundwork:work-on N` to work on a specific task
+- `/groundwork:work-on-next-task` to work on just the next available task
 
 ### Step 3: Execute Loop
 
@@ -113,7 +113,7 @@ When all tasks complete successfully, report:
 - Cleaned up: X
 
 ### Next Steps
-- Run `/sync-specs` to update specs with any implementation changes
+- Run `/source-product-specs-from-code` to update specs with any implementation changes
 - Plan next phase if milestone complete
 - Review merged changes with `git log --oneline -10`
 ```
@@ -122,7 +122,7 @@ When all tasks complete successfully, report:
 
 | Situation | Response |
 |-----------|----------|
-| No tasks file | "Tasks file not found. Run `/tasks` to generate tasks." |
+| No tasks file | "Tasks file not found. Run `/groundwork:create-tasks` to generate tasks." |
 | No remaining tasks | "All tasks are already complete! Nothing to execute." |
 | All remaining blocked | "All remaining tasks are blocked. Cannot proceed automatically." |
 | Single task remaining | Execute normally (still confirm before starting) |

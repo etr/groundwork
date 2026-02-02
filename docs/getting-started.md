@@ -47,19 +47,19 @@ Skills are reusable workflows that guide Claude through complex tasks. They're i
 
 **Planning a new feature?**
 ```
-/product-design
+/groundwork:design-product
 ```
 This guides creation of a product requirements document.
 
 **Ready to implement?**
 ```
-/tasks
+/groundwork:create-tasks
 ```
 Generates implementation tasks from architecture.
 
 **Working through tasks?**
 ```
-/next-task
+/groundwork:work-on-next-task
 ```
 Identifies and works on the next unblocked task.
 
@@ -74,16 +74,16 @@ Identifies and works on the next unblocked task.
 
 ### For New Projects
 
-1. `/product-design` - Define requirements
-2. `/architecture` - Design technical approach
-3. `/tasks` - Generate implementation tasks
-4. `/next-task` - Work through tasks one by one
-5. `/verify` - Verify work before marking complete
+1. `/groundwork:design-product` - Define requirements
+2. `/groundwork:design-architecture` - Design technical approach
+3. `/groundwork:create-tasks` - Generate implementation tasks
+4. `/groundwork:work-on-next-task` - Work through tasks one by one
+5. `/groundwork:verify-executed-work` - Verify work before marking complete
 
 ### For Existing Projects
 
-1. Run `/skills` to see available skills
-2. Use `/code-review` before creating PRs
+1. Run `/groundwork:skills` to see available skills
+2. Use `/groundwork:code-review` before creating PRs
 
 ## Tips
 
@@ -94,6 +94,6 @@ Identifies and works on the next unblocked task.
 
 ## Getting Help
 
-- `/skills` - List all available skills
-- `/groundwork-check` - Validate plugin installation
+- `/groundwork:skills` - List all available skills
+- `/groundwork:groundwork-check` - Validate plugin installation
 - See the README for full documentation

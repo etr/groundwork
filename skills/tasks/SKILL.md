@@ -1,6 +1,6 @@
 ---
 name: tasks
-description: Use when user invokes `/tasks` or asks to create task list, plan implementation, break down work, or generate tickets from product specs and architecture
+description: Use when user asks to create task list, plan implementation, break down work, or generate tickets from product specs and architecture
 ---
 
 # Task Generation Skill
@@ -40,8 +40,8 @@ Read both input specs (each may be a single file or directory) and extract:
 
 If either spec is missing, prompt user:
 > "I need both the PRD and architecture to generate tasks.
-> - PRD missing? Run `/product-design`
-> - Architecture missing? Run `/architecture`"
+> - PRD missing? Run `/groundwork:design-product`
+> - Architecture missing? Run `/groundwork:design-architecture`"
 
 ## Step 2: Define Milestones
 
@@ -83,7 +83,7 @@ For each milestone, generate tasks using the format specified in the "Required T
 
 ## Required Task Format
 
-Every task MUST follow this exact format to ensure compatibility with `/next-task` and other skills:
+Every task MUST follow this exact format to ensure compatibility with the skill `groundwork:next-task` and other skills:
 
 ```markdown
 ### TASK-NNN: [Task Title]

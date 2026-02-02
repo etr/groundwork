@@ -106,15 +106,15 @@ fi
 
 # Generate suggestion message based on state
 if $has_prd && $has_arch && $has_tasks; then
-    specs_notice="\n\n**Project context available:** PRD, Architecture, Tasks in specs/. Use /next-task to work on the next task."
+    specs_notice="\n\n**Project context available:** PRD, Architecture, Tasks in specs/. Use /groundwork:work-on-next-task to work on the next task."
 elif $has_prd && $has_arch; then
-    specs_notice="\n\n**PRD and Architecture available.** Run /tasks to generate implementation tasks."
+    specs_notice="\n\n**PRD and Architecture available.** Run /groundwork:create-tasks to generate implementation tasks."
 elif $has_prd; then
-    specs_notice="\n\n**PRD available.** Run /architecture to design the technical approach based on your requirements."
+    specs_notice="\n\n**PRD available.** Run /groundwork:design-architecture to design the technical approach based on your requirements."
 elif $has_code; then
     specs_notice="\n\n**Project has code but no specs.** I can analyze your codebase to propose initial product specifications. Run /product-design to get started."
 else
-    specs_notice="\n\n**Getting started:** Run /product-design to define your product requirements."
+    specs_notice="\n\n**Getting started:** Run /groundwork:design-product to define your product requirements."
 fi
 
 # Add gh warning, update notice, and restored state if applicable

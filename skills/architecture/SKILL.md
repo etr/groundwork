@@ -1,6 +1,6 @@
 ---
 name: architecture
-description: Use when user invokes `/architecture` or asks to design system architecture, make architectural decisions, or translate PRD into technical design
+description: Use when user asks to design system architecture, make architectural decisions, or translate PRD into technical design
 ---
 
 # Architecture Design Skill

@@ -1,6 +1,6 @@
 ---
 name: next-task
-description: Use when user invokes `/next-task` or asks to work on the next task, continue with tasks, or wants to know what to do next
+description: Use when user asks to work on the next task, continue with tasks, or wants to know what to do next
 requires: execute-task
 ---
 
@@ -50,10 +50,10 @@ Parse the tasks to find the next task to work on:
 
 | Situation | Response |
 |-----------|----------|
-| No `specs/` directory | "No specs directory found. Run `/product-design` to start defining your project." |
-| Missing tasks file | "Tasks file not found. Run `/tasks` to generate tasks from your PRD and architecture." |
-| No tasks in file | "No tasks found in specs/tasks.md. The file may need to be regenerated with `/tasks`." |
-| All tasks complete | "All tasks complete! Consider running `/sync-specs` to update documentation or plan the next phase." |
+| No `specs/` directory | "No specs directory found. Run `/groundwork:design-product` to start defining your project." |
+| Missing tasks file | "Tasks file not found. Run `/groundwork:create-tasks` to generate tasks from your PRD and architecture." |
+| No tasks in file | "No tasks found in specs/tasks.md. The file may need to be regenerated with `/groundwork:create-tasks`." |
+| All tasks complete | "All tasks complete! Consider running `/groundwork:source-product-specs-from-code` to update documentation or plan the next phase." |
 | Only blocked tasks | "All remaining tasks are blocked. Blocked tasks: [list]. Would you like to override and work on one anyway?" |
 | Parse error | "Could not parse tasks.md. Expected format: `### TASK-NNN: Title` with `**Status:**` field." |
 

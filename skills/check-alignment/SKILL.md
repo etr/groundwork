@@ -38,9 +38,9 @@ Scan codebase for implementation:
 > - [List missing specs]
 >
 > Run the appropriate commands to create them:
-> - PRD: `/product-design`
-> - Architecture: `/architecture`
-> - Tasks: `/tasks`"
+> - PRD: `/groundwork:design-product`
+> - Architecture: `/groundwork:design-architecture`
+> - Tasks: `/groundwork:create-tasks`"
 
 ### Step 2: Check PRD Alignment
 
@@ -123,20 +123,20 @@ Based on findings, provide actionable next steps:
 
 **For PRD deviations:**
 > "Either:
-> - Run `/sync-specs` to update the PRD to match implementation, OR
+> - Run `/groundwork:source-product-specs-from-code` to update the PRD to match implementation, OR
 > - Fix the implementation to match PRD requirement PRD-XXX-REQ-NNN"
 
 **For architecture deviations:**
 > "Either:
-> - Run `/sync-architecture` to update architecture to match implementation, OR
+> - Run `/groundwork:source-architecture-from-code` to update architecture to match implementation, OR
 > - Refactor code to follow DR-NNN (currently using [actual] instead of [documented])"
 
 **For missing implementations:**
-> "Run `/next-task` to implement missing requirements, or `/task N` to work on specific tasks"
+> "Run `/groundwork:work-on-next-task` to implement missing requirements, or `/groundwork:work-on N` to work on specific tasks"
 
 **Offer resolution options:**
 > "Found [N] misalignments. Would you like me to:
-> 1. Update specs to match implementation (`/sync-specs`, `/sync-architecture`)
+> 1. Update specs to match implementation (`/groundwork:source-product-specs-from-code`, `/groundwork:source-architecture-from-code`)
 > 2. List implementation changes needed to match specs
 > 3. Go through each misalignment individually"
 

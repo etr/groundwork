@@ -34,27 +34,27 @@ Present the components grouped by category:
 List commands organized by purpose:
 
 **Spec-Driven Development:**
-- `/product-design` - Define product requirements
-- `/architecture` - Design technical approach
-- `/tasks` - Generate implementation tasks
-- `/next-task` - Work on the next task
+- `/groundwork:design-product` - Define product requirements
+- `/groundwork:design-architecture` - Design technical approach
+- `/groundwork:create-tasks` - Generate implementation tasks
 
 **Task Execution:**
-- `/task [N]` - Work on a specific task by number
+- `/groundwork:work-on [N]` - Work on a specific task by number
+- `/groundwork:work-on-next-task` - Work on the next task
 
 **Sync & Alignment:**
-- `/sync-specs` - Sync specs with code changes
-- `/sync-architecture` - Update architecture docs
-- `/check-alignment` - Verify spec alignment (full audit)
-- `/verify` - Quick verification checkpoint for current work
+- `/groundwork:source-product-specs-from-code` - Sync specs with code changes
+- `/groundwork:source-architecture-from-code` - Update architecture docs
+- `/groundwork:check-specs-alignment` - Verify spec alignment (full audit)
+- `/groundwork:verify-executed-work` - Quick verification checkpoint for current work
 
 **Code Review:**
-- `/code-review` - Review code changes
+- `/groundwork:code-review` - Review code changes
 
 **Plugin Management:**
-- `/groundwork-check` - Validate plugin health
-- `/groundwork-help` - Show this help
-- `/skills` - List available skills
+- `/groundwork:groundwork-check` - Validate plugin health
+- `/groundwork:groundwork-help` - Show this help
+- `/groundwork:skills` - List available skills
 
 #### Skills (Invoked via Skill Tool)
 
@@ -66,18 +66,18 @@ Skills are invoked using the Skill tool and provide structured workflows for:
 - Frontend design
 - And more...
 
-Use `/skills` to see the full list of available skills.
+Use `/groundwork:skills` to see the full list of available skills.
 
 ### Step 4: Usage Examples
 
 Provide usage examples:
 
 ```
-/product-design          # Start defining a new product
-/architecture            # Design the technical approach
-/tasks                   # Generate implementation tasks
-/next-task               # Work on the next task
-/groundwork-check        # Check plugin health
+/groundwork:design-product          # Start defining a new product
+/groundwork:design-architecture     # Design the technical approach
+/groundwork:create-tasks            # Generate implementation tasks
+/groundwork:work-on-next-task       # Work on the next task
+/groundwork:groundwork-check        # Check plugin health
 ```
 
 ### Step 5: Additional Resources

@@ -1,6 +1,6 @@
 ---
 name: sync-architecture
-description: Use when user invokes `/sync-architecture` or at session end when architectural decisions were made, new tech choices added, or implementation deviated from documented architecture
+description: Use when at session end when architectural decisions were made, new tech choices added, or implementation deviated from documented architecture
 ---
 
 # Sync Architecture Skill
@@ -19,7 +19,7 @@ Keeps `specs/architecture.md` synchronized with actual implementation decisions.
 ## When to Trigger
 
 This skill should activate when:
-- User explicitly invokes `/sync-architecture`
+- User explicitly invokes `/groundwork:source-architecture-from-code`
 - Session involved architectural decisions (new tech choices, pattern changes)
 - Implementation deviated from documented architecture
 - New components or integrations were added
@@ -214,5 +214,5 @@ Alternatively, use a **hook** for lightweight triggering:
 ```
 
 This skill is designed to work as both:
-- **Manual skill** - User invokes `/sync-architecture`
+- **Manual skill** - User invokes `/groundwork:source-architecture-from-code`
 - **Claude Code agent** - Automatically triggers at session end
