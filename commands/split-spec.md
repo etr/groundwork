@@ -3,6 +3,7 @@ name: split-spec
 description: Convert a single-file spec to directory-based format for better organization
 argument-hint: "[product_specs|architecture|tasks]"
 allowed-tools: ["Read", "Edit", "Bash", "Glob", "Grep", "Write"]
+disable-model-invocation: true
 ---
 
 # Split Spec Command

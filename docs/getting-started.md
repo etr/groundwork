@@ -63,9 +63,6 @@ Generates implementation tasks from architecture.
 ```
 Identifies and works on the next unblocked task.
 
-**Debugging an issue?**
-Invoke the `root-cause-tracing` skill for systematic root cause analysis.
-
 ### Skill Categories
 
 1. **Planning & Design** - Start here for new work

@@ -73,7 +73,40 @@ Read the following specs to understand the full project context. Each spec may e
   - Architecture missing: "Run `/architecture` to create the architecture"
   - Tasks missing: "Run `/tasks` to generate the task list"
 
-### Step 5: Present Task Summary
+### Step 5: Configure Worktree Isolation
+
+Git worktrees provide isolated working directories for task execution:
+- Changes don't affect main workspace until explicitly merged
+- Clean baseline ensures reproducible results
+- Safe to experiment without impacting other work
+
+**Check for batch mode context:**
+If `GROUNDWORK_AUTO_MERGE=true` is set in the conversation context (from `/just-do-it`):
+- Skip the user prompt
+- Automatically use worktree isolation with auto-merge enabled
+- Proceed directly to worktree creation
+
+**Otherwise, present options to user:**
+
+> "Would you like to work in an isolated git worktree?
+>
+> **Benefits:** Clean baseline, changes isolated until merge, can switch tasks freely.
+>
+> 1. **Auto-merge** (Recommended) - Merge automatically after successful verification
+> 2. **Manual verification** - You review and merge manually when ready
+> 3. **No worktree** - Execute in current directory"
+
+**If worktree selected (option 1 or 2):**
+1. Invoke the `groundwork:use-git-worktree` skill with the task ID
+2. Record the merge preference (auto or manual)
+3. Change working directory to the worktree path
+4. Continue with remaining steps in the worktree context
+
+**If no worktree selected (option 3):**
+- Continue in current directory
+- Skip Step 8.5 (worktree finalization)
+
+### Step 6: Present Task Summary
 
 Present a summary including:
 
@@ -83,6 +116,11 @@ Present a summary including:
 **Milestone:** [Milestone name]
 **Component:** [Component from architecture]
 **Estimate:** [T-shirt size]
+
+### Execution Context
+**Working Directory:** [Current directory or worktree path]
+**Branch:** [Current branch or task/TASK-NNN]
+**Merge Mode:** [auto-merge | manual | n/a]
 
 ### Goal
 [Task goal from tasks.md]
@@ -109,7 +147,7 @@ Ready to begin?
 
 Wait for user confirmation before proceeding.
 
-### Step 6: Execute Task
+### Step 7: Execute Task
 
 1. **Update status** - Edit the appropriate tasks file to change task status to `**Status:** In Progress`
    - For single file: Edit `specs/tasks.md`
@@ -126,9 +164,9 @@ Wait for user confirmation before proceeding.
    - Write code that minimizes the cognitive load of those of read it.
    - Challenge your own work before presenting it.
    - Don't be lazy. No temporary fixes. All code is production code.
-4. **Verify acceptance criteria** - Ensure each criterion is met before marking complete
+5. **Verify acceptance criteria** - Ensure each criterion is met before marking complete
 
-### Step 7: Verify Implementation
+### Step 8: Verify Implementation
 
 Before marking the task complete, systematically verify all work:
 
@@ -170,13 +208,75 @@ Before marking the task complete, systematically verify all work:
 Ready to mark task complete.
 ```
 
-### Step 8: Complete Task
+### Step 9: Multi-Agent Verification
+
+Invoke the `groundwork:validation-loop` skill to run autonomous verification.
+
+This skill will:
+- Launch all 4 verification agents in parallel
+- Automatically fix any issues found
+- Re-run validation until all agents approve
+- Escalate to user only when stuck (same issue 3x)
+
+**Do not proceed to Step 10 until validation-loop returns PASS.**
+
+### Step 10: Complete Task
 
 1. **Update status** - Edit the appropriate tasks file to change task status to `**Status:** Complete`
    - For single file: Edit `specs/tasks.md`
    - For directory: Edit the specific task file
 2. **Report completion** - Summarize what was accomplished
-3. **Offer to continue** - Ask if user wants to proceed to the next task
+3. **Proceed to worktree finalization** (if using worktree)
+
+### Step 11: Worktree Finalization
+
+**Skip this step if not using a worktree.**
+
+Before finalizing, ensure all changes are committed:
+```bash
+git status --porcelain
+```
+
+If uncommitted changes exist, commit them with an appropriate message.
+
+**Based on merge preference:**
+
+**Auto-merge mode:**
+1. Return to original repository directory
+2. Checkout the base branch
+3. Merge the task branch with no-fast-forward:
+   ```bash
+   git merge --no-ff task/TASK-NNN -m "Merge task/TASK-NNN: [Task Title]"
+   ```
+4. If merge succeeds:
+   - Remove the worktree: `git worktree remove <path>`
+   - Delete the branch: `git branch -d task/TASK-NNN`
+   - Report success
+5. If merge conflicts:
+   - Report the conflicting files
+   - Provide resolution guidance
+   - Keep worktree for investigation
+
+**Manual verification mode:**
+Report the worktree location and provide merge instructions:
+
+```markdown
+## Task Complete in Worktree
+
+**Location:** .worktrees/TASK-NNN
+**Branch:** task/TASK-NNN
+**Base Branch:** [base branch name]
+
+All changes committed. When ready to merge:
+```bash
+git checkout [base-branch]
+git merge --no-ff task/TASK-NNN
+git worktree remove .worktrees/TASK-NNN
+git branch -d task/TASK-NNN
+```
+```
+
+### Step 12: Offer to Continue
 
 ```markdown
 ## Completed: [TASK-NNN] [Task Title]
@@ -188,6 +288,8 @@ Ready to mark task complete.
 **Acceptance criteria verified:**
 - [x] [Criterion 1] - [How verified]
 - [x] [Criterion 2] - [How verified]
+
+**Worktree status:** [Merged and cleaned up | Pending manual merge at .worktrees/TASK-NNN | N/A]
 
 Would you like to continue with the next task? (Run `/next-task` or `/execute-task N`)
 ```

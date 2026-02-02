@@ -94,11 +94,10 @@ The plugin's shell scripts (`.sh` files) use bash and won't work directly in Pow
 |-------|-------------|
 | `next-task` | Execute next uncompleted task from specs |
 
-### Testing & Debugging (2 skills)
+### Testing & Debugging (1 skill)
 | Skill | Description |
 |-------|-------------|
 | `test-driven-development` | Red-Green-Refactor with 80%+ coverage |
-| `root-cause-tracing` | Systematic root cause analysis techniques |
 
 ### Maintenance (4 skills)
 | Skill | Description |

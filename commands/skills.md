@@ -36,7 +36,7 @@ Group skills into categories based on keywords in their names/descriptions:
 | Category | Keywords |
 |----------|----------|
 | Planning & Design | plan, design, product, architecture, task |
-| Testing & Debugging | test, debug, root-cause |
+| Testing & Verification | test, verify, validation, tdd |
 | Maintenance & Sync | sync, alignment, check, verify |
 | Meta | using |
 
@@ -87,11 +87,10 @@ Run `/help` to see all available slash commands.
 | Skill | Description |
 |-------|-------------|
 | `test-driven-development` | Use when implementing any feature |
-| `root-cause-tracing` | Use when debugging issues |
 
 ---
 
-**Total:** 10 skills available
+**Total:** 9 skills available
 
 ## Commands
 

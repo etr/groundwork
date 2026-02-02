@@ -39,6 +39,11 @@ When the user proposes a feature or change, ask clarifying questions to understa
 
 **Keep questions focused** - ask 2-3 at a time, not all at once. Build understanding iteratively.
 
+**Question Style:**
+- Prefer multiple-choice questions when possible - they're easier to answer and keep conversations focused
+- Explore one topic at a time to avoid overwhelming stakeholders
+- When presenting alternatives, lead with your recommendation
+
 ## Step 2: Design EARS Requirements
 
 Once the feature is understood, draft requirements using EARS syntax.
@@ -120,6 +125,14 @@ Requirements that may be technically difficult to satisfy together:
 
 Do not proceed to Step 3 until conflicts are resolved or explicitly accepted.
 
+## Step 2.6: Present Progressively
+
+When presenting complex feature blocks:
+- Break into 200-300 word segments
+- Seek confirmation after each section before continuing
+- Start with problem/outcome, then scope, then requirements
+- This catches misunderstandings early and keeps stakeholders engaged
+
 ## Step 3: Present Draft for Approval
 
 Before editing the PRD, present the complete feature block:
@@ -154,6 +167,11 @@ Before editing the PRD, present the complete feature block:
 ```
 
 Ask: "Does this capture your requirements? Any changes before I update the PRD?"
+
+**Scope discipline:**
+- Apply YAGNI thinking - challenge every "nice to have"
+- Ask: "What's the simplest version that delivers the core value?"
+- If scope feels large, propose a phased approach
 
 ## Step 4: Commit to PRD
 

@@ -2,6 +2,7 @@
 name: groundwork-check
 description: Validate the Groundwork plugin for common issues
 allowed-tools: ["Bash", "Read"]
+disable-model-invocation: true
 ---
 
 # Groundwork Plugin Health Check
