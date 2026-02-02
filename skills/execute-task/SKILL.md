@@ -1,6 +1,6 @@
 ---
 name: execute-task
-description: Execute a task using the three-phase workflow. Usage: /execute-task 4 or /execute-task TASK-004
+description: Three-phase task execution workflow (plan → implement → complete).
 ---
 
 # Execute Task
