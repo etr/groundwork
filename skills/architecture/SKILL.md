@@ -85,6 +85,11 @@ For each decision point, present **2-4 options** using this format:
 What are your thoughts? Any constraints I should know about?
 ```
 
+**Presentation style:**
+- Present one decision at a time, wait for resolution before moving on
+- For complex options, break explanation into digestible chunks (200-300 words)
+- Prefer multiple-choice follow-up questions when gathering constraints
+
 ### Exploratory Questions
 
 When presenting options, ask questions to surface hidden constraints:
@@ -120,6 +125,13 @@ Before recording a decision, check for conflicts with earlier decisions:
 - If user has concerns: Discuss, possibly add new options
 - If user wants to defer: Note as open question, continue
 - If conflict identified: Resolve before proceeding
+
+### YAGNI for Architecture
+
+- Challenge decisions that add complexity "for future flexibility"
+- Prefer simple solutions that can evolve over pre-designed extensibility
+- When in doubt, choose the option with fewer moving parts
+- Ask: "What's the cost of adding this later vs. building it now?"
 
 ## Step 4: Document Architecture
 

@@ -73,6 +73,10 @@ M5: Billing Integration
 
 Present proposed milestones to user for feedback before generating tasks.
 
+**Presentation style:**
+- Present milestones one at a time, confirm understanding before continuing
+- Use multiple-choice questions to validate milestone scope (e.g., "Should M1 include: A) just signup, B) signup + login, C) full auth flow?")
+
 ## Step 3: Generate Tasks
 
 For each milestone, generate tasks using the format specified in the "Required Task Format" section below.
@@ -162,6 +166,12 @@ Prefer tasks that deliver working functionality over horizontal layers:
 - Parallelize where possible
 - Flag critical path tasks
 
+### YAGNI for Tasks
+- Only create tasks for committed scope, not speculative features
+- Challenge tasks that exist "just in case" or "for later"
+- If unsure whether a task is needed, defer it to a future milestone
+- Ask: "Is this task essential for the milestone, or is it gold-plating?"
+
 ### Acceptance Criteria
 
 Each criterion must be something that can be **verified** - checked or tested, not vague.
@@ -218,6 +228,11 @@ Present the complete task list organized by milestone. Ask:
 > - Should any tasks be split or combined?"
 
 Iterate until user approves, then write to `specs/tasks.md`.
+
+**Progressive presentation:**
+- Present tasks one milestone at a time
+- Wait for approval on each milestone before presenting the next
+- This catches scope creep early and keeps stakeholders engaged
 
 ## Step 6: Suggest Next Step
 
