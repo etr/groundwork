@@ -63,6 +63,8 @@ These thoughts mean STOP—you're rationalizing:
 | "I'll just do this one thing first" | Check BEFORE doing anything. |
 | "This feels productive" | Undisciplined action wastes time. Skills prevent this. |
 | "I know what that means" | Knowing the concept ≠ using the skill. Invoke it. |
+| "I'll just start working on the task" | Task execution REQUIRES the execute-task skill. Invoke it first. |
+| "Let me implement this task" | Always invoke execute-task skill - it handles worktree isolation. |
 
 ## Skill Priority
 
@@ -77,11 +79,12 @@ When multiple skills could apply, use this order:
 
 **Rigid** (follow exactly, don't adapt away discipline):
 - `test-driven-development` - Red-green-refactor cycle
+- `execute-task`, `next-task` - Task execution with worktree isolation
 - `verify`, `check-alignment`, `validation-loop` - Verification workflows
 
 **Flexible** (adapt principles to context):
 - `product-design`, `architecture` - Design approaches
-- `tasks`, `execute-task`, `next-task` - Task management
+- `tasks` - Task generation
 
 The skill itself tells you which type it is.
 

@@ -1,6 +1,6 @@
 ---
 name: execute-task
-description: Use when executing a specific task - loads context, presents summary, executes work items, and completes the task
+description: Use when executing a specific task - MUST prompt for worktree isolation first, then loads context, executes with TDD, runs validation
 ---
 
 # Execute Task Skill
