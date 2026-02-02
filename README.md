@@ -160,6 +160,11 @@ See `docs/hooks-configuration.md` for full documentation.
 
 This plugin consolidates work from multiple sources:
 
+### Superpowers
+- **[superpowers](https://github.com/obra/superpowers)** by Jesse Vincent
+  - The `using-groundwork` skill is based on the [using-superpowers skill](https://github.com/obra/superpowers/blob/main/skills/executing-plans/SKILL.md)
+  - The general plugin structure and patterns were learned from studying this project
+
 ### Official Claude Plugins
 - **[claude-plugins-official](https://github.com/anthropics/claude-plugins-official)** by Anthropic
   - code-review plugin
