@@ -1,11 +1,33 @@
 ---
 name: execute-task
-description: Use when executing a specific task - always uses worktree isolation, loads context, executes with TDD, runs validation
+description: Use when executing a specific task - REQUIRES worktree isolation (mandatory), TDD methodology (mandatory), and validation-loop completion (mandatory). No exceptions.
 ---
 
 # Execute Task Skill
 
 Core execution logic for working on a specific task. This skill is invoked by both `/execute-task` and `/next-task`.
+
+## The Non-Negotiable Rules
+
+```
+1. ALL task execution MUST use worktree isolation. No exceptions.
+2. ALL implementation MUST follow TDD. No code before tests.
+3. ALL tasks MUST complete validation-loop before marking done.
+```
+
+If you find yourself skipping any of these: STOP. You are violating the skill.
+
+## Red Flags - STOP Immediately
+
+If you find yourself doing any of these, you are violating this skill:
+
+| Violation | What you should do instead |
+|-----------|---------------------------|
+| Working in main workspace directory | Create worktree first (Step 2) |
+| Writing implementation code before tests | Follow TDD skill |
+| Creating own plan instead of using Plan agent | Use Plan agent (Step 6) |
+| Skipping validation-loop | Complete Step 10 before Step 11 |
+| Marking task complete without all criteria verified | Finish Step 9 first |
 
 ## Workflow
 
@@ -20,9 +42,18 @@ Parse the task identifier from the argument:
 **Error Handling:**
 - Invalid format: "Please specify a task number, e.g., `/execute-task 4` or `/execute-task TASK-004`"
 
-### Step 2: Create Worktree Isolation
+### Step 2: Create Worktree Isolation (MANDATORY)
 
-All task execution uses git worktree isolation. This ensures:
+**STOP. This step is not optional.**
+
+Before proceeding to Step 3:
+- [ ] Worktree MUST be created via `groundwork:use-git-worktree`
+- [ ] Working directory MUST be the worktree path
+- [ ] If either is false: DO NOT PROCEED
+
+Attempting to continue without worktree = skill violation.
+
+**Why worktree isolation is mandatory:**
 - Changes don't affect main workspace until merge
 - Clean baseline for reproducible results
 - Safe experimentation without impacting other work
@@ -40,7 +71,8 @@ Before proceeding, load these skills for reference:
 1. Invoke `groundwork:use-git-worktree` with the task ID
 2. Record merge mode (auto or manual) for Step 12
 3. Change working directory to the worktree path
-4. Continue with remaining steps in worktree context
+4. Verify you are now in the worktree: `pwd` should show `.worktrees/TASK-NNN`
+5. Only then continue with remaining steps
 
 ### Step 3: Load Tasks File
 
@@ -95,7 +127,9 @@ Read the following specs to understand the full project context. Each spec may e
   - Architecture missing: "Run `/architecture` to create the architecture"
   - Tasks missing: "Run `/tasks` to generate the task list"
 
-### Step 6: Plan Implementation
+### Step 6: Plan Implementation (MANDATORY - Use Plan Agent)
+
+**STOP. You MUST use the Plan agent. Do NOT create your own plan.**
 
 Before presenting the task summary, create an implementation plan using the Plan agent.
 
@@ -105,13 +139,18 @@ Before presenting the task summary, create an implementation plan using the Plan
 - Relevant architecture decisions
 - Available test patterns in codebase
 
-**Plan requirements (non-negotiable):**
-The plan MUST include:
-1. **Worktree execution** - All work happens in the isolated worktree
-2. **TDD methodology** - Tests written before implementation
-3. **Validation loop execution** - Plan must end with `groundwork:validation-loop`
+**Plan Validation Checklist (ALL must be checked):**
+- [ ] Plan states work happens in worktree (not main workspace)
+- [ ] Plan includes TDD cycle (write test → implement → verify)
+- [ ] Plan ends with `groundwork:validation-loop` invocation
 
-**If plan doesn't include these, reject it and re-plan.**
+**If ANY box is unchecked:**
+1. REJECT the plan
+2. State which requirements are missing
+3. Re-invoke Plan agent with explicit instruction to include missing items
+4. Repeat until all boxes checked
+
+Do NOT proceed to Step 7 with an incomplete plan.
 
 Store the approved plan for reference during execution.
 
@@ -318,3 +357,16 @@ When checking dependencies:
 1. Parse the `Blocked by:` field for task IDs (e.g., `TASK-001, TASK-002`)
 2. Look up each referenced task's status
 3. Task is blocked if ANY dependency is not Complete
+
+## Execution Checklist (Verify Before Completion)
+
+Before marking any task complete, verify:
+
+- [ ] Working in worktree (`.worktrees/TASK-NNN`)
+- [ ] Plan agent was used and plan was approved
+- [ ] TDD was followed (tests written before implementation)
+- [ ] All acceptance criteria verified
+- [ ] validation-loop returned PASS
+- [ ] Task status updated in specs/tasks.md
+
+If any unchecked: task is NOT complete. Continue working.
