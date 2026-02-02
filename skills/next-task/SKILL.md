@@ -36,7 +36,7 @@ Parse the tasks to find the next task to work on:
    > - **TASK-004:** [Title] - Earlier in sequence, may have been skipped intentionally
    > - **TASK-006:** [Title] - Next sequential after completed work
    >
-   > Which would you like to work on? (or use `/execute-task N` to select a specific task)"
+   > Which would you like to work on? (or use `/groundwork:work-on N` to select a specific task)"
 
    Wait for user selection before proceeding.
 
@@ -44,7 +44,7 @@ Parse the tasks to find the next task to work on:
 
 **Dependency check:** A task is blocked if its `Blocked by:` field lists any task that is not `Complete`.
 
-**Tip:** For direct task selection, use `/execute-task N` to work on a specific task by number.
+**Tip:** For direct task selection, use `/groundwork:work-on N` to work on a specific task by number.
 
 ### Step 3: Handle Edge Cases
 

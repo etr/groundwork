@@ -150,7 +150,7 @@ After writing the architecture document, suggest the next workflow step:
 
 > "Architecture documented with [N] decision records.
 >
-> **Next step:** Run `/tasks` to generate implementation tasks from your PRD and architecture."
+> **Next step:** Run `/groundwork:create-tasks` to generate implementation tasks from your PRD and architecture."
 
 ## Decision Record Format (ADR-lite)
 

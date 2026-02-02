@@ -240,7 +240,7 @@ After writing the tasks document, suggest the next workflow step:
 
 > "Task list created with [N] tasks across [M] milestones.
 >
-> **Next step:** Run `/next-task` to begin implementation, or `/task N` to work on a specific task."
+> **Next step:** Run `/groundwork:work-on-next-task` to begin implementation, or `/groundwork:work-on N` to work on a specific task."
 
 ## Task Categories
 

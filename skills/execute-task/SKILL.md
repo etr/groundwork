@@ -19,7 +19,7 @@ Parse the task identifier from the argument:
 - **Full format** (e.g., `TASK-004`): Use as-is
 - **No argument**: Invoke `groundwork:next-task` skill instead and stop here
 
-**Error:** Invalid format → "Please specify a task number, e.g., `/execute-task 4` or `/execute-task TASK-004`"
+**Error:** Invalid format → "Please specify a task number, e.g., `/groundwork:work-on 4` or `/groundwork:work-on TASK-004`"
 
 ### Step 2: Load Task File
 
@@ -227,7 +227,7 @@ git branch -d task/TASK-NNN
 
 **Worktree status:** [Merged | Pending at .worktrees/TASK-NNN]
 
-Continue with `/next-task` or `/execute-task N`
+Continue with `/groundwork:work-on-next-task` or `/groundwork:work-on N`
 ```
 
 ---

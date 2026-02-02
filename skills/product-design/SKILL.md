@@ -206,7 +206,7 @@ After successfully updating the PRD, suggest the next workflow step:
 
 > "PRD updated with [feature/changes].
 >
-> **Next step:** Run `/architecture` to design the technical approach for these requirements, or continue adding features with `/product-design`."
+> **Next step:** Run `/groundwork:design-architecture` to design the technical approach for these requirements, or continue adding features with `/groundwork:design-product`."
 
 ## Conversation Patterns
 
