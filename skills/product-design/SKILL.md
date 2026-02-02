@@ -13,6 +13,7 @@ Interactive workflow for iteratively designing and documenting product requireme
 2. **Design** - Draft EARS requirements and check for contradictions
 3. **Approve** - Present draft for user approval
 4. **Commit** - Edit the PRD document when requirements are approved
+5. **Next Step** - Suggest the next workflow action
 
 ## Step 1: Understand the Request
 
@@ -80,17 +81,17 @@ Examples from the project:
 
 For new features, propose a short code (3-4 chars) and confirm with user.
 
-## Step 2.5: Check for Contradictions
+### Check for Contradictions
 
 Before presenting the draft, review for conflicts:
 
-### Internal Contradictions
+#### Internal Contradictions
 Requirements within this feature that may contradict each other:
 - Conflicting behaviors (e.g., "shall be real-time" AND "shall work offline-first")
 - Incompatible constraints (e.g., "shall complete in <100ms" AND "shall process 10,000 items")
 - Mutually exclusive states
 
-### Cross-Feature Conflicts
+#### Cross-Feature Conflicts
 Compare new requirements against existing PRD:
 - **Behavioral conflicts:** New behavior contradicts existing behavior
 - **Resource competition:** Features that compete for same limited resources
@@ -99,7 +100,7 @@ Compare new requirements against existing PRD:
 
 Example: New "anonymous posting" requirement conflicts with existing "all user actions must be audited"
 
-### Technical Incompatibilities
+#### Technical Incompatibilities
 Requirements that may be technically difficult to satisfy together:
 - Performance constraints that conflict
 - Security requirements that limit functionality
@@ -125,7 +126,7 @@ Requirements that may be technically difficult to satisfy together:
 
 Do not proceed to Step 3 until conflicts are resolved or explicitly accepted.
 
-## Step 2.6: Present Progressively
+### Present Progressively
 
 When presenting complex feature blocks:
 - Break into 200-300 word segments

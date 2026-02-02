@@ -104,7 +104,7 @@ If `GROUNDWORK_AUTO_MERGE=true` is set in the conversation context (from `/just-
 
 **If no worktree selected (option 3):**
 - Continue in current directory
-- Skip Step 8.5 (worktree finalization)
+- Skip Step 11 (worktree finalization)
 
 ### Step 6: Present Task Summary
 
