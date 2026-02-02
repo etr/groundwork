@@ -31,12 +31,12 @@ Collect for the agents:
 
 Use Task tool to launch all 4 agents in parallel:
 
-| Agent | Context to Provide |
-|-------|-------------------|
-| `code-quality-reviewer` | Changed files, contents, tests, task definition |
-| `security-reviewer` | Changed files, contents, task definition |
-| `spec-alignment-checker` | Changed files, contents, task definition, product specs |
-| `architecture-alignment-checker` | Changed files, contents, task definition, architecture |
+| Agent (`subagent_type`) | Context to Provide |
+|-------------------------|-------------------|
+| `groundwork:code-quality-reviewer:code-quality-reviewer` | Changed files, contents, tests, task definition |
+| `groundwork:security-reviewer:security-reviewer` | Changed files, contents, task definition |
+| `groundwork:spec-alignment-checker:spec-alignment-checker` | Changed files, contents, task definition, product specs |
+| `groundwork:architecture-alignment-checker:architecture-alignment-checker` | Changed files, contents, task definition, architecture |
 
 Each returns JSON:
 ```json
