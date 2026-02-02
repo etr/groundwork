@@ -5,31 +5,32 @@ description: Use when executing a specific task - REQUIRES worktree isolation (m
 
 # Execute Task Skill
 
-Core execution logic for working on a specific task. This skill is invoked by both `/execute-task` and `/next-task`.
+## MODE CHECK (FIRST)
 
-## The Non-Negotiable Rules
+**If you are in plan mode:** Call `ExitPlanMode()` immediately. Do not explore files, do not read code, do not create plans. Wait for user approval, then restart this skill from Step 1.
 
-```
-1. ALL task execution MUST use worktree isolation. No exceptions.
-2. ALL implementation MUST follow TDD. No code before tests.
-3. ALL tasks MUST complete validation-loop before marking done.
-```
+## MANDATORY GATES
 
-If you find yourself skipping any of these: STOP. You are violating the skill.
+These gates MUST be passed in order. Each gate requires you to output a confirmation block before proceeding.
 
-## Red Flags - STOP Immediately
+### GATE 1: Worktree Isolation
+- **Tool:** `Skill(skill="groundwork:use-git-worktree", args="TASK-NNN")`
+- **Required output:** `✓ GATE 1: Worktree created at .worktrees/TASK-NNN`
+- **BLOCK:** Do not read task files or project specs until this gate is passed
 
-If you find yourself doing any of these, you are violating this skill:
+### GATE 2: Plan Agent
+- **Tool:** `Task(subagent_type="Plan", prompt="[task context]", description="Plan TASK-NNN")`
+- **Required output:** `✓ GATE 2: Plan agent completed, plan validated`
+- **BLOCK:** Do NOT create your own plan. You MUST use the Task tool with subagent_type="Plan"
 
-| Violation | What you should do instead |
-|-----------|---------------------------|
-| Working in main workspace directory | Create worktree first (Step 2) |
-| Writing implementation code before tests | Follow TDD skill |
-| Creating own plan instead of using Plan agent | Use Plan agent (Step 6) |
-| Skipping validation-loop | Complete Step 10 before Step 11 |
-| Marking task complete without all criteria verified | Finish Step 9 first |
+### GATE 3: Validation Loop
+- **Tool:** `Skill(skill="groundwork:validation-loop")`
+- **Required output:** `✓ GATE 3: Validation loop passed`
+- **BLOCK:** Do not mark task complete until this gate is passed
 
-## Workflow
+---
+
+## WORKFLOW
 
 ### Step 1: Parse Task Identifier
 
@@ -39,281 +40,205 @@ Parse the task identifier from the argument:
 - **Full format** (e.g., `TASK-004`): Use as-is
 - **No argument**: Invoke `groundwork:next-task` skill instead and stop here
 
-**Error Handling:**
-- Invalid format: "Please specify a task number, e.g., `/execute-task 4` or `/execute-task TASK-004`"
+**Error:** Invalid format → "Please specify a task number, e.g., `/execute-task 4` or `/execute-task TASK-004`"
 
-### Step 2: Create Worktree Isolation (MANDATORY)
+### Step 2: Create Worktree → GATE 1
 
-**STOP. This step is not optional.**
+**You MUST pass GATE 1 before proceeding.**
 
-Before proceeding to Step 3:
-- [ ] Worktree MUST be created via `groundwork:use-git-worktree`
-- [ ] Working directory MUST be the worktree path
-- [ ] If either is false: DO NOT PROCEED
+1. Invoke: `Skill(skill="groundwork:use-git-worktree", args="TASK-NNN")`
+2. Verify `pwd` shows `.worktrees/TASK-NNN`
+3. Output the gate confirmation:
 
-Attempting to continue without worktree = skill violation.
+```
+✓ GATE 1: Worktree created at .worktrees/TASK-NNN
+```
 
-**Why worktree isolation is mandatory:**
-- Changes don't affect main workspace until merge
-- Clean baseline for reproducible results
-- Safe experimentation without impacting other work
+**Merge mode:** Record whether `GROUNDWORK_AUTO_MERGE=true` (batch mode) or not (interactive mode) for Step 12.
 
-**Pre-load required skills:**
-Before proceeding, load these skills for reference:
-- `groundwork:use-git-worktree` - Worktree creation and management
-- `groundwork:validation-loop` - Multi-agent verification
+**DO NOT proceed to Step 3 until GATE 1 confirmation is output.**
 
-**Determine merge mode:**
-- **Batch mode** (`GROUNDWORK_AUTO_MERGE=true` from `/just-do-it`): Auto-merge after verification
-- **Interactive mode** (all other invocations): Manual verification before merge
+### Step 3: Load Task File
 
-**Create the worktree:**
-1. Invoke `groundwork:use-git-worktree` with the task ID
-2. Record merge mode (auto or manual) for Step 12
-3. Change working directory to the worktree path
-4. Verify you are now in the worktree: `pwd` should show `.worktrees/TASK-NNN`
-5. Only then continue with remaining steps
-
-### Step 3: Load Tasks File
-
-Read the tasks file to locate the specified task:
+Read the tasks file from the worktree:
 - Single file: `specs/tasks.md`
 - Directory: `specs/tasks/` (aggregated in sorted order)
 
-Search for `### TASK-NNN:` pattern matching the requested task identifier.
+Search for `### TASK-NNN:` pattern.
 
-**Error Handling:**
-- Task not found: "TASK-NNN not found in specs/tasks.md"
+**Error:** Task not found → "TASK-NNN not found in specs/tasks.md"
 
 ### Step 4: Validate Task is Workable
 
-Check the task's current state before proceeding:
-
 **If already complete:**
 > "TASK-NNN is already marked Complete. Would you like to:
-> 1. Work on it anyway (this will reset status to In Progress)
+> 1. Work on it anyway (resets to In Progress)
 > 2. Pick a different task"
 
 **If blocked:**
-> "TASK-NNN is blocked by: [list of incomplete dependencies]
+> "TASK-NNN is blocked by: [list]
 > Would you like to:
-> 1. Override and work on it anyway (dependencies will still need completing)
+> 1. Override and work on it anyway
 > 2. Work on a blocking task first: [suggest first blocker]"
 
-Wait for user confirmation before proceeding with blocked or completed tasks.
+Wait for user confirmation before proceeding.
 
 ### Step 5: Load Project Context
 
-Read the following specs to understand the full project context. Each spec may exist as either a single file or a directory:
+Read from the worktree:
+1. **Product specs** - `specs/product_specs.md` or `specs/product_specs/`
+2. **Architecture** - `specs/architecture.md` or `specs/architecture/`
+3. **Tasks** - `specs/tasks.md` or `specs/tasks/`
 
-1. **Product specs** - PRD with EARS requirements
-   - Single file: `specs/product_specs.md`
-   - Directory: `specs/product_specs/` (aggregated in sorted order)
+**If specs missing:** Report which are missing and suggest commands to create them.
 
-2. **Architecture** - Architecture decisions and component design
-   - Single file: `specs/architecture.md`
-   - Directory: `specs/architecture/` (aggregated in sorted order)
+### Step 6: Plan Implementation → GATE 2
 
-3. **Tasks** - Task list with statuses and dependencies
-   - Single file: `specs/tasks.md`
-   - Directory: `specs/tasks/` (aggregated in sorted order)
+**You MUST use the Plan agent. Do NOT create your own plan.**
 
-**Detection:** Check for file first (takes precedence), then directory. When reading a directory, aggregate all `.md` files recursively with `_index.md` first, then numerically-prefixed files, then alphabetically.
+Launch the Plan agent:
 
-**If specs are missing:**
-- Report which specs exist and which are missing
-- Suggest commands to create missing specs:
-  - PRD missing: "Run `/product-design` to create the PRD"
-  - Architecture missing: "Run `/architecture` to create the architecture"
-  - Tasks missing: "Run `/tasks` to generate the task list"
+```
+Task(
+  subagent_type="Plan",
+  prompt="Create implementation plan for TASK-NNN: [task title]
 
-### Step 6: Plan Implementation (MANDATORY - Use Plan Agent)
+Task definition:
+[goal, action items, acceptance criteria from task file]
 
-**STOP. You MUST use the Plan agent. Do NOT create your own plan.**
+Relevant product specs:
+[extracted requirements]
 
-Before presenting the task summary, create an implementation plan using the Plan agent.
+Relevant architecture:
+[extracted decisions]
 
-**Launch Plan agent with:**
-- Task definition (goal, action items, acceptance criteria)
-- Relevant product specs
-- Relevant architecture decisions
-- Available test patterns in codebase
+REQUIREMENTS FOR THE PLAN:
+1. All work happens in worktree .worktrees/TASK-NNN (not main workspace)
+2. Must follow TDD: write test → implement → verify cycle
+3. Must end with groundwork:validation-loop invocation
+",
+  description="Plan TASK-NNN"
+)
+```
 
-**Plan Validation Checklist (ALL must be checked):**
-- [ ] Plan states work happens in worktree (not main workspace)
-- [ ] Plan includes TDD cycle (write test → implement → verify)
-- [ ] Plan ends with `groundwork:validation-loop` invocation
+**Validate the plan:**
+- [ ] Plan states work happens in worktree
+- [ ] Plan includes TDD cycle
+- [ ] Plan ends with validation-loop
 
-**If ANY box is unchecked:**
-1. REJECT the plan
-2. State which requirements are missing
-3. Re-invoke Plan agent with explicit instruction to include missing items
-4. Repeat until all boxes checked
+**If ANY unchecked:** Reject plan, state what's missing, re-invoke Plan agent.
 
-Do NOT proceed to Step 7 with an incomplete plan.
+After plan is validated, output:
 
-Store the approved plan for reference during execution.
+```
+✓ GATE 2: Plan agent completed, plan validated
+```
+
+**DO NOT proceed to Step 7 until GATE 2 confirmation is output.**
 
 ### Step 7: Present Task Summary
 
-Present a summary including:
+Present summary and wait for user confirmation:
 
 ```markdown
 ## Task: [TASK-NNN] [Task Title]
 
-**Milestone:** [Milestone name]
-**Component:** [Component from architecture]
-**Estimate:** [T-shirt size]
+**Milestone:** [name]
+**Component:** [from architecture]
 
 ### Execution Context
-**Working Directory:** [Worktree path]
+**Working Directory:** .worktrees/TASK-NNN
 **Branch:** task/TASK-NNN
 **Merge Mode:** [auto-merge | manual]
 
 ### Goal
-[Task goal from tasks.md]
-
-### Relevant Context
-
-**From PRD:**
-- [Relevant EARS requirements this task implements]
-
-**From Architecture:**
-- [Relevant architecture decisions/components]
+[from task file]
 
 ### Action Items
-- [ ] [Action item 1]
-- [ ] [Action item 2]
-- [ ] [Action item 3]
+- [ ] [item 1]
+- [ ] [item 2]
 
 ### Acceptance Criteria
-- [Criterion 1]
-- [Criterion 2]
+- [criterion 1]
+- [criterion 2]
 
 Ready to begin?
 ```
 
-Wait for user confirmation before proceeding.
-
 ### Step 8: Execute Task
 
-1. **Update status** - Edit the appropriate tasks file to change task status to `**Status:** In Progress`
-   - For single file: Edit `specs/tasks.md`
-   - For directory: Find the file containing the task (e.g., `specs/tasks/M1-authentication/TASK-001.md`)
-2. **Invoke TDD skill** - Use the `groundwork:test-driven-development` skill for all implementation work
-3. **Complete action items** - Work through each action item using TDD methodology:
-   - Write failing test first
-   - Implement minimal code to pass
-   - Refactor while keeping tests green
-4. **Demand Elegance** - For non-trivial changes, pause and ask "Is there a more elegant way?".
-   - If a fix feels hacky: "Knowing everything I know now, implement the elegant solution".
-   - Hacky solutions to complex problems are not elegant.
-   - Over-engineered solutions to simple tasks are not elegant.
-   - Write code that minimizes the cognitive load of those of read it.
-   - Challenge your own work before presenting it.
-   - Don't be lazy. No temporary fixes. All code is production code.
-5. **Verify acceptance criteria** - Ensure each criterion is met before marking complete
+1. **Update status** - Change task to `**Status:** In Progress`
+2. **Invoke TDD skill** - `Skill(skill="groundwork:test-driven-development")`
+3. **Complete action items** - Write failing test → implement → verify for each
+4. **Demand elegance** - Ask "Is there a more elegant way?" for non-trivial changes
+5. **Verify acceptance criteria** - Each must be met
 
 ### Step 9: Verify Implementation
 
-Before marking the task complete, systematically verify all work:
+Verify all work before proceeding:
 
-1. **Action Items Checklist** - Review each action item from the task:
-   - Confirm implementation exists
-   - Run tests covering the action item
-   - Verify behavior matches requirement
+1. **Action Items** - Each implemented and tested
+2. **Test Coverage** - All new code has tests, all pass
+3. **Acceptance Criteria** - Each verified
 
-2. **Test Coverage** - Ensure all new code has tests:
-   - All new functions/methods have tests
-   - Edge cases and error scenarios covered
-   - Tests pass and output is pristine
+Output verification results:
 
-3. **Acceptance Criteria** - Verify each criterion:
-   - Execute verification steps for each criterion
-   - Document how each was verified
-
-**If any verification fails:**
-- Do not proceed to completion
-- Report which items failed verification
-- Continue working until all items pass
-
-**Verification Output:**
 ```markdown
 ## Verification Results
 
 ### Action Items
-- [x] [Action 1] - Implemented in `path/to/file.ts`, tested in `path/to/test.ts`
-- [x] [Action 2] - Implemented in `path/to/file.ts`, tested in `path/to/test.ts`
+- [x] [Action 1] - Implemented in `file.ts`, tested in `test.ts`
 
 ### Test Results
 - All tests pass: ✓
-- Coverage: [percentage]%
 
 ### Acceptance Criteria
 - [x] [Criterion 1] - Verified by [method]
-- [x] [Criterion 2] - Verified by [method]
-
-Ready to mark task complete.
 ```
 
-### Step 10: Multi-Agent Verification
+**If any fail:** Do not proceed. Continue working.
 
-Invoke the `groundwork:validation-loop` skill to run autonomous verification.
+### Step 10: Multi-Agent Verification → GATE 3
 
-This skill will:
-- Launch all 4 verification agents in parallel
-- Automatically fix any issues found
-- Re-run validation until all agents approve
-- Escalate to user only when stuck (same issue 3x)
+Invoke: `Skill(skill="groundwork:validation-loop")`
 
-**Do not proceed to Step 11 until validation-loop returns PASS.**
+This runs 4 verification agents in parallel with autonomous fix-and-retry.
+
+After validation passes, output:
+
+```
+✓ GATE 3: Validation loop passed
+```
+
+**DO NOT proceed to Step 11 until GATE 3 confirmation is output.**
 
 ### Step 11: Complete Task
 
-1. **Update status** - Edit the appropriate tasks file to change task status to `**Status:** Complete`
-   - For single file: Edit `specs/tasks.md`
-   - For directory: Edit the specific task file
-2. **Report completion** - Summarize what was accomplished
+1. **Update status** - Change task to `**Status:** Complete`
+2. **Report completion**
 3. **Proceed to worktree finalization**
 
 ### Step 12: Worktree Finalization
 
-Before finalizing, ensure all changes are committed:
-```bash
-git status --porcelain
-```
-
-If uncommitted changes exist, commit them with an appropriate message.
-
-**Based on merge preference:**
+Ensure all changes are committed: `git status --porcelain`
 
 **Auto-merge mode:**
-1. Return to original repository directory
-2. Checkout the base branch
-3. Merge the task branch with no-fast-forward:
-   ```bash
-   git merge --no-ff task/TASK-NNN -m "Merge task/TASK-NNN: [Task Title]"
-   ```
-4. If merge succeeds:
-   - Remove the worktree: `git worktree remove <path>`
-   - Delete the branch: `git branch -d task/TASK-NNN`
-   - Report success
-5. If merge conflicts:
-   - Report the conflicting files
-   - Provide resolution guidance
-   - Keep worktree for investigation
+1. Return to original repository
+2. Checkout base branch
+3. Merge: `git merge --no-ff task/TASK-NNN -m "Merge task/TASK-NNN: [Title]"`
+4. If success: Remove worktree, delete branch
+5. If conflicts: Report and keep worktree
 
-**Manual verification mode:**
-Report the worktree location and provide merge instructions:
+**Manual mode:**
+Report worktree location and merge instructions:
 
 ```markdown
 ## Task Complete in Worktree
 
 **Location:** .worktrees/TASK-NNN
 **Branch:** task/TASK-NNN
-**Base Branch:** [base branch name]
 
-All changes committed. When ready to merge:
+When ready to merge:
 ```bash
 git checkout [base-branch]
 git merge --no-ff task/TASK-NNN
@@ -328,45 +253,38 @@ git branch -d task/TASK-NNN
 ## Completed: [TASK-NNN] [Task Title]
 
 **What was done:**
-- [Summary of changes made]
-- [Files modified/created]
+- [Summary]
 
 **Acceptance criteria verified:**
-- [x] [Criterion 1] - [How verified]
-- [x] [Criterion 2] - [How verified]
+- [x] [Criterion] - [How verified]
 
-**Worktree status:** [Merged and cleaned up | Pending manual merge at .worktrees/TASK-NNN]
+**Worktree status:** [Merged | Pending at .worktrees/TASK-NNN]
 
-Would you like to continue with the next task? (Run `/next-task` or `/execute-task N`)
+Continue with `/next-task` or `/execute-task N`
 ```
 
-## Task Status Values
+---
 
-When parsing and updating tasks, use these status values:
+## Reference
 
-- `**Status:** Not Started` - Task hasn't begun
-- `**Status:** In Progress` - Currently being worked on
-- `**Status:** Complete` - Task finished and verified
-- `**Status:** Blocked` - Cannot proceed due to dependencies
+### Task Status Values
+- `**Status:** Not Started`
+- `**Status:** In Progress`
+- `**Status:** Complete`
+- `**Status:** Blocked`
 
-## Dependency Handling
+### Dependency Handling
+Task is blocked if `Blocked by:` lists any task not Complete.
 
-A task is blocked if its `Blocked by:` field lists any task that is not `Complete`.
-
-When checking dependencies:
-1. Parse the `Blocked by:` field for task IDs (e.g., `TASK-001, TASK-002`)
-2. Look up each referenced task's status
-3. Task is blocked if ANY dependency is not Complete
-
-## Execution Checklist (Verify Before Completion)
-
-Before marking any task complete, verify:
-
+### Final Checklist
+Before marking complete, verify ALL:
 - [ ] Working in worktree (`.worktrees/TASK-NNN`)
-- [ ] Plan agent was used and plan was approved
-- [ ] TDD was followed (tests written before implementation)
+- [ ] GATE 1 confirmation was output
+- [ ] Plan agent was used (not your own plan)
+- [ ] GATE 2 confirmation was output
+- [ ] TDD was followed
 - [ ] All acceptance criteria verified
 - [ ] validation-loop returned PASS
-- [ ] Task status updated in specs/tasks.md
+- [ ] GATE 3 confirmation was output
 
-If any unchecked: task is NOT complete. Continue working.
+If any unchecked: task is NOT complete.
