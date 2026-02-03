@@ -1,6 +1,7 @@
 ---
 name: product-design
 description: Use when user invokes `/product-design` or asks to add features, modify requirements, update the PRD, write EARS requirements, or iterate on product specifications
+requires: understanding-feature-requests
 ---
 
 # Product Design Skill
@@ -17,33 +18,14 @@ Interactive workflow for iteratively designing and documenting product requireme
 
 ## Step 1: Understand the Request
 
-When the user proposes a feature or change, ask clarifying questions to understand:
+Invoke the `groundwork:understanding-feature-requests` skill to clarify the feature and check for contradictions.
 
-**Core Questions (always ask):**
-- What problem does this solve for the user?
-- Who is the target user/persona?
-- What is the expected outcome or behavior?
+This skill will:
+1. Ask clarifying questions (core, exploratory, conditional)
+2. Check for internal, cross-feature, and technical contradictions
+3. Resolve any conflicts before proceeding
 
-**Exploratory Questions (for open-ended or vague requests):**
-- "What inspired this feature idea?"
-- "Have you seen this done well elsewhere? What did you like about it?"
-- "What would make this feature 'delightful' vs just 'adequate'?"
-- "What's the simplest version that would provide value?"
-- "If you had to cut half the scope, what would you keep?"
-
-**Conditional Questions (ask as relevant):**
-- What triggers this behavior? (for event-driven features)
-- What are the edge cases or error conditions?
-- What is explicitly out of scope?
-- Are there dependencies on other features?
-- What metrics would indicate success?
-
-**Keep questions focused** - ask 2-3 at a time, not all at once. Build understanding iteratively.
-
-**Question Style:**
-- Prefer multiple-choice questions when possible - they're easier to answer and keep conversations focused
-- Explore one topic at a time to avoid overwhelming stakeholders
-- When presenting alternatives, lead with your recommendation
+Once understanding is complete and conflicts resolved, continue to Step 2.
 
 ## Step 2: Design EARS Requirements
 
@@ -84,12 +66,6 @@ For new features, propose a short code (3-4 chars) and confirm with user.
 ### Check for Contradictions
 
 Before presenting the draft, review for conflicts:
-
-#### Internal Contradictions
-Requirements within this feature that may contradict each other:
-- Conflicting behaviors (e.g., "shall be real-time" AND "shall work offline-first")
-- Incompatible constraints (e.g., "shall complete in <100ms" AND "shall process 10,000 items")
-- Mutually exclusive states
 
 #### Cross-Feature Conflicts
 Compare new requirements against existing PRD:
