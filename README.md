@@ -82,9 +82,10 @@ The plugin's shell scripts (`.sh` files) use bash and won't work directly in Pow
 
 ## Skills Overview
 
-### Planning & Design (3 skills)
+### Planning & Design (4 skills)
 | Skill | Description |
 |-------|-------------|
+| `understanding-feature-requests` | Clarify feature requests and check for contradictions |
 | `product-design` | Create product requirements documents (PRDs) |
 | `architecture` | Create architecture design documents with decisions |
 | `tasks` | Generate implementation tasks from architecture |
