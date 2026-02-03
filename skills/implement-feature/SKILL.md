@@ -48,7 +48,7 @@ For non-trivial changes, ask:
 
 > "Is there a more elegant way to implement this?"
 
-Consider:
+Refer to `docs/clean-code-principles.md` for guidance on:
 - Simpler abstractions
 - Better naming
 - Reduced complexity

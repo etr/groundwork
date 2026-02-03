@@ -5,7 +5,7 @@ description: Use when implementation is complete to run multi-agent verification
 
 # Validation Loop Skill
 
-Autonomous verification loop that runs 4 specialized agents and fixes issues until all approve.
+Autonomous verification loop that runs 5 specialized agents and fixes issues until all approve.
 
 ## Prerequisites
 
@@ -29,7 +29,7 @@ Collect for the agents:
 
 ### 2. Launch Verification Agents
 
-Use Task tool to launch all 4 agents in parallel:
+Use Task tool to launch all 5 agents in parallel:
 
 | Agent (`subagent_type`) | Context to Provide |
 |-------------------------|-------------------|
@@ -37,6 +37,7 @@ Use Task tool to launch all 4 agents in parallel:
 | `groundwork:security-reviewer:security-reviewer` | Changed files, contents, task definition |
 | `groundwork:spec-alignment-checker:spec-alignment-checker` | Changed files, contents, task definition, product specs |
 | `groundwork:architecture-alignment-checker:architecture-alignment-checker` | Changed files, contents, task definition, architecture |
+| `groundwork:code-simplifier:code-simplifier` | Changed files, contents, task definition |
 
 Each returns JSON:
 ```json
@@ -59,6 +60,7 @@ Each returns JSON:
 | Security | 95 | approve | 0 | 0 | 1 |
 | Spec Alignment | 90 | approve | 0 | 1 | 0 |
 | Architecture | 88 | approve | 0 | 1 | 1 |
+| Code Simplifier | 92 | approve | 0 | 0 | 2 |
 ```
 
 ### 4. Autonomous Fix-and-Retry Loop
@@ -85,7 +87,7 @@ Each returns JSON:
    - Run tests - must pass
    - Confirm acceptance criteria
 
-4. **Re-run Agent Validation** - Launch all 4 agents again
+4. **Re-run Agent Validation** - Launch all 5 agents again
 
 5. **Check Results**
    - ALL approve → **PASS**, return success
@@ -127,7 +129,7 @@ Also escalate when:
 ```markdown
 ## Verification PASSED
 
-All 4 agents approved after [N] iteration(s).
+All 5 agents approved after [N] iteration(s).
 
 | Agent | Score | Verdict | Summary |
 |-------|-------|---------|---------|

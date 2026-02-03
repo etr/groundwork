@@ -114,6 +114,18 @@ The plugin's shell scripts (`.sh` files) use bash and won't work directly in Pow
 |-------|-------------|
 | `using-groundwork` | Introduction to using skills |
 
+## Agents
+
+Verification agents run automatically via the `validation-loop` skill to ensure code quality. They apply principles from `docs/clean-code-principles.md`.
+
+| Agent | Description |
+|-------|-------------|
+| `architecture-alignment-checker` | Verifies implementation aligns with architecture decisions and component responsibilities |
+| `code-quality-reviewer` | Reviews code for quality, readability, elegance, and test coverage |
+| `code-simplifier` | Simplifies code for clarity and maintainability while preserving functionality |
+| `security-reviewer` | Reviews for security vulnerabilities including OWASP Top 10 and authentication issues |
+| `spec-alignment-checker` | Verifies implementation aligns with task definition and product specs |
+
 ## Commands
 
 | Command | Description |
