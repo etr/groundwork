@@ -42,6 +42,9 @@ List commands organized by purpose:
 - `/groundwork:work-on [N]` - Work on a specific task by number
 - `/groundwork:work-on-next-task` - Work on the next task
 
+**Quick Development:**
+- `/groundwork:build-unplanned [description]` - Build a feature from description with worktree isolation and TDD
+
 **Sync & Alignment:**
 - `/groundwork:source-product-specs-from-code` - Sync specs with code changes
 - `/groundwork:source-architecture-from-code` - Update architecture docs

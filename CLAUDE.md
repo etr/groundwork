@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Groundwork is a Claude Code plugin that provides a skills library for structured development workflows. It contains 11 skills and 15 commands for planning, TDD, debugging, and synchronization.
+Groundwork is a Claude Code plugin that provides a skills library for structured development workflows. It contains 12 skills and 16 commands for planning, TDD, debugging, and synchronization.
 
 ## Project Structure
 

@@ -90,10 +90,11 @@ The plugin's shell scripts (`.sh` files) use bash and won't work directly in Pow
 | `architecture` | Create architecture design documents with decisions |
 | `tasks` | Generate implementation tasks from architecture |
 
-### Implementation (1 skill)
+### Implementation (2 skills)
 | Skill | Description |
 |-------|-------------|
 | `next-task` | Execute next uncompleted task from specs |
+| `build-unplanned-feature` | Build ad-hoc features with worktree isolation and TDD |
 
 ### Testing & Debugging (1 skill)
 | Skill | Description |
@@ -128,6 +129,7 @@ The plugin's shell scripts (`.sh` files) use bash and won't work directly in Pow
 | `/groundwork:verify-executed-work` | Quick verification checkpoint for current work |
 | `/groundwork:work-on-next-task` | Execute next uncompleted task |
 | `/groundwork:work-on` | Work on a specific task by number |
+| `/groundwork:build-unplanned` | Build feature from description with worktree isolation and TDD |
 | `/groundwork:skills` | List all available skills |
 | `/groundwork:groundwork-check` | Validate plugin installation |
 | `/groundwork:groundwork-help` | List all commands and skills with descriptions |

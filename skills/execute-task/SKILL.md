@@ -159,7 +159,22 @@ Ensure all changes are committed: `git status --porcelain`
 4. If success: Remove worktree, delete branch
 5. If conflicts: Report and keep worktree
 
-**Manual mode:**
+**Manual mode - Ask the user:**
+
+> "Would you like me to merge this feature into [base-branch] now?
+> 1. Yes, merge now
+> 2. No, I'll merge manually later"
+
+**If user chooses "Yes, merge now":**
+
+1. Return to original repository
+2. Checkout base branch
+3. Merge: `git merge --no-ff feature/TASK-NNN -m "Merge feature/TASK-NNN: [Title]"`
+4. If success: Remove worktree and delete branch
+5. If conflicts: Report conflicts and keep worktree for manual resolution
+
+**If user chooses "No" or merge has conflicts:**
+
 Report worktree location and merge instructions:
 
 ```markdown
