@@ -9,7 +9,7 @@ description: Use when executing a specific task - REQUIRES worktree isolation (m
 
 ### Step 0: Record auto-merge state
 
-**Merge mode:** Record whether `GROUNDWORK_AUTO_MERGE=true` (batch mode) or not (interactive mode) for Step 11.
+**Merge mode:** Record whether `GROUNDWORK_AUTO_MERGE=true` (batch mode) or not (interactive mode) for Step 10.
 
 ### Step 1: Parse Task Identifier
 
@@ -128,64 +128,27 @@ Present summary and wait for user confirmation:
 Ready to begin?
 ```
 
-### Step 7: Execute Task
+### Step 7: Prepare For Execution
 
 **If you are in plan mode:** Call `ExitPlanMode()` immediately. Do not explore files, do not read code, do not create plans. Wait for user approval then keep going with Step 7.
 
 1. **Isolate the change** - Invoke: `Skill(skill="groundwork:use-git-worktree", args="TASK-NNN")`
-2. **Check you moved to the isolated worktree` - Verify `pwd` shows `.worktrees/TASK-NNN`
+2. **Check worktree** - Verify `pwd` shows `.worktrees/TASK-NNN`
 3. **Update status** - Change task to `**Status:** In Progress`
-4. **Invoke TDD skill** - `Skill(skill="groundwork:test-driven-development")`
-5. **Complete action items** - Write failing test → implement → verify for each
-6. **Demand elegance** - Ask "Is there a more elegant way?" for non-trivial changes
-7. **Verify acceptance criteria** - Each must be met
 
-### Step 8: Verify Implementation
 
-Verify all work before proceeding:
+### Step 8: Execute the Task
 
-1. **Action Items** - Each implemented and tested
-2. **Test Coverage** - All new code has tests, all pass
-3. **Acceptance Criteria** - Each verified
+**Invoke implementation** - `Skill(skill="groundwork:implement-feature")`
+    - Action items and acceptance criteria are available in session context from Step 6
 
-Output verification results:
+### Step 9: Complete Task
 
-```markdown
-## Verification Results
-
-### Action Items
-- [x] [Action 1] - Implemented in `file.ts`, tested in `test.ts`
-
-### Test Results
-- All tests pass: ✓
-
-### Acceptance Criteria
-- [x] [Criterion 1] - Verified by [method]
-```
-
-**If any fail:** Do not proceed. Continue working.
-
-### Step 9: Multi-Agent Verification
-
-THis is not optional; you must do it - invoke: `Skill(skill="groundwork:validation-loop")`
-
-This runs 4 verification agents in parallel with autonomous fix-and-retry.
-
-After validation passes, output:
-
-```
-Validation loop passed
-```
-
-**DO NOT proceed to Step 10 until Validation loop passing confirmation is output.**
-
-### Step 10: Complete Task
+After `implement-feature` returns successfully:
 
 1. **Update status** - Change task to `**Status:** Complete`
-2. **Report completion**
-3. **Proceed to worktree finalization**
 
-### Step 11: Worktree Finalization
+### Step 10: Worktree Finalization
 
 Ensure all changes are committed: `git status --porcelain`
 
@@ -214,7 +177,7 @@ git branch -d task/TASK-NNN
 ```
 ```
 
-### Step 12: Offer to Continue
+### Step 11: Offer to Continue
 
 ```markdown
 ## Completed: [TASK-NNN] [Task Title]
