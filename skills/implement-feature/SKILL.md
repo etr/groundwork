@@ -32,7 +32,7 @@ Wait for worktree creation to complete and baseline tests to pass.
 
 **If already in worktree (`.worktrees/` in pwd):**
 
-Use existing worktree context. Skip creation.
+Use existing worktree context. Go to step 2.
 
 ### Step 2: Gather Context
 
@@ -227,11 +227,3 @@ When called from parent skills, these parameters are passed via session context:
 | `execute-task` | `env` | Respects batch automation setting |
 | `build-unplanned-feature` | `ask` | Ad-hoc work needs user confirmation |
 | Standalone | `ask` | Default to user confirmation |
-
-### Standalone Usage
-
-When invoked directly without context:
-1. Skips worktree creation (works in current directory)
-2. Gathers requirements from user
-3. Executes full TDD + verification workflow
-4. Reports completion (no merge handling)
