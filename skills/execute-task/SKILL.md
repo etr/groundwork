@@ -1,15 +1,13 @@
 ---
 name: execute-task
 description: Use when executing a specific task - REQUIRES worktree isolation (mandatory), TDD methodology (mandatory), and validation-loop completion (mandatory). No exceptions.
+requires: implement-feature
+user-invocable: false
 ---
 
 # Execute Task Skill
 
 ## WORKFLOW
-
-### Step 0: Record auto-merge state
-
-**Merge mode:** Record whether `GROUNDWORK_AUTO_MERGE=true` (batch mode) or not (interactive mode) for Step 10.
 
 ### Step 1: Parse Task Identifier
 
@@ -112,7 +110,7 @@ Present summary and wait for user confirmation:
 ### Execution Context
 **Working Directory:** .worktrees/TASK-NNN
 **Branch:** task/TASK-NNN
-**Merge Mode:** [auto-merge | manual]
+**Merge Mode:** [auto-merge (env) | manual]
 
 ### Goal
 [from task file]
@@ -128,77 +126,40 @@ Present summary and wait for user confirmation:
 Ready to begin?
 ```
 
-### Step 7: Prepare For Execution
+### Step 7: Execute the Task
 
-**If you are in plan mode:** Call `ExitPlanMode()` immediately. Do not explore files, do not read code, do not create plans. Wait for user approval then keep going with Step 7.
+**If you are in plan mode:** Call `ExitPlanMode()` immediately. Do not explore files, do not read code, do not create plans. Wait for user approval then continue with Step 7.
 
-1. **Isolate the change** - Invoke: `Skill(skill="groundwork:use-git-worktree", args="TASK-NNN")`
-2. **Check worktree** - Verify `pwd` shows `.worktrees/TASK-NNN`
-3. **Update status** - Change task to `**Status:** In Progress`
+1. **Update status** - Change task to `**Status:** In Progress`
 
+2. **Invoke implementation** - `Skill(skill="groundwork:implement-feature")`
 
-### Step 8: Execute the Task
+Session context provides:
+- **identifier**: TASK-NNN
+- **title**: [Task Title]
+- **merge-mode**: `env`
+- **action-items**: [from task file]
+- **acceptance-criteria**: [from task file]
 
-**Invoke implementation** - `Skill(skill="groundwork:implement-feature")`
-    - Action items and acceptance criteria are available in session context from Step 6
+The `implement-feature` skill handles:
+- Worktree creation via `use-git-worktree`
+- TDD implementation
+- Multi-agent validation
+- Worktree finalization (merge based on `GROUNDWORK_AUTO_MERGE` env var)
 
-### Step 9: Complete Task
+### Step 8: Complete Task
 
 After `implement-feature` returns successfully:
 
 1. **Update status** - Change task to `**Status:** Complete`
 
-### Step 10: Worktree Finalization
-
-Ensure all changes are committed: `git status --porcelain`
-
-**Auto-merge mode:**
-1. Return to original repository
-2. Checkout base branch
-3. Merge: `git merge --no-ff task/TASK-NNN -m "Merge task/TASK-NNN: [Title]"`
-4. If success: Remove worktree, delete branch
-5. If conflicts: Report and keep worktree
-
-**Manual mode - Ask the user:**
-
-> "Would you like me to merge this feature into [base-branch] now?
-> 1. Yes, merge now
-> 2. No, I'll merge manually later"
-
-**If user chooses "Yes, merge now":**
-
-1. Return to original repository
-2. Checkout base branch
-3. Merge: `git merge --no-ff feature/TASK-NNN -m "Merge feature/TASK-NNN: [Title]"`
-4. If success: Remove worktree and delete branch
-5. If conflicts: Report conflicts and keep worktree for manual resolution
-
-**If user chooses "No" or merge has conflicts:**
-
-Report worktree location and merge instructions:
-
-```markdown
-## Task Complete in Worktree
-
-**Location:** .worktrees/TASK-NNN
-**Branch:** task/TASK-NNN
-
-When ready to merge:
-```bash
-git checkout [base-branch]
-git merge --no-ff task/TASK-NNN
-git worktree remove .worktrees/TASK-NNN
-git branch -d task/TASK-NNN
-```
-```
-
-### Step 11: Offer to Continue
+### Step 9: Offer to Continue
 
 ```markdown
 ## Completed: [TASK-NNN] [Task Title]
 
 **What was done:**
-- [Summary]
+- [Summary from implement-feature]
 
 **Acceptance criteria verified:**
 - [x] [Criterion] - [How verified]

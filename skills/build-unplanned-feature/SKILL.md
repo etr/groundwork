@@ -1,7 +1,8 @@
 ---
 name: build-unplanned-feature
-description: Use when building a feature from a description without existing task definitions - combines requirement gathering, worktree isolation, TDD implementation, and validation
-requires: understanding-feature-requests, use-git-worktree, implement-feature
+description: Use when building a feature from a description without existing task definitions - combines requirement gathering, TDD implementation, and validation
+requires: understanding-feature-requests, implement-feature
+user-invocable: false
 ---
 
 # Build Unplanned Feature
@@ -46,17 +47,7 @@ Create a feature identifier from the clarified requirements:
 - "Export reports to PDF" → `FEATURE-pdf-export`
 - "Rate limiting for API" → `FEATURE-api-rate-limit`
 
-### Step 4: Create Worktree
-
-Invoke: `Skill(skill="groundwork:use-git-worktree", args="<feature-identifier>")`
-
-**Note:** The skill will create:
-- Branch: `feature/<feature-identifier>` (not `task/`)
-- Worktree: `.worktrees/<feature-identifier>`
-
-Wait for worktree creation to complete and baseline tests to pass.
-
-### Step 5: Present Feature Summary
+### Step 4: Present Feature Summary
 
 Present summary and wait for user confirmation before implementation:
 
@@ -87,87 +78,23 @@ Ready to begin implementation?
 
 **Wait for user confirmation before proceeding.**
 
-### Step 6: Execute Implementation
+### Step 5: Execute Implementation
 
 Invoke: `Skill(skill="groundwork:implement-feature")`
 
-The skill will:
-1. Use requirements and acceptance criteria from session context (Step 5)
-2. Execute TDD workflow for each requirement
-3. Run multi-agent validation
-4. Report completion
+Session context provides:
+- **identifier**: FEATURE-<slug>
+- **title**: [Feature description summary]
+- **merge-mode**: `ask`
+- **action-items**: [from requirements]
+- **acceptance-criteria**: [from clarification]
 
-### Step 7: Finalize Changes
-
-After `implement-feature` returns successfully:
-
-1. **Verify all changes committed:**
-   ```bash
-   git status --porcelain
-   ```
-
-2. **If uncommitted changes exist:**
-   - Stage and commit with descriptive message
-   - Use feature identifier in commit message
-
-### Step 8: Report Completion
-
-Report worktree location and offer to merge:
-
-```markdown
-## Feature Complete
-
-**Feature:** [Feature Identifier]
-**Location:** .worktrees/<feature-identifier>
-**Branch:** feature/<feature-identifier>
-
-### What was built
-- [Summary of implementation]
-
-### Files modified
-- `path/to/file` - [description]
-
-### Tests added
-- `path/to/test` - [what it tests]
-
-### Acceptance criteria verified
-- [x] [Criterion] - [How verified]
-```
-
-**Ask the user:**
-
-> "Would you like me to merge this feature into [base-branch] now?
-> 1. Yes, merge now
-> 2. No, I'll merge manually later"
-
-**If user chooses "Yes, merge now":**
-
-1. Return to original repository
-2. Checkout base branch
-3. Merge: `git merge --no-ff feature/<feature-identifier> -m "Merge feature/<feature-identifier>: [Title]"`
-4. If success: Remove worktree and delete branch
-5. If conflicts: Report conflicts and keep worktree for manual resolution
-
-**If user chooses "No" or merge has conflicts:**
-
-Provide manual merge instructions:
-
-```markdown
-### To merge when ready
-
-```bash
-git checkout [base-branch]
-git merge --no-ff feature/<feature-identifier>
-git worktree remove .worktrees/<feature-identifier>
-git branch -d feature/<feature-identifier>
-```
-
-### To continue working
-
-```bash
-cd .worktrees/<feature-identifier>
-```
-```
+The `implement-feature` skill handles:
+1. Worktree creation via `use-git-worktree`
+2. TDD workflow for each requirement
+3. Multi-agent validation
+4. Worktree finalization (prompts user for merge decision)
+5. Completion reporting
 
 ---
 
@@ -181,10 +108,10 @@ This skill uses `feature/` prefix (not `task/`) to distinguish ad-hoc features f
 
 ### Merge Handling
 
-This skill offers to merge at completion but requires explicit user confirmation. This provides:
-- Opportunity to review changes before integration
-- Ability to make adjustments if needed
-- Clear separation between "done" and "merged"
+The `implement-feature` skill handles merge with `merge-mode: ask`, which:
+- Always prompts user for merge decision
+- Provides manual merge instructions if user declines
+- Handles merge conflicts gracefully
 
 ### Standalone Usage
 
