@@ -40,13 +40,11 @@ Check if action items and acceptance criteria are available from the current ses
 
 **If context available:** Use action items and acceptance criteria from session.
 
-**If context NOT available:** Prompt user:
+**If context NOT available:** Use `AskUserQuestion` to ask:
 
-> "What should be implemented?
->
-> Please provide:
-> 1. **Action Items** - What needs to be done (list)
-> 2. **Acceptance Criteria** - How we'll know it's done (list)"
+> "What should be implemented? Please provide Action Items (what needs to be done) and Acceptance Criteria (how we'll know it's done)."
+
+**Wait for user response before proceeding.**
 
 Store the gathered context for use in subsequent steps.
 
@@ -138,9 +136,13 @@ Validation loop passed
 
 **If prompting user:**
 
-> "Would you like me to merge this into [base-branch] now?
-> 1. Yes, merge now
-> 2. No, I'll merge manually later"
+Use `AskUserQuestion` to ask:
+
+> "Would you like me to merge this into [base-branch] now?"
+> - Option 1: "Yes, merge now"
+> - Option 2: "No, I'll merge manually later"
+
+**Wait for user response before proceeding.**
 
 **If merging:**
 

@@ -15,7 +15,7 @@ Enables ad-hoc feature development without existing task definitions. Combines r
 
 Extract the feature description from:
 1. **Argument provided** - Use as initial description
-2. **No argument** - Prompt user: "What feature would you like to build?"
+2. **No argument** - Use `AskUserQuestion` to ask: "What feature would you like to build?" and **wait for user response**
 
 Store the raw description for clarification.
 
@@ -49,7 +49,7 @@ Create a feature identifier from the clarified requirements:
 
 ### Step 4: Present Feature Summary
 
-Present summary and wait for user confirmation before implementation:
+Present summary to the user:
 
 ```markdown
 ## Feature: [Feature Identifier]
@@ -72,11 +72,15 @@ Present summary and wait for user confirmation before implementation:
 
 ### Out of Scope
 - [Exclusion 1]
-
-Ready to begin implementation?
 ```
 
-**Wait for user confirmation before proceeding.**
+Then use `AskUserQuestion` to ask:
+
+> "Ready to begin implementation?"
+> - Option 1: "Yes, begin"
+> - Option 2: "No, let me review first"
+
+**Wait for user response before proceeding.**
 
 ### Step 5: Execute Implementation
 

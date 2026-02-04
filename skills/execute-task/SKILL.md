@@ -31,18 +31,21 @@ Search for `### TASK-NNN:` pattern.
 
 ### Step 3: Validate Task is Workable
 
-**If already complete:**
-> "TASK-NNN is already marked Complete. Would you like to:
-> 1. Work on it anyway (resets to In Progress)
-> 2. Pick a different task"
+**If already complete:** Use `AskUserQuestion` to ask:
 
-**If blocked:**
-> "TASK-NNN is blocked by: [list]
-> Would you like to:
-> 1. Override and work on it anyway
-> 2. Work on a blocking task first: [suggest first blocker]"
+> "TASK-NNN is already marked Complete. What would you like to do?"
+> - Option 1: "Work on it anyway (resets to In Progress)"
+> - Option 2: "Pick a different task"
 
-Wait for user confirmation before proceeding.
+**Wait for user response before proceeding.**
+
+**If blocked:** Use `AskUserQuestion` to ask:
+
+> "TASK-NNN is blocked by: [list]. What would you like to do?"
+> - Option 1: "Override and work on it anyway"
+> - Option 2: "Work on a blocking task first: [suggest first blocker]"
+
+**Wait for user response before proceeding.**
 
 ### Step 4: Load Project Context
 
@@ -99,7 +102,7 @@ After plan is validated, output:
 
 ### Step 6: Present Task Summary
 
-Present summary and wait for user confirmation:
+Present summary to the user:
 
 ```markdown
 ## Task: [TASK-NNN] [Task Title]
@@ -122,9 +125,15 @@ Present summary and wait for user confirmation:
 ### Acceptance Criteria
 - [criterion 1]
 - [criterion 2]
-
-Ready to begin?
 ```
+
+Then use `AskUserQuestion` to ask:
+
+> "Ready to begin implementation?"
+> - Option 1: "Yes, begin"
+> - Option 2: "No, let me review first"
+
+**Wait for user response before proceeding.**
 
 ### Step 7: Execute the Task
 
