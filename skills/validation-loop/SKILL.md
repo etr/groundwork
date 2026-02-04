@@ -12,7 +12,7 @@ Autonomous verification loop that runs 7 specialized agents and fixes issues unt
 
 Before invoking this skill, ensure:
 - Implementation is complete
-- Tests pass (from execute-task self-validation)
+- Tests pass
 - Changes are ready for review
 
 ## Workflow
