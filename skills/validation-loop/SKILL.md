@@ -1,6 +1,7 @@
 ---
 name: validation-loop
 description: Use when implementation is complete to run multi-agent verification with autonomous fix-and-retry until all agents approve
+user-invocable: false
 ---
 
 # Validation Loop Skill

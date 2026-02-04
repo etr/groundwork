@@ -1,6 +1,7 @@
 ---
 name: architecture
 description: Use when user asks to design system architecture, make architectural decisions, or translate PRD into technical design
+user-invocable: false
 ---
 
 # Architecture Design Skill

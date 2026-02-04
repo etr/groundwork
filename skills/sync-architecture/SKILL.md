@@ -1,6 +1,7 @@
 ---
 name: sync-architecture
 description: Use when at session end when architectural decisions were made, new tech choices added, or implementation deviated from documented architecture
+user-invocable: false
 ---
 
 # Sync Architecture Skill

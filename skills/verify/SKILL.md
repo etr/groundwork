@@ -1,6 +1,7 @@
 ---
 name: verify
 description: Use when user asks to verify work, check completion, validate task is done, or assess readiness before committing
+user-invocable: false
 ---
 
 # Verify Skill

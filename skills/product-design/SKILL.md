@@ -2,6 +2,7 @@
 name: product-design
 description: Use when user invokes `/product-design` or asks to add features, modify requirements, update the PRD, write EARS requirements, or iterate on product specifications
 requires: understanding-feature-requests
+user-invocable: false
 ---
 
 # Product Design Skill

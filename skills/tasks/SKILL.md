@@ -1,6 +1,7 @@
 ---
 name: tasks
 description: Use when user asks to create task list, plan implementation, break down work, or generate tickets from product specs and architecture
+user-invocable: false
 ---
 
 # Task Generation Skill
