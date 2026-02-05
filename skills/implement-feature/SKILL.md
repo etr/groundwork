@@ -66,7 +66,7 @@ For non-trivial changes, ask:
 
 > "Is there a more elegant way to implement this?"
 
-Refer to `docs/clean-code-principles.md` for guidance on:
+**Read `docs/clean-code-principles.md` now** using the Read tool, then apply its guidance on:
 - Simpler abstractions
 - Better naming
 - Reduced complexity

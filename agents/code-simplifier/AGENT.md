@@ -45,7 +45,7 @@ You are a code simplifier. Your job is to analyze code changes and identify oppo
 - Scope suggestions to the current work
 
 ### 6. Clean Code Reference
-**Apply principles from `docs/clean-code-principles.md`.**
+**Read `docs/clean-code-principles.md` using the Read tool before reviewing.** Apply its principles as a checklist.
 - Use as checklist when reviewing for simplification opportunities
 - Pay special attention to: naming, functions, and code smells sections
 
