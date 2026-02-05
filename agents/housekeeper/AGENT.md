@@ -40,6 +40,13 @@ Check if specs require updating based on changes:
 - If new integration patterns: Are they documented?
 - If deviating from existing ADR: Is there a superseding decision?
 
+**Design System** (`specs/design_system.md` or `specs/design_system/`):
+- If design tokens changed (colors, spacing, typography): Is the design system updated?
+- If new UX patterns introduced: Are they documented?
+- If brand identity changes (colors, typography, voice): Are they recorded?
+- If component styling patterns changed: Does the design system reflect them?
+- If accessibility approach changed: Is it documented?
+
 ### 4. Documentation Updates
 
 Check appropriate documentation is updated:
@@ -57,6 +64,7 @@ You will receive:
 - `task_status`: Current task completion state from task list
 - `product_specs`: Current product spec content (if exists)
 - `architecture_doc`: Current architecture content (if exists)
+- `design_system_doc`: Current design system content (if exists)
 - `documentation_files`: Content of CLAUDE.md, README.md if they exist
 
 ## Review Process
@@ -97,6 +105,7 @@ Return your review as JSON:
 - `action-item-not-marked-complete`: Action item implemented but not checked off
 - `spec-not-updated`: Product spec should have been updated to reflect changes
 - `architecture-not-updated`: Architecture doc should have been updated
+- `design-system-not-updated`: Design system should have been updated to reflect changes
 - `documentation-stale`: Documentation doesn't reflect changes made
 - `changelog-missing`: User-facing changes not documented in changelog
 
@@ -110,6 +119,7 @@ Return your review as JSON:
   - Action item implemented but not marked complete
   - New user-facing behavior with no spec update
   - New technology/pattern with no architecture documentation
+  - Design token changes with no design system update
   - Public API change with no documentation update
 
 - **minor**: Improvement opportunity, not blocking
@@ -129,3 +139,18 @@ Return your review as JSON:
 - Consider that some changes may legitimately not require doc updates
 - Focus on the current task scope, not general doc improvements
 - Don't flag missing docs for unchanged code areas
+
+## Remediation Skills
+
+When findings indicate spec/documentation gaps, include the appropriate skill in your recommendation:
+
+| Category | Suggested Skill |
+|----------|-----------------|
+| `spec-not-updated` | `groundwork:sync-specs` |
+| `architecture-not-updated` | `groundwork:sync-architecture` |
+| `design-system-not-updated` | `groundwork:sync-design-system` |
+
+Example recommendation with skill:
+```
+"recommendation": "Update the design system to document the new color tokens. Run groundwork:sync-design-system to capture these changes."
+```
