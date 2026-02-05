@@ -10,9 +10,10 @@ Translates product specs and architecture into actionable implementation tasks.
 
 ## File Locations
 
-- **Input:** 
+- **Input:**
   - `specs/product_specs.md` (PRD with EARS requirements)
   - `specs/architecture.md` (architecture with decision records)
+  - `specs/design_system.md` (design system with DP/BRD/UXD decisions) - optional
 - **Output:** `specs/tasks.md` (task list with dependencies)
 
 ## Workflow Overview
@@ -23,9 +24,11 @@ Translates product specs and architecture into actionable implementation tasks.
 4. **Map Dependencies** - Establish task ordering
 5. **Review & Refine** - Iterate with user on task breakdown
 
+**Important:** When asking questions to the user (milestone validation, task review, scope clarification), always use the `AskUserQuestion` tool with appropriate options.
+
 ## Step 1: Load Context
 
-Read both input specs (each may be a single file or directory) and extract:
+Read the input specs (each may be a single file or directory) and extract:
 
 **From PRD:**
 - Single file: `specs/product_specs.md`
@@ -37,12 +40,19 @@ Read both input specs (each may be a single file or directory) and extract:
 - Directory: `specs/architecture/` (aggregate all `.md` files)
 - Extract: Component list and responsibilities, Technology choices, Decision records (understand constraints)
 
+**From Design System (if exists):**
+- Single file: `specs/design_system.md`
+- Extract: Design principles (DP-NNN), Brand decisions (BRD-NNN), UX patterns (UXD-NNN)
+- Use for: Design-related tasks, component styling tasks, accessibility requirements
+
 **Detection:** Check for file first (takes precedence), then directory. When reading a directory, aggregate all `.md` files recursively with `_index.md` first, then numerically-prefixed files, then alphabetically.
 
-If either spec is missing, prompt user:
+If PRD or architecture is missing, prompt user:
 > "I need both the PRD and architecture to generate tasks.
 > - PRD missing? Run `/groundwork:design-product`
 > - Architecture missing? Run `/groundwork:design-architecture`"
+
+If design system exists, incorporate design context into UI/frontend tasks.
 
 ## Step 2: Define Milestones
 
@@ -110,7 +120,7 @@ Every task MUST follow this exact format to ensure compatibility with the skill 
 - [Testable criterion 2]
 
 **Related Requirements:** PRD-XXX-REQ-NNN
-**Related Decisions:** DR-NNN
+**Related Decisions:** DR-NNN, DP-NNN, BRD-NNN, UXD-NNN
 
 **Status:** Not Started | In Progress | Complete | Blocked
 ```
@@ -128,7 +138,7 @@ Every task MUST follow this exact format to ensure compatibility with the skill 
 | Dependencies | Yes | Task IDs or "None" |
 | Acceptance Criteria | Yes | Testable statements |
 | Related Requirements | Recommended | PRD IDs |
-| Related Decisions | Recommended | DR IDs |
+| Related Decisions | Recommended | DR/DP/BRD/UXD IDs |
 | Status | Yes | Exactly one of the four values |
 
 ### Status Values
@@ -253,11 +263,30 @@ Common task types to ensure coverage:
 | **Data** | Schema design, migrations, seed data |
 | **Backend** | API endpoints, business logic, integrations |
 | **Frontend** | Components, pages, state management |
+| **Design System** | Token setup, component styling, theme implementation |
 | **Auth** | Identity setup, authorization rules |
 | **Testing** | Unit tests, integration tests, E2E |
 | **Observability** | Logging, metrics, alerts |
 | **Documentation** | API docs, runbooks, README |
 | **Security** | Pen testing, security review, hardening |
+
+### Design System Tasks
+
+When `specs/design_system.md` exists, include design-specific tasks:
+
+| Task Type | Related Decisions | Example |
+|-----------|-------------------|---------|
+| Token setup | DP-NNN | Configure CSS variables/Tailwind theme |
+| Color system | BRD-001-005 | Implement brand palette, semantic colors |
+| Typography | BRD-006-008 | Font loading, type scale utilities |
+| Component styling | BRD-NNN, UXD-NNN | Button variants, form controls |
+| Loading states | UXD-003-004 | Skeleton screens, spinners |
+| Error handling | UXD-005-006 | Toast system, error boundaries |
+| Empty states | UXD-007 | First-run, no-data components |
+| Responsive layout | UXD-010-011 | Breakpoint utilities, layout adaptation |
+| Motion system | UXD-012 | Animation utilities, reduced motion |
+
+Reference design decisions in task Related Decisions field to ensure traceability.
 
 ## Reference Files
 

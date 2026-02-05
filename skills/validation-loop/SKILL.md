@@ -6,7 +6,7 @@ user-invocable: false
 
 # Validation Loop Skill
 
-Autonomous verification loop that runs 7 specialized agents and fixes issues until all approve.
+Autonomous verification loop that runs 8 specialized agents and fixes issues until all approve.
 
 ## Prerequisites
 
@@ -30,7 +30,7 @@ Collect for the agents:
 
 ### 2. Launch Verification Agents
 
-Use Task tool to launch all 7 agents in parallel:
+Use Task tool to launch all 8 agents in parallel:
 
 | Agent (`subagent_type`) | Context to Provide |
 |-------------------------|-------------------|
@@ -41,6 +41,7 @@ Use Task tool to launch all 7 agents in parallel:
 | `groundwork:code-simplifier:code-simplifier` | Changed files, contents, task definition |
 | `groundwork:housekeeper:housekeeper` | Changed files, contents, task definition, task status, product specs, architecture, documentation |
 | `groundwork:performance-reviewer:performance-reviewer` | Changed files, contents, task definition |
+| `groundwork:design-consistency-checker:design-consistency-checker` | Changed files, contents, design_system.md |
 
 Each returns JSON:
 ```json
@@ -66,6 +67,7 @@ Each returns JSON:
 | Code Simplifier | 92 | approve | 0 | 0 | 2 |
 | Housekeeper | 90 | approve | 0 | 1 | 0 |
 | Performance | 82 | approve | 0 | 1 | 1 |
+| Design Consistency | 88 | approve | 0 | 1 | 1 |
 ```
 
 ### 4. Autonomous Fix-and-Retry Loop
@@ -134,7 +136,7 @@ Also escalate when:
 ```markdown
 ## Verification PASSED
 
-All 7 agents approved after [N] iteration(s).
+All 8 agents approved after [N] iteration(s).
 
 | Agent | Score | Verdict | Summary |
 |-------|-------|---------|---------|
