@@ -78,7 +78,6 @@ Identifies and works on the next unblocked task.
 2. `/groundwork:design-architecture` - Design technical approach
 3. `/groundwork:create-tasks` - Generate implementation tasks
 4. `/groundwork:work-on-next-task` - Work through tasks one by one
-5. `/groundwork:verify-executed-work` - Verify work before marking complete
 
 ### For Existing Projects
 

@@ -49,7 +49,6 @@ List commands organized by purpose:
 - `/groundwork:source-product-specs-from-code` - Sync specs with code changes
 - `/groundwork:source-architecture-from-code` - Update architecture docs
 - `/groundwork:check-specs-alignment` - Verify spec alignment (full audit)
-- `/groundwork:verify-executed-work` - Quick verification checkpoint for current work
 
 **Code Review:**
 - `/groundwork:code-review` - Review code changes

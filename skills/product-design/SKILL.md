@@ -1,6 +1,6 @@
 ---
 name: product-design
-description: Use when user invokes `/product-design` or asks to add features, modify requirements, update the PRD, write EARS requirements, or iterate on product specifications
+description: Use when user asks to add features, modify requirements, update the PRD, write EARS requirements, or iterate on product specifications
 requires: understanding-feature-requests
 user-invocable: false
 ---
@@ -15,7 +15,11 @@ Interactive workflow for iteratively designing and documenting product requireme
 2. **Design** - Draft EARS requirements and check for contradictions
 3. **Approve** - Present draft for user approval
 4. **Commit** - Edit the PRD document when requirements are approved
-5. **Next Step** - Suggest the next workflow action
+5. **Next Step** - Ask user what to do next (architecture, UX, or another feature)
+
+## Step 0: Do we have context?
+
+If the user called the skill without any context, ask them to provide context on what feature they want to add, modify or remove.
 
 ## Step 1: Understand the Request
 
@@ -177,13 +181,39 @@ When the user approves:
 
 After editing, confirm: "I've added [feature] to the PRD with requirements PRD-XXX-REQ-001 through PRD-XXX-REQ-NNN."
 
-## Step 5: Suggest Next Step
+## Step 5: Ask What's Next
 
-After successfully updating the PRD, suggest the next workflow step:
+After successfully updating the PRD, use the `AskUserQuestion` tool to present the next step options:
 
-> "PRD updated with [feature/changes].
->
-> **Next step:** Run `/groundwork:design-architecture` to design the technical approach for these requirements, or continue adding features with `/groundwork:design-product`."
+```json
+{
+  "questions": [{
+    "question": "What would you like to do next?",
+    "header": "Next step",
+    "options": [
+      {
+        "label": "Design architecture",
+        "description": "Translate these requirements into technical architecture decisions"
+      },
+      {
+        "label": "Design UX",
+        "description": "Create user experience designs and flows for this feature"
+      },
+      {
+        "label": "Add another feature",
+        "description": "Continue adding more features to the PRD"
+      }
+    ],
+    "multiSelect": false
+  }]
+}
+```
+
+**Handle the response:**
+
+- **Design architecture**: Invoke the `groundwork:architecture` skill to design the technical approach
+- **Design UX**: Invoke the `groundwork:ux-design` skill to create UX designs
+- **Add another feature**: Clear context by summarizing what was just added, then restart from Step 1 with a fresh feature request. Ask: "What feature would you like to add next?"
 
 ## Conversation Patterns
 

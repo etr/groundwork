@@ -107,7 +107,6 @@ The plugin's shell scripts (`.sh` files) use bash and won't work directly in Pow
 | `sync-specs` | Synchronize PRD with codebase changes |
 | `sync-architecture` | Synchronize architecture docs with codebase |
 | `check-alignment` | Verify implementation aligns with specs |
-| `verify` | Quick verification checkpoint before completing tasks |
 
 ### Meta (1 skill)
 | Skill | Description |
@@ -138,7 +137,6 @@ Verification agents run automatically via the `validation-loop` skill to ensure 
 | `/groundwork:code-review` | Quick single-PR code review |
 | `/groundwork:revise-claude-md` | Update CLAUDE.md with learnings |
 | `/groundwork:check-specs-alignment` | Verify alignment between code and specs |
-| `/groundwork:verify-executed-work` | Quick verification checkpoint for current work |
 | `/groundwork:work-on-next-task` | Execute next uncompleted task |
 | `/groundwork:work-on` | Work on a specific task by number |
 | `/groundwork:build-unplanned` | Build feature from description with worktree isolation and TDD |

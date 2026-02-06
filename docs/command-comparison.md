@@ -4,16 +4,16 @@ This guide explains when to use similar commands that serve related purposes.
 
 ## Spec Synchronization Commands
 
-### `/groundwork:source-product-specs-from-code` vs `/groundwork:check-specs-alignment` vs `/groundwork:verify-executed-work`
+### `/groundwork:source-product-specs-from-code` vs `/groundwork:check-specs-alignment`
 
-| Aspect | `/groundwork:source-product-specs-from-code` | `/groundwork:check-specs-alignment` | `/groundwork:verify-executed-work` |
-|--------|--------------|-------------------|-----------|
-| **Primary Use** | Update specs to match decisions | Full audit of code vs specs | Quick checkpoint for current work |
-| **Direction** | Session decisions → Specs | Specs ← → Code | Current task → Specs |
-| **Output** | Proposed PRD changes | Full alignment report | Pass/fail recommendation |
-| **Modifies Files** | Yes (specs/product_specs.md) | No (read-only analysis) | No (read-only analysis) |
-| **Scope** | Session decisions | Entire codebase | Current task or recent changes |
-| **Trigger** | After product discussions | Periodic full audit | Before completing a task |
+| Aspect | `/groundwork:source-product-specs-from-code` | `/groundwork:check-specs-alignment` |
+|--------|--------------|-------------------|
+| **Primary Use** | Update specs to match decisions | Full audit of code vs specs |
+| **Direction** | Session decisions → Specs | Specs ← → Code |
+| **Output** | Proposed PRD changes | Full alignment report |
+| **Modifies Files** | Yes (specs/product_specs.md) | No (read-only analysis) |
+| **Scope** | Session decisions | Entire codebase |
+| **Trigger** | After product discussions | Periodic full audit |
 
 **When to use `/groundwork:source-product-specs-from-code`:**
 - After discussions that changed requirements
@@ -27,22 +27,14 @@ This guide explains when to use similar commands that serve related purposes.
 - To verify entire architecture is being followed
 - When you suspect significant drift
 
-**When to use `/groundwork:verify-executed-work`:**
-- Before marking a task complete
-- Before committing changes
-- When unsure if current work matches specs
-- Quick sanity check during implementation
-
 **Typical workflow:**
 ```
 1. Discuss product changes
 2. /groundwork:source-product-specs-from-code  # Capture decisions in PRD
 3. /groundwork:design-architecture             # Update architecture if needed
 4. /groundwork:create-tasks                    # Generate new tasks
-5. Implement a task
-6. /groundwork:verify-executed-work          # Quick check before completing
-7. ... more tasks ...
-8. /groundwork:check-specs-alignment         # Periodic full audit
+5. Implement tasks
+6. /groundwork:check-specs-alignment           # Periodic full audit
 ```
 
 ---
@@ -95,7 +87,6 @@ This guide explains when to use similar commands that serve related purposes.
 | Review a PR on GitHub | `/groundwork:code-review` |
 | Update PRD after product discussion | `/groundwork:source-product-specs-from-code` |
 | Full audit of code vs specs | `/groundwork:check-specs-alignment` |
-| Quick check before completing task | `/groundwork:verify-executed-work` |
 | Generate tasks from specs | `/groundwork:create-tasks` |
 | Work on next available task | `/groundwork:work-on-next-task` |
 | Work on a specific task | `/groundwork:work-on [N]` |

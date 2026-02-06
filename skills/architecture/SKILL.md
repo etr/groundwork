@@ -56,7 +56,44 @@ Common architectural decision categories:
 
 Prioritize decisions by dependency (foundational first).
 
-## Step 3: Iterate on Each Decision
+## Step 3: Research Technologies
+
+Before presenting decision options, gather research on relevant technologies.
+
+**For each decision area identified:**
+
+1. Identify the primary technologies/frameworks being considered
+2. Invoke the researcher agent:
+   ```
+   Task(
+     subagent_type="groundwork:researcher",
+     prompt="Research Topic: [technology]
+     Research Questions:
+     - What is the stable vs latest version?
+     - What is the recommended ecosystem for [use case]?
+     - What are common architectural pitfalls?
+     - What has been deprecated recently?
+
+     Project Context: [from PRD]
+     Constraints: [from user/PRD]"
+   )
+   ```
+
+3. Use research findings to:
+   - Inform pros/cons in option presentations
+   - Add version recommendations to options
+   - Include ecosystem compatibility in trade-offs
+   - Surface pitfalls in cons sections
+   - Reference sources for credibility
+
+**Research Integration:**
+When presenting options in Step 4, incorporate research findings:
+- Add "(stable: X.Y, latest: A.B)" to technology names
+- Include ecosystem compatibility in pros/cons
+- Note known pitfalls in cons sections
+- Cite sources when making specific claims
+
+## Step 4: Iterate on Each Decision
 
 For each decision point, present **2-4 options** using this format:
 
@@ -134,7 +171,7 @@ Before recording a decision, check for conflicts with earlier decisions:
 - When in doubt, choose the option with fewer moving parts
 - Ask: "What's the cost of adding this later vs. building it now?"
 
-## Step 4: Document Architecture
+## Step 5: Document Architecture
 
 When all major decisions are made, create the architecture document using template in `references/architecture-template.md`.
 
@@ -145,7 +182,7 @@ When all major decisions are made, create the architecture document using templa
 
 Present the complete document for review before writing.
 
-## Step 5: Suggest Next Step
+## Step 6: Suggest Next Step
 
 After writing the architecture document, suggest the next workflow step:
 

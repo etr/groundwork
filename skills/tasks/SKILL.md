@@ -88,7 +88,42 @@ Present proposed milestones to user for feedback before generating tasks.
 - Present milestones one at a time, confirm understanding before continuing
 - Use multiple-choice questions to validate milestone scope (e.g., "Should M1 include: A) just signup, B) signup + login, C) full auth flow?")
 
-## Step 3: Generate Tasks
+## Step 3: Research Implementation Patterns
+
+For major technologies in the architecture, gather implementation guidance before generating tasks.
+
+**For each significant technology in the architecture:**
+
+1. Invoke the researcher agent:
+   ```
+   Task(
+     subagent_type="groundwork:researcher",
+     prompt="Research Topic: [technology from architecture]
+     Research Questions:
+     - What is the standard project structure?
+     - What are idiomatic patterns for [component type]?
+     - What are common implementation mistakes?
+     - What setup/configuration pitfalls exist?
+
+     Project Context: [from PRD]
+     Architecture Decisions: [relevant DRs]"
+   )
+   ```
+
+2. Use research findings to:
+   - Inform task granularity (patterns suggest natural boundaries)
+   - Add specific action items based on best practices
+   - Include pitfall-avoiding acceptance criteria
+   - Add "setup correctly" tasks for technologies with gotchas
+
+**Research Integration:**
+When generating tasks in Step 4, incorporate research findings:
+- Reference idiomatic patterns in action items
+- Include pitfall-prevention in acceptance criteria
+- Add explicit setup/configuration tasks when research reveals gotchas
+- Use recommended project structure to inform task boundaries
+
+## Step 4: Generate Tasks
 
 For each milestone, generate tasks using the format specified in the "Required Task Format" section below.
 
@@ -204,7 +239,7 @@ Each criterion must be something that can be **verified** - checked or tested, n
 - Always end with: "Typecheck passes"
 - For stories with testable logic, also include: "Tests pass"
 
-## Step 4: Map Dependencies
+## Step 5: Map Dependencies
 
 Create a dependency graph showing:
 - Which tasks can run in parallel
@@ -228,7 +263,7 @@ M2: Upload
 └── TASK-007: Upload UI (depends: 006) ──────────┘
 ```
 
-## Step 5: Review & Refine
+## Step 6: Review & Refine
 
 Present the complete task list organized by milestone. Ask:
 
@@ -245,7 +280,7 @@ Iterate until user approves, then write to `specs/tasks.md`.
 - Wait for approval on each milestone before presenting the next
 - This catches scope creep early and keeps stakeholders engaged
 
-## Step 6: Suggest Next Step
+## Step 7: Suggest Next Step
 
 After writing the tasks document, suggest the next workflow step:
 
