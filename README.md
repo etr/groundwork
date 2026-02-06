@@ -183,6 +183,10 @@ This plugin consolidates work from multiple sources:
   - code-review plugin
   - claude-md-management plugin
 
+### Research Methodology
+- **[get-shit-done](https://github.com/glittercowboy/get-shit-done)** by glittercowboy
+  - The researcher agent's "Training as Hypothesis" guidance is adapted from this project's research methodology
+
 ## License
 
 MIT License - See [LICENSE](LICENSE) for details.
