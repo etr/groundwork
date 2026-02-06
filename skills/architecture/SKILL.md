@@ -66,7 +66,7 @@ Before presenting decision options, gather research on relevant technologies.
 2. Invoke the researcher agent:
    ```
    Task(
-     subagent_type="groundwork:researcher",
+     subagent_type="groundwork:researcher:researcher",
      prompt="Research Topic: [technology]
      Research Questions:
      - What is the stable vs latest version?
@@ -181,6 +181,37 @@ When all major decisions are made, create the architecture document using templa
 **Critical:** Include ALL decision records with discarded options and reasoning. This is essential for future maintainers to understand *why* choices were made.
 
 Present the complete document for review before writing.
+
+### Architecture Validation
+
+Before writing the architecture document, validate it against the PRD:
+
+1. Invoke the prd-architecture-checker agent with draft architecture content and PRD content:
+   ```
+   Task(
+     subagent_type="groundwork:prd-architecture-checker:prd-architecture-checker",
+     prompt="Validate architecture against PRD
+
+     Architecture Draft: [full draft content]
+
+     PRD Content: [product_specs.md content]
+
+     Feature List: [extracted features]
+
+     NFR List: [extracted NFRs]
+
+     Constraints: [budget, timeline, team from PRD]"
+   )
+   ```
+
+2. If verdict is `request-changes`:
+   - Present findings to user with specific gaps identified
+   - Address critical and major findings by updating the architecture
+   - Re-validate until approved
+
+3. If verdict is `approve`:
+   - Proceed to write `specs/architecture.md`
+   - Note any minor findings as suggestions for documentation improvement
 
 ## Step 6: Suggest Next Step
 

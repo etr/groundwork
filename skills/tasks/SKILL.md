@@ -2,6 +2,7 @@
 name: tasks
 description: Use when user asks to create task list, plan implementation, break down work, or generate tickets from product specs and architecture
 user-invocable: false
+requires: task-validation-loop
 ---
 
 # Task Generation Skill
@@ -97,7 +98,7 @@ For major technologies in the architecture, gather implementation guidance befor
 1. Invoke the researcher agent:
    ```
    Task(
-     subagent_type="groundwork:researcher",
+     subagent_type="groundwork:researcher:researcher",
      prompt="Research Topic: [technology from architecture]
      Research Questions:
      - What is the standard project structure?
@@ -280,11 +281,30 @@ Iterate until user approves, then write to `specs/tasks.md`.
 - Wait for approval on each milestone before presenting the next
 - This catches scope creep early and keeps stakeholders engaged
 
-## Step 7: Suggest Next Step
+## Step 7: Validate Task List
+
+After user approves the task list and before writing final version:
+
+Invoke: `Skill(skill="groundwork:task-validation-loop")`
+
+This runs verification agents to ensure:
+- All PRD requirements have corresponding tasks
+- Tasks are assigned to correct architecture components
+- UI tasks include design system and accessibility criteria
+
+**Wait for validation loop to pass before proceeding.**
+
+If validation finds issues:
+- The loop will automatically fix task list problems
+- You may be asked for input on scope decisions
+- Once all agents approve, continue to Step 8
+
+## Step 8: Suggest Next Step
 
 After writing the tasks document, suggest the next workflow step:
 
-> "Task list created with [N] tasks across [M] milestones.
+> "Task list created and validated with [N] tasks across [M] milestones.
+> PRD coverage: [X]%
 >
 > **Next step:** Run `/groundwork:work-on-next-task` to begin implementation, or `/groundwork:work-on N` to work on a specific task."
 
