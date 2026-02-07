@@ -21,7 +21,9 @@ Store the raw description for clarification.
 
 ### Step 2: Clarify Requirements
 
-Invoke: `Skill(skill="groundwork:understanding-feature-requests")`
+**You MUST call the Skill tool now:** `Skill(skill="groundwork:understanding-feature-requests")`
+
+Do NOT attempt to gather requirements yourself. The skill handles this.
 
 Follow the skill to gather:
 - Problem being solved
@@ -84,7 +86,10 @@ Then use `AskUserQuestion` to ask:
 
 ### Step 5: Execute Implementation
 
-Invoke: `Skill(skill="groundwork:implement-feature")`
+**CRITICAL INSTRUCTION: You MUST call the Skill tool now:**
+  `Skill(skill="groundwork:implement-feature")`
+
+Do NOT write implementation plans, do NOT create files, do NOT explore code, do NOT start coding. You are NOT permitted to implement the feature yourself. The implement-feature skill handles ALL implementation including worktree creation, TDD, validation, and merge. Call it NOW.
 
 Session context provides:
 - **identifier**: FEATURE-<slug>
@@ -92,13 +97,6 @@ Session context provides:
 - **merge-mode**: `ask`
 - **action-items**: [from requirements]
 - **acceptance-criteria**: [from clarification]
-
-The `implement-feature` skill handles:
-1. Worktree creation via `use-git-worktree`
-2. TDD workflow for each requirement
-3. Multi-agent validation
-4. Worktree finalization (prompts user for merge decision)
-5. Completion reporting
 
 ---
 

@@ -141,20 +141,17 @@ Then use `AskUserQuestion` to ask:
 
 1. **Update status** - Change task to `**Status:** In Progress`
 
-2. **Invoke implementation** - `Skill(skill="groundwork:implement-feature")`
+2. **CRITICAL INSTRUCTION: You MUST call the Skill tool now:**
+     `Skill(skill="groundwork:implement-feature")`
 
-Session context provides:
-- **identifier**: TASK-NNN
-- **title**: [Task Title]
-- **merge-mode**: `env`
-- **action-items**: [from task file]
-- **acceptance-criteria**: [from task file]
+   Do NOT start implementing the task yourself. Do NOT create files, write code, or begin TDD directly. The implement-feature skill handles ALL of this. Call it NOW.
 
-The `implement-feature` skill handles:
-- Worktree creation via `use-git-worktree`
-- TDD implementation
-- Multi-agent validation
-- Worktree finalization (merge based on `GROUNDWORK_AUTO_MERGE` env var)
+   Session context provides:
+   - **identifier**: TASK-NNN
+   - **title**: [Task Title]
+   - **merge-mode**: `env`
+   - **action-items**: [from task file]
+   - **acceptance-criteria**: [from task file]
 
 ### Step 8: Complete Task
 

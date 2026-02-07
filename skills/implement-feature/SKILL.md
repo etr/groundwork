@@ -26,7 +26,9 @@ Check session context for worktree parameters:
 
 If no identifier create a new identifier yourself in the format FEATURE-slug. Otherwise, use the identifier provided.
 
-Invoke: `Skill(skill="groundwork:use-git-worktree", args="<identifier>")`
+**You MUST call the Skill tool now:** `Skill(skill="groundwork:use-git-worktree", args="<identifier>")`
+
+Do NOT create branches or worktrees with git commands directly. The skill handles setup and baseline validation.
 
 Wait for worktree creation to complete and baseline tests to pass.
 
@@ -50,7 +52,9 @@ Store the gathered context for use in subsequent steps.
 
 ### Step 3: Execute TDD
 
-Invoke: `Skill(skill="groundwork:test-driven-development")`
+**You MUST call the Skill tool now:** `Skill(skill="groundwork:test-driven-development")`
+
+Do NOT write implementation code without first loading the TDD skill. It enforces red-green-refactor discipline.
 
 For each action item:
 1. Write failing test
@@ -101,7 +105,9 @@ Output verification results:
 
 ### Step 6: Multi-Agent Verification
 
-This is mandatory. Invoke: `Skill(skill="groundwork:validation-loop")`
+**You MUST call the Skill tool now:** `Skill(skill="groundwork:validation-loop")`
+
+Do NOT declare implementation complete or skip validation. This step is non-negotiable.
 
 This runs verification agents in parallel with autonomous fix-and-retry.
 

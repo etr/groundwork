@@ -60,10 +60,7 @@ Parse the tasks to find the next task to work on:
 
 ### Step 4: Delegate to Execute Task
 
-Once a task is identified, invoke the `groundwork:execute-task` skill with the task identifier (e.g., `TASK-004`).
+Once a task is identified, **you MUST call the Skill tool:**
+  `Skill(skill="groundwork:execute-task", args="TASK-NNN")`
 
-The execute-task skill will:
-1. Load full project context (PRD, architecture, tasks)
-2. Present the task summary
-3. Execute the task
-4. Complete the task and offer to continue
+Do NOT load project context, present summaries, or begin task execution yourself. The execute-task skill handles the complete workflow. Call it NOW with the identified task identifier.

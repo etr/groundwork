@@ -285,12 +285,9 @@ Iterate until user approves, then write to `specs/tasks.md`.
 
 After user approves the task list and before writing final version:
 
-Invoke: `Skill(skill="groundwork:task-validation-loop")`
+**You MUST call the Skill tool now:** `Skill(skill="groundwork:task-validation-loop")`
 
-This runs verification agents to ensure:
-- All PRD requirements have corresponding tasks
-- Tasks are assigned to correct architecture components
-- UI tasks include design system and accessibility criteria
+Do NOT skip validation or declare the task list complete without running this. It ensures PRD coverage, architecture alignment, and design system compliance.
 
 **Wait for validation loop to pass before proceeding.**
 
