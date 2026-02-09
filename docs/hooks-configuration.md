@@ -18,6 +18,28 @@ The plugin includes these hooks in `hooks/hooks.json`:
 
 **File:** `hooks/session-start.sh`
 
+### PostToolUse Hook
+
+**Triggers:** After `Bash` tool use
+
+**Purpose:**
+- Verifies commits align with specs/tasks.md after `git commit`
+
+**File:** `hooks/check-commit-alignment.sh`
+
+### SubagentStop Hook
+
+**Triggers:** After any subagent completes (*)
+
+**Purpose:**
+- Validates agent output format
+
+**File:** `hooks/validate-agent-output.sh`
+
+### PreToolUse Hook
+
+Currently empty — reserved for future use.
+
 ### PreCompact Hook
 
 **Triggers:** Before context compaction (*)
@@ -35,6 +57,7 @@ The plugin includes these hooks in `hooks/hooks.json`:
 |----------|---------|-------------|
 | `CLAUDE_SESSION_ID` | (auto) | Used for session-scoped state |
 | `GROUNDWORK_SKIP_UPDATE_CHECK` | 0 | Set to 1 to skip update checking |
+| `GROUNDWORK_DEBUG` | 0 | Set to 1 to enable verbose hook output |
 
 ## Hook Output Format
 

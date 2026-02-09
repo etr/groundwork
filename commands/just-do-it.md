@@ -1,7 +1,7 @@
 ---
 name: groundwork:just-do-it
 description: Execute all remaining tasks in sequence until completion. Usage /groundwork:just-do-it
-allowed-tools: ["Read", "Edit", "Write", "Bash", "Glob", "Grep", "Task", "AskUserQuestion"]
+allowed-tools: ["Read", "Bash", "Glob", "Grep", "Task", "AskUserQuestion"]
 disable-model-invocation: true
 ---
 
@@ -63,30 +63,56 @@ If user declines, stop and suggest alternatives:
 - `/groundwork:work-on N` to work on a specific task
 - `/groundwork:work-on-next-task` to work on just the next available task
 
-### Step 3: Execute Loop
+### Step 3: Execute Loop (Subagent Dispatch)
 
-**Set execution context before invoking execute-task:**
-```
-GROUNDWORK_AUTO_MERGE=true
-```
-
-This context tells `execute-task` to:
-- Skip the worktree preference prompt
-- Automatically use worktree isolation
-- Auto-merge after successful task completion
+Each task is dispatched to its own **Task subagent** with a fresh context window. This prevents context accumulation — the main loop holds only the task list and pass/fail results.
 
 For each remaining task in dependency order:
 
-1. **Announce start:** "Starting TASK-NNN: [Title]"
-2. **Invoke execute-task skill:** `groundwork:execute-task` with the task ID
-   - Context `GROUNDWORK_AUTO_MERGE=true` is active
-   - Task executes in isolated worktree `.worktrees/TASK-NNN`
-   - On success, worktree is merged and cleaned up automatically
-3. **Handle result:**
-   - On success: Continue to next task
-   - On failure: STOP immediately
+1. **Read the task section** from `specs/tasks.md` (or aggregated from `specs/tasks/`) to extract the full task definition (goal, action items, acceptance criteria, dependencies).
 
-**On Failure:** Report failed task, reason, tasks completed this session, and tasks remaining. Note that the failed task's worktree is preserved at `.worktrees/TASK-NNN` for investigation.
+2. **Announce start:** "Starting TASK-NNN: [Title]"
+
+3. **Dispatch to a Task subagent:**
+
+```
+Task(
+  subagent_type="general-purpose",
+  description="Execute TASK-NNN",
+  prompt="You are executing a task as part of an automated batch run.
+
+DIRECTIVES:
+GROUNDWORK_AUTO_MERGE=true
+GROUNDWORK_BATCH_MODE=true
+
+PROJECT ROOT: [absolute path to project root]
+
+TASK DEFINITION:
+[Paste the full task section from specs/tasks.md here]
+
+INSTRUCTIONS:
+1. Call Skill(skill='groundwork:execute-task', args='TASK-NNN')
+2. The batch mode directives above tell execute-task to skip all user confirmations and auto-merge worktrees.
+3. When execute-task completes, output your final line in EXACTLY this format:
+   RESULT: SUCCESS | [one-line summary of what was done]
+   OR:
+   RESULT: FAILURE | [one-line reason for failure]
+
+IMPORTANT:
+- Do NOT use AskUserQuestion at any point
+- Do NOT ask for confirmation — proceed automatically
+- Your LAST line of output MUST be the RESULT line
+"
+)
+```
+
+4. **Parse the subagent result:**
+   - Look for the last line matching `RESULT: SUCCESS | ...` or `RESULT: FAILURE | ...`
+   - `SUCCESS` → Log the summary, continue to next task
+   - `FAILURE` → STOP immediately
+   - No parseable RESULT line → Treat as failure: `FAILURE | Subagent did not return structured result`
+
+**On Failure:** Report the failed task, reason, tasks completed this session, and tasks remaining. Note that the failed task's worktree is preserved at `.worktrees/TASK-NNN` for investigation.
 
 ### Step 4: Completion Report
 

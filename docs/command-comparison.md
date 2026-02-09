@@ -84,9 +84,35 @@ This guide explains when to use similar commands that serve related purposes.
 
 | If you want to... | Use this command |
 |-------------------|------------------|
-| Review a PR on GitHub | `/groundwork:code-review` |
 | Update PRD after product discussion | `/groundwork:source-product-specs-from-code` |
 | Full audit of code vs specs | `/groundwork:check-specs-alignment` |
 | Generate tasks from specs | `/groundwork:create-tasks` |
 | Work on next available task | `/groundwork:work-on-next-task` |
 | Work on a specific task | `/groundwork:work-on [N]` |
+| Re-run multi-agent verification | `/groundwork:validate` |
+| Systematic debugging | `/groundwork:debug` |
+| Build ad-hoc feature from description | `/groundwork:build-unplanned` |
+
+---
+
+## Ad-hoc vs Planned Implementation
+
+### `/groundwork:build-unplanned` vs `/groundwork:work-on`
+
+| Aspect | `/groundwork:build-unplanned` | `/groundwork:work-on [N]` |
+|--------|-------------------------------|---------------------------|
+| **Primary Use** | Build feature from description | Execute a planned task |
+| **Input Required** | Feature description | Task number from specs/tasks.md |
+| **Prerequisites** | None | PRD + Architecture + Task list |
+| **Planning** | Inline (gathers requirements on the fly) | Pre-planned in task definitions |
+| **Verification** | Built-in validation loop | Task-level verification |
+
+**When to use `/groundwork:build-unplanned`:**
+- Quick feature that doesn't warrant full spec workflow
+- Prototyping or exploratory work
+- One-off changes outside the current task list
+
+**When to use `/groundwork:work-on [N]`:**
+- Feature is already defined in the task list
+- Working within an established project plan
+- Need traceability back to specs and architecture

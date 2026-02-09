@@ -82,14 +82,16 @@ Identifies and works on the next unblocked task.
 ### For Existing Projects
 
 1. Run `/groundwork:skills` to see available skills
-2. Use `/groundwork:code-review` before creating PRs
+2. Use `/groundwork:check-specs-alignment` to audit code vs specs
+3. Use `/groundwork:debug` for systematic debugging
+4. Use `/groundwork:build-unplanned` to implement ad-hoc features from a description
 
 ## Tips
 
 - **Read skills before using** - Use Skill tool to load and understand each skill
 - **Follow skills exactly** - They encode proven workflows
 - **Use process skills first** - Planning before implementation
-- **Review regularly** - Use code review skills after each major change
+- **Review regularly** - Use `/groundwork:validate` to re-run multi-agent verification after each major change
 
 ## Getting Help
 

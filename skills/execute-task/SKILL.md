@@ -19,6 +19,12 @@ Parse the task identifier from the argument:
 
 **Error:** Invalid format → "Please specify a task number, e.g., `/groundwork:work-on 4` or `/groundwork:work-on TASK-004`"
 
+### Batch Mode Detection
+
+If session context contains `GROUNDWORK_BATCH_MODE=true`, batch mode is active. In batch mode:
+- All `AskUserQuestion` prompts are skipped — proceed with the default/automatic choice
+- On completion or failure, output a structured result line (see Step 9)
+
 ### Step 2: Load Task File
 
 Read the tasks file from the worktree:
@@ -31,21 +37,27 @@ Search for `### TASK-NNN:` pattern.
 
 ### Step 3: Validate Task is Workable
 
-**If already complete:** Use `AskUserQuestion` to ask:
+**If already complete:**
 
-> "TASK-NNN is already marked Complete. What would you like to do?"
-> - Option 1: "Work on it anyway (resets to In Progress)"
-> - Option 2: "Pick a different task"
+- **Batch mode (GROUNDWORK_BATCH_MODE=true):** Output `RESULT: SUCCESS | Already complete` and stop — do not re-execute.
+- **Interactive mode:** Use `AskUserQuestion` to ask:
 
-**Wait for user response before proceeding.**
+  > "TASK-NNN is already marked Complete. What would you like to do?"
+  > - Option 1: "Work on it anyway (resets to In Progress)"
+  > - Option 2: "Pick a different task"
 
-**If blocked:** Use `AskUserQuestion` to ask:
+  **Wait for user response before proceeding.**
 
-> "TASK-NNN is blocked by: [list]. What would you like to do?"
-> - Option 1: "Override and work on it anyway"
-> - Option 2: "Work on a blocking task first: [suggest first blocker]"
+**If blocked:**
 
-**Wait for user response before proceeding.**
+- **Batch mode (GROUNDWORK_BATCH_MODE=true):** Output `RESULT: FAILURE | Blocked by [list of blocking task IDs]` and stop.
+- **Interactive mode:** Use `AskUserQuestion` to ask:
+
+  > "TASK-NNN is blocked by: [list]. What would you like to do?"
+  > - Option 1: "Override and work on it anyway"
+  > - Option 2: "Work on a blocking task first: [suggest first blocker]"
+
+  **Wait for user response before proceeding.**
 
 ### Step 4: Load Project Context
 
@@ -127,7 +139,9 @@ Present summary to the user:
 - [criterion 2]
 ```
 
-Then use `AskUserQuestion` to ask:
+**Batch mode (GROUNDWORK_BATCH_MODE=true):** Skip the confirmation — proceed directly to Step 7.
+
+**Interactive mode:** Use `AskUserQuestion` to ask:
 
 > "Ready to begin implementation?"
 > - Option 1: "Yes, begin"
@@ -159,7 +173,18 @@ After `implement-feature` returns successfully:
 
 1. **Update status** - Change task to `**Status:** Complete`
 
-### Step 9: Offer to Continue
+### Step 9: Complete and Report
+
+**Batch mode (GROUNDWORK_BATCH_MODE=true):** Output the structured result as your final line:
+```
+RESULT: SUCCESS | [TASK-NNN] [Task Title] - [one-line summary of what was done]
+```
+If the task failed at any step, output:
+```
+RESULT: FAILURE | [TASK-NNN] [reason for failure]
+```
+
+**Interactive mode:** Present the completion summary:
 
 ```markdown
 ## Completed: [TASK-NNN] [Task Title]

@@ -33,6 +33,7 @@ description: Use when [condition] - [what it does]
 |-------|----------|-------------|
 | `name` | Yes | Lowercase with hyphens (e.g., `my-skill`) |
 | `description` | Yes | Must start with "Use when..." |
+| `requires` | No | Comma-separated list of skill dependencies |
 
 ## Writing Good Descriptions
 
@@ -121,7 +122,7 @@ Personal skills with the same name as plugin skills take precedence.
 
 ## Validation
 
-Run `/groundwork-check` to validate your skill:
+Run `/groundwork:groundwork-check` to validate your skill:
 
 ```bash
 node lib/validate-plugin.js
