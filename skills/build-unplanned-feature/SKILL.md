@@ -84,19 +84,53 @@ Then use `AskUserQuestion` to ask:
 
 **Wait for user response before proceeding.**
 
-### Step 5: Execute Implementation
+### Step 5: Execute Implementation (Subagent Dispatch)
 
-**CRITICAL INSTRUCTION: You MUST call the Skill tool now:**
-  `Skill(skill="groundwork:implement-feature")`
+Implementation is dispatched to a **Task subagent** with a fresh context window. This prevents context drift from the clarification conversation above.
 
-Do NOT write implementation plans, do NOT create files, do NOT explore code, do NOT start coding. You are NOT permitted to implement the feature yourself. The implement-feature skill handles ALL implementation including worktree creation, TDD, validation, and merge. Call it NOW.
+**Build the Task prompt with ALL gathered context from Steps 1-4.** You MUST include actual values, not placeholders:
 
-Session context provides:
-- **identifier**: FEATURE-<slug>
-- **title**: [Feature description summary]
-- **merge-mode**: `ask`
-- **action-items**: [from requirements]
-- **acceptance-criteria**: [from clarification]
+    Task(
+      subagent_type="general-purpose",
+      description="Implement <identifier>",
+      prompt="You are implementing a feature that has already been fully specified.
+
+    PROJECT ROOT: [absolute path to project root]
+
+    FEATURE DEFINITION:
+    - Identifier: [FEATURE-slug from Step 3]
+    - Title: [1-2 sentence summary from Step 4]
+    - Merge Mode: ask
+
+    ACTION ITEMS:
+    [Bulleted list of requirements gathered in Steps 1-2]
+
+    ACCEPTANCE CRITERIA:
+    [Bulleted list of acceptance criteria from Step 2/4]
+
+    OUT OF SCOPE:
+    [Bulleted list of exclusions, or 'None specified']
+
+    INSTRUCTIONS:
+    1. Call Skill(skill='groundwork:implement-feature')
+    2. The feature definition above provides all session context — do NOT re-ask the user for requirements.
+    3. For merge decisions (implement-feature Step 7), use AskUserQuestion to prompt the user.
+    4. When complete, output your final line in EXACTLY this format:
+       RESULT: SUCCESS | [one-line summary]
+       OR:
+       RESULT: FAILURE | [one-line reason]
+
+    IMPORTANT:
+    - Your FIRST action MUST be calling Skill(skill='groundwork:implement-feature')
+    - Do NOT implement anything yourself — the skill handles worktree, TDD, validation, and merge
+    - Your LAST line of output MUST be the RESULT line
+    "
+    )
+
+**After the subagent returns**, parse the result:
+- `RESULT: SUCCESS | ...` — Report the summary to the user
+- `RESULT: FAILURE | ...` — Report the failure and worktree location for investigation
+- No parseable RESULT line — Report: "Implementation subagent did not return a structured result. Check worktree status manually."
 
 ---
 

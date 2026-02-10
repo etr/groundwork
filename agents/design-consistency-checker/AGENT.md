@@ -110,9 +110,9 @@ Verify implementations match UXD decisions:
 ## Input Context
 
 You will receive:
-- `changed_files`: List of files modified in this task
-- `file_contents`: Full content of each changed file
-- `design_system`: Contents of specs/design_system.md
+- `changed_file_paths`: Paths of files to review — **read each using the Read tool**
+- `diff_stat`: Summary of changes (lines added/removed per file)
+- `design_system_path`: Path to design system doc — **read using the Read tool** to extract tokens, decisions, and patterns
 
 ## Review Process
 

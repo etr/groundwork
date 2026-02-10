@@ -57,11 +57,10 @@ Identify any:
 ## Input Context
 
 You will receive:
-- `changed_files`: List of files modified in this task
-- `file_contents`: Full content of each changed file
+- `changed_file_paths`: Paths of files to review — **read each using the Read tool**
+- `diff_stat`: Summary of changes (lines added/removed per file)
 - `task_definition`: The task (goal, action items, acceptance criteria)
-- `product_specs`: Relevant PRD excerpts with EARS requirements
-- `related_tasks`: Other tasks that might be affected
+- `specs_path`: Path to product specs — **read using the Read tool** to find relevant EARS requirements
 
 ## Review Process
 

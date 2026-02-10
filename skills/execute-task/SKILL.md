@@ -149,23 +149,66 @@ Present summary to the user:
 
 **Wait for user response before proceeding.**
 
-### Step 7: Execute the Task
+### Step 7: Execute the Task (Subagent Dispatch)
 
 **If you are in plan mode:** Call `ExitPlanMode()` immediately. Do not explore files, do not read code, do not create plans. Wait for user approval then continue with Step 7.
 
 1. **Update status** - Change task to `**Status:** In Progress`
 
-2. **CRITICAL INSTRUCTION: You MUST call the Skill tool now:**
-     `Skill(skill="groundwork:implement-feature")`
+2. **Dispatch to a Task subagent** with a fresh context window. This prevents context drift from Steps 1-6.
 
-   Do NOT start implementing the task yourself. Do NOT create files, write code, or begin TDD directly. The implement-feature skill handles ALL of this. Call it NOW.
+**Build the Task prompt with ALL gathered context.** You MUST include actual values, not placeholders:
 
-   Session context provides:
-   - **identifier**: TASK-NNN
-   - **title**: [Task Title]
-   - **merge-mode**: `env`
-   - **action-items**: [from task file]
-   - **acceptance-criteria**: [from task file]
+    Task(
+      subagent_type="general-purpose",
+      description="Execute TASK-NNN",
+      prompt="You are implementing a task that has already been fully planned.
+
+    DIRECTIVES:
+    [If GROUNDWORK_BATCH_MODE=true in session: include both lines below]
+    [If interactive: omit DIRECTIVES section entirely]
+    GROUNDWORK_AUTO_MERGE=true
+    GROUNDWORK_BATCH_MODE=true
+
+    PROJECT ROOT: [absolute path to project root]
+
+    TASK DEFINITION:
+    - Identifier: [TASK-NNN]
+    - Title: [Task Title]
+    - Merge Mode: env
+
+    GOAL:
+    [Goal from task file]
+
+    ACTION ITEMS:
+    [Bulleted list from task file]
+
+    ACCEPTANCE CRITERIA:
+    [Bulleted list from task file]
+
+    IMPLEMENTATION PLAN:
+    [Summary of validated plan from Step 5]
+
+    INSTRUCTIONS:
+    1. Call Skill(skill='groundwork:implement-feature')
+    2. The task definition above provides all session context — do NOT re-ask the user for requirements.
+    3. For merge decisions (implement-feature Step 7), use AskUserQuestion to prompt the user (unless GROUNDWORK_BATCH_MODE is set, in which case auto-merge).
+    4. When complete, output your final line in EXACTLY this format:
+       RESULT: SUCCESS | [one-line summary]
+       OR:
+       RESULT: FAILURE | [one-line reason]
+
+    IMPORTANT:
+    - Your FIRST action MUST be calling Skill(skill='groundwork:implement-feature')
+    - Do NOT implement anything yourself — the skill handles worktree, TDD, validation, and merge
+    - Your LAST line of output MUST be the RESULT line
+    "
+    )
+
+**After the subagent returns**, parse the result:
+- `RESULT: SUCCESS | ...` — Proceed to Step 8
+- `RESULT: FAILURE | ...` — Report failure; in batch mode output `RESULT: FAILURE | ...` and stop
+- No parseable RESULT line — Report: "Implementation subagent did not return a structured result. Check worktree status manually."
 
 ### Step 8: Complete Task
 

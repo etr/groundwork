@@ -19,14 +19,16 @@ Before invoking this skill, ensure:
 
 ### 1. Gather Context
 
+**CRITICAL — Context budget**: Do NOT read file contents, full diffs, specs, or architecture docs into this orchestrating context. Collect only file paths and metadata. Agents have Read/Grep/Glob tools and will read files in their own context windows.
+
 Collect for the agents:
-- Changed files: `git diff --name-only HEAD~1`
-- Full diff: `git diff HEAD~1`
-- File contents of changed files
-- Associated test files
-- Task definition (goal, action items, acceptance criteria)
-- Relevant product specs (EARS requirements)
-- Relevant architecture decisions
+- Changed file paths: `git diff --name-only HEAD~1` → list of paths (keep, small)
+- Diff stat: `git diff --stat HEAD~1` → brief change summary (lines added/removed per file)
+- Test file paths: identify associated test files by convention (do NOT read them)
+- Task definition (goal, action items, acceptance criteria) → keep, brief
+- Specs path: path to `specs/product_specs.md` or `specs/product_specs/` (do NOT read contents)
+- Architecture path: path to `specs/architecture.md` or `specs/architecture/` (do NOT read contents)
+- Design system path: path to `specs/design_system.md` or `specs/design_system/` (do NOT read contents)
 
 ### 2. Launch Verification Agents
 
@@ -34,14 +36,16 @@ Use Task tool to launch all 8 agents in parallel:
 
 | Agent (`subagent_type`) | Context to Provide |
 |-------------------------|-------------------|
-| `groundwork:code-quality-reviewer:code-quality-reviewer` | Changed files, contents, tests, task definition |
-| `groundwork:security-reviewer:security-reviewer` | Changed files, contents, task definition |
-| `groundwork:spec-alignment-checker:spec-alignment-checker` | Changed files, contents, task definition, product specs |
-| `groundwork:architecture-alignment-checker:architecture-alignment-checker` | Changed files, contents, task definition, architecture |
-| `groundwork:code-simplifier:code-simplifier` | Changed files, contents, task definition |
-| `groundwork:housekeeper:housekeeper` | Changed files, contents, task definition, task status, product specs, architecture, documentation |
-| `groundwork:performance-reviewer:performance-reviewer` | Changed files, contents, task definition |
-| `groundwork:design-consistency-checker:design-consistency-checker` | Changed files, contents, design_system.md |
+| `groundwork:code-quality-reviewer:code-quality-reviewer` | `changed_file_paths`, `diff_stat`, `task_definition`, `test_file_paths` |
+| `groundwork:security-reviewer:security-reviewer` | `changed_file_paths`, `diff_stat`, `task_definition` |
+| `groundwork:spec-alignment-checker:spec-alignment-checker` | `changed_file_paths`, `diff_stat`, `task_definition`, `specs_path` |
+| `groundwork:architecture-alignment-checker:architecture-alignment-checker` | `changed_file_paths`, `diff_stat`, `task_definition`, `architecture_path` |
+| `groundwork:code-simplifier:code-simplifier` | `changed_file_paths`, `diff_stat`, `task_definition` |
+| `groundwork:housekeeper:housekeeper` | `changed_file_paths`, `diff_stat`, `task_definition`, `task_status`, `specs_path`, `architecture_path`, `design_system_path` |
+| `groundwork:performance-reviewer:performance-reviewer` | `changed_file_paths`, `diff_stat`, `task_definition` |
+| `groundwork:design-consistency-checker:design-consistency-checker` | `changed_file_paths`, `diff_stat`, `design_system_path` |
+
+In each agent prompt, include: "Use the Read tool to examine these files. Do NOT expect file contents in this prompt — read them yourself."
 
 Each returns JSON:
 ```json
@@ -94,7 +98,9 @@ Each returns JSON:
    - Run tests - must pass
    - Confirm acceptance criteria
 
-4. **Re-run Agent Validation** - Launch all 7 agents again
+4. **Re-run Agent Validation** - Launch all 8 agents again
+   - Do NOT re-read updated files into the orchestrator context — agents will re-read the updated files themselves
+   - Only update `changed_file_paths` or `diff_stat` if the set of changed files has changed
 
 5. **Check Results**
    - ALL approve → **PASS**, return success

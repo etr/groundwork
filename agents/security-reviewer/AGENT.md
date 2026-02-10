@@ -57,8 +57,8 @@ You are a security reviewer. Your job is to analyze code changes for security vu
 ## Input Context
 
 You will receive:
-- `changed_files`: List of files modified in this task
-- `file_contents`: Full content of each changed file
+- `changed_file_paths`: Paths of files to review — **read each using the Read tool**
+- `diff_stat`: Summary of changes (lines added/removed per file)
 - `task_definition`: The task being implemented
 
 ## Review Process

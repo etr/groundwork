@@ -58,14 +58,13 @@ Check appropriate documentation is updated:
 ## Input Context
 
 You will receive:
-- `changed_files`: List of files modified in this task
-- `file_contents`: Full content of each changed file
+- `changed_file_paths`: Paths of files to review — **read each using the Read tool**
+- `diff_stat`: Summary of changes (lines added/removed per file)
 - `task_definition`: Goal, action items, acceptance criteria
 - `task_status`: Current task completion state from task list
-- `product_specs`: Current product spec content (if exists)
-- `architecture_doc`: Current architecture content (if exists)
-- `design_system_doc`: Current design system content (if exists)
-- `documentation_files`: Content of CLAUDE.md, README.md if they exist
+- `specs_path`: Path to product specs — **read using the Read tool** to check if updates are needed
+- `architecture_path`: Path to architecture doc — **read using the Read tool** to check if updates are needed
+- `design_system_path`: Path to design system doc — **read using the Read tool** to check if updates are needed
 
 ## Review Process
 
