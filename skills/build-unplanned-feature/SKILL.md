@@ -1,13 +1,13 @@
 ---
 name: build-unplanned-feature
 description: Use when building a feature from a description without existing task definitions - combines requirement gathering, TDD implementation, and validation
-requires: understanding-feature-requests, implement-feature
+requires: understanding-feature-requests, implement-feature, validation-loop
 user-invocable: false
 ---
 
 # Build Unplanned Feature
 
-Enables ad-hoc feature development without existing task definitions. Combines requirement gathering, worktree isolation, TDD implementation, and multi-agent validation.
+Enables ad-hoc feature development without existing task definitions. Combines requirement gathering, worktree isolation, TDD implementation, multi-agent validation, and merge.
 
 ## Workflow
 
@@ -84,7 +84,7 @@ Then use `AskUserQuestion` to ask:
 
 **Wait for user response before proceeding.**
 
-### Step 5: Execute Implementation (Subagent Dispatch)
+### Step 5: Implementation Subagent
 
 Implementation is dispatched to a **Task subagent** with a fresh context window. This prevents context drift from the clarification conversation above.
 
@@ -100,7 +100,6 @@ Implementation is dispatched to a **Task subagent** with a fresh context window.
     FEATURE DEFINITION:
     - Identifier: [FEATURE-slug from Step 3]
     - Title: [1-2 sentence summary from Step 4]
-    - Merge Mode: ask
 
     ACTION ITEMS:
     [Bulleted list of requirements gathered in Steps 1-2]
@@ -114,23 +113,133 @@ Implementation is dispatched to a **Task subagent** with a fresh context window.
     INSTRUCTIONS:
     1. Call Skill(skill='groundwork:implement-feature')
     2. The feature definition above provides all session context — do NOT re-ask the user for requirements.
-    3. For merge decisions (implement-feature Step 7), use AskUserQuestion to prompt the user.
-    4. When complete, output your final line in EXACTLY this format:
-       RESULT: SUCCESS | [one-line summary]
+    3. When complete, output your final line in EXACTLY this format:
+       RESULT: IMPLEMENTED | <worktree_path> | <branch> | <base_branch>
        OR:
        RESULT: FAILURE | [one-line reason]
 
     IMPORTANT:
     - Your FIRST action MUST be calling Skill(skill='groundwork:implement-feature')
-    - Do NOT implement anything yourself — the skill handles worktree, TDD, validation, and merge
+    - Do NOT run validation-loop or merge — the caller handles those
+    - Do NOT use AskUserQuestion for merge decisions
     - Your LAST line of output MUST be the RESULT line
     "
     )
 
 **After the subagent returns**, parse the result:
-- `RESULT: SUCCESS | ...` — Report the summary to the user
-- `RESULT: FAILURE | ...` — Report the failure and worktree location for investigation
-- No parseable RESULT line — Report: "Implementation subagent did not return a structured result. Check worktree status manually."
+- `RESULT: IMPLEMENTED | <path> | <branch> | <base-branch>` — Save these values, proceed to Step 6
+- `RESULT: FAILURE | ...` — Report the failure and worktree location for investigation, stop
+- No parseable RESULT line — Report: "Implementation subagent did not return a structured result. Check worktree status manually." Stop.
+
+### Step 6: Validation Subagent
+
+Dispatch validation to a **separate Task subagent** with a fresh context window:
+
+    Task(
+      subagent_type="general-purpose",
+      description="Validate <identifier>",
+      prompt="You are validating an implementation that is ready for review.
+
+    PROJECT ROOT: [absolute path to project root]
+    WORKTREE PATH: [worktree_path from Step 5]
+
+    INSTRUCTIONS:
+    1. cd into the worktree path above
+    2. Call Skill(skill='groundwork:validation-loop')
+    3. The validation-loop skill will run 8 verification agents and fix issues autonomously.
+    4. When complete, output your final line in EXACTLY this format:
+       RESULT: VALIDATED | [one-line summary of validation outcome]
+       OR:
+       RESULT: FAILURE | [one-line reason]
+
+    IMPORTANT:
+    - Your FIRST action MUST be cd into the worktree, then calling the validation-loop skill
+    - Do NOT modify implementation logic — only fix issues the validation agents flag
+    - Your LAST line of output MUST be the RESULT line
+    "
+    )
+
+**After the subagent returns**, parse the result:
+- `RESULT: VALIDATED | ...` — Proceed to Step 7
+- `RESULT: FAILURE | ...` — Report the failure and worktree location for investigation, stop
+- No parseable RESULT line — Report: "Validation subagent did not return a structured result. Check worktree status manually." Stop.
+
+### Step 7: Merge Decision
+
+**From the project root** (NOT the worktree), handle merge:
+
+Use `AskUserQuestion` to ask:
+
+> "Implementation and validation complete for [identifier]. Would you like me to merge this into [base-branch] now?"
+> - Option 1: "Yes, merge now"
+> - Option 2: "No, I'll merge manually later"
+
+**Wait for user response before proceeding.**
+
+**If merging:**
+
+1. Ensure you are in the project root (cd out of worktree if needed)
+2. Checkout base branch: `git checkout <base-branch>`
+3. Merge: `git merge --no-ff <branch> -m "Merge <branch>: [Title]"`
+4. If success: Remove worktree and delete branch:
+   ```bash
+   git worktree remove .worktrees/<identifier>
+   git branch -d <branch>
+   ```
+5. If conflicts: Report conflicts and keep worktree for manual resolution
+
+**If not merging or conflicts occurred:**
+
+Report worktree location and manual merge instructions:
+
+```markdown
+## Implementation Complete in Worktree
+
+**Location:** .worktrees/<identifier>
+**Branch:** feature/<identifier>
+
+When ready to merge:
+```bash
+git checkout [base-branch]
+git merge --no-ff <branch>
+git worktree remove .worktrees/<identifier>
+git branch -d <branch>
+```
+
+To continue working:
+```bash
+cd .worktrees/<identifier>
+```
+```
+
+### Step 8: Report Completion
+
+Output implementation summary:
+
+```markdown
+## Feature Complete: [identifier]
+
+**What was done:**
+- [Summary of changes]
+
+**Files modified:**
+- `path/to/file` - [description]
+
+**Tests added:**
+- `path/to/test` - [what it tests]
+
+**Acceptance criteria verified:**
+- [x] [Criterion] - [How verified]
+
+**Validation:** Passed ([N] iteration(s))
+
+**Worktree status:** [Merged to <branch> | Pending at .worktrees/<identifier>]
+```
+
+Output the final result line:
+```
+RESULT: SUCCESS | [one-line summary]
+```
 
 ---
 
@@ -141,13 +250,6 @@ Implementation is dispatched to a **Task subagent** with a fresh context window.
 This skill uses `feature/` prefix (not `task/`) to distinguish ad-hoc features from planned tasks:
 - Planned tasks: `task/TASK-NNN`
 - Ad-hoc features: `feature/FEATURE-<slug>`
-
-### Merge Handling
-
-The `implement-feature` skill handles merge with `merge-mode: ask`, which:
-- Always prompts user for merge decision
-- Provides manual merge instructions if user declines
-- Handles merge conflicts gracefully
 
 ### Standalone Usage
 

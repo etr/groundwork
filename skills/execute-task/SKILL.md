@@ -1,7 +1,7 @@
 ---
 name: execute-task
 description: Use when executing a specific task - REQUIRES worktree isolation (mandatory), TDD methodology (mandatory), and validation-loop completion (mandatory). No exceptions.
-requires: implement-feature
+requires: implement-feature, validation-loop
 user-invocable: false
 ---
 
@@ -91,7 +91,7 @@ Relevant architecture:
 REQUIREMENTS FOR THE PLAN:
 1. All work happens in worktree .worktrees/TASK-NNN (not main workspace)
 2. Must follow TDD: write test → implement → verify cycle
-3. Must end with groundwork:validation-loop invocation
+3. Plan covers implementation only — validation and merge are handled separately by the caller
 ",
   description="Plan TASK-NNN"
 )
@@ -100,7 +100,6 @@ REQUIREMENTS FOR THE PLAN:
 **Validate the plan:**
 - [ ] Plan states work happens in worktree
 - [ ] Plan includes TDD cycle
-- [ ] Plan ends with validation-loop
 
 **If ANY unchecked:** Reject plan, state what's missing, re-invoke Plan agent.
 
@@ -149,7 +148,7 @@ Present summary to the user:
 
 **Wait for user response before proceeding.**
 
-### Step 7: Execute the Task (Subagent Dispatch)
+### Step 7: Implementation Subagent
 
 **If you are in plan mode:** Call `ExitPlanMode()` immediately. Do not explore files, do not read code, do not create plans. Wait for user approval then continue with Step 7.
 
@@ -175,7 +174,6 @@ Present summary to the user:
     TASK DEFINITION:
     - Identifier: [TASK-NNN]
     - Title: [Task Title]
-    - Merge Mode: env
 
     GOAL:
     [Goal from task file]
@@ -192,27 +190,118 @@ Present summary to the user:
     INSTRUCTIONS:
     1. Call Skill(skill='groundwork:implement-feature')
     2. The task definition above provides all session context — do NOT re-ask the user for requirements.
-    3. For merge decisions (implement-feature Step 7), use AskUserQuestion to prompt the user (unless GROUNDWORK_BATCH_MODE is set, in which case auto-merge).
-    4. When complete, output your final line in EXACTLY this format:
-       RESULT: SUCCESS | [one-line summary]
+    3. When complete, output your final line in EXACTLY this format:
+       RESULT: IMPLEMENTED | <worktree_path> | <branch> | <base_branch>
        OR:
        RESULT: FAILURE | [one-line reason]
 
     IMPORTANT:
     - Your FIRST action MUST be calling Skill(skill='groundwork:implement-feature')
-    - Do NOT implement anything yourself — the skill handles worktree, TDD, validation, and merge
+    - Do NOT run validation-loop or merge — the caller handles those
+    - Do NOT use AskUserQuestion for merge decisions
     - Your LAST line of output MUST be the RESULT line
     "
     )
 
 **After the subagent returns**, parse the result:
-- `RESULT: SUCCESS | ...` — Proceed to Step 8
-- `RESULT: FAILURE | ...` — Report failure; in batch mode output `RESULT: FAILURE | ...` and stop
+- `RESULT: IMPLEMENTED | <path> | <branch> | <base-branch>` — Save these values, proceed to Step 7.5
+- `RESULT: FAILURE | ...` — Report failure; in batch mode output `RESULT: FAILURE | [TASK-NNN] ...` and stop
 - No parseable RESULT line — Report: "Implementation subagent did not return a structured result. Check worktree status manually."
+
+### Step 7.5: Validation Subagent
+
+Dispatch validation to a **separate Task subagent** with a fresh context window:
+
+    Task(
+      subagent_type="general-purpose",
+      description="Validate TASK-NNN",
+      prompt="You are validating an implementation that is ready for review.
+
+    PROJECT ROOT: [absolute path to project root]
+    WORKTREE PATH: [worktree_path from Step 7]
+
+    INSTRUCTIONS:
+    1. cd into the worktree path above
+    2. Call Skill(skill='groundwork:validation-loop')
+    3. The validation-loop skill will run 8 verification agents and fix issues autonomously.
+    4. When complete, output your final line in EXACTLY this format:
+       RESULT: VALIDATED | [one-line summary of validation outcome]
+       OR:
+       RESULT: FAILURE | [one-line reason]
+
+    IMPORTANT:
+    - Your FIRST action MUST be cd into the worktree, then calling the validation-loop skill
+    - Do NOT modify implementation logic — only fix issues the validation agents flag
+    - Your LAST line of output MUST be the RESULT line
+    "
+    )
+
+**After the subagent returns**, parse the result:
+- `RESULT: VALIDATED | ...` — Proceed to Step 7.7
+- `RESULT: FAILURE | ...` — Report failure; in batch mode output `RESULT: FAILURE | [TASK-NNN] Validation failed: ...` and stop
+- No parseable RESULT line — Report: "Validation subagent did not return a structured result. Check worktree status manually."
+
+### Step 7.7: Merge
+
+**From the project root** (NOT the worktree), handle merge:
+
+**Determine merge action:**
+
+| Condition | Behavior |
+|-----------|----------|
+| `GROUNDWORK_BATCH_MODE=true` | Auto-merge immediately |
+| `GROUNDWORK_AUTO_MERGE` env var is `true` | Auto-merge immediately |
+| Otherwise | Prompt user for decision |
+
+**If prompting user:**
+
+Use `AskUserQuestion` to ask:
+
+> "Implementation and validation complete for [TASK-NNN]. Would you like me to merge this into [base-branch] now?"
+> - Option 1: "Yes, merge now"
+> - Option 2: "No, I'll merge manually later"
+
+**Wait for user response before proceeding.**
+
+**If merging:**
+
+1. Ensure you are in the project root (cd out of worktree if needed)
+2. Checkout base branch: `git checkout <base-branch>`
+3. Merge: `git merge --no-ff <branch> -m "Merge <branch>: [Task Title]"`
+4. If success: Remove worktree and delete branch:
+   ```bash
+   git worktree remove .worktrees/TASK-NNN
+   git branch -d <branch>
+   ```
+5. If conflicts: Report conflicts and keep worktree for manual resolution
+
+**If not merging or conflicts occurred:**
+
+Report worktree location and manual merge instructions:
+
+```markdown
+## Implementation Complete in Worktree
+
+**Location:** .worktrees/TASK-NNN
+**Branch:** task/TASK-NNN
+
+When ready to merge:
+```bash
+git checkout [base-branch]
+git merge --no-ff <branch>
+git worktree remove .worktrees/TASK-NNN
+git branch -d <branch>
+```
+
+To continue working:
+```bash
+cd .worktrees/TASK-NNN
+```
+```
 
 ### Step 8: Complete Task
 
-After `implement-feature` returns successfully:
+After successful merge or user acknowledgment:
 
 1. **Update status** - Change task to `**Status:** Complete`
 
@@ -238,6 +327,8 @@ RESULT: FAILURE | [TASK-NNN] [reason for failure]
 **Acceptance criteria verified:**
 - [x] [Criterion] - [How verified]
 
+**Validation:** Passed ([N] iteration(s))
+
 **Worktree status:** [Merged | Pending at .worktrees/TASK-NNN]
 
 Continue with `/groundwork:work-on-next-task` or `/groundwork:work-on N`
@@ -262,6 +353,7 @@ Before marking complete, verify ALL:
 - [ ] Plan agent was used (not your own plan)
 - [ ] TDD was followed
 - [ ] All acceptance criteria verified
-- [ ] validation-loop returned PASS
+- [ ] validation-loop returned PASS (via validation subagent)
+- [ ] Merge completed or user acknowledged worktree location
 
 If any unchecked: task is NOT complete.

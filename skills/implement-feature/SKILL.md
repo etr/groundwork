@@ -1,13 +1,13 @@
 ---
 name: implement-feature
-description: Use when implementing a feature - executes TDD workflow with multi-agent verification. Handles worktree lifecycle when called with context parameters.
-requires: test-driven-development, validation-loop, use-git-worktree
+description: Use when implementing a feature - executes TDD workflow in a worktree. Handles worktree creation and TDD only; callers handle validation and merge.
+requires: test-driven-development, use-git-worktree
 user-invocable: false
 ---
 
 # Implement Feature Skill
 
-Executes TDD implementation with multi-agent verification. Handles worktree creation and finalization when context parameters are provided.
+Executes TDD implementation in a worktree. Creates the worktree, runs TDD, verifies action items and acceptance criteria, then returns control to the caller for validation and merge.
 
 ## Workflow
 
@@ -20,7 +20,6 @@ Executes TDD implementation with multi-agent verification. Handles worktree crea
 Check session context for worktree parameters:
 - **identifier**: TASK-NNN or FEATURE-slug
 - **title**: Feature/task title
-- **merge-mode**: `auto` | `ask` | `env` (default: `ask`)
 
 **If not already in worktree:**
 
@@ -78,15 +77,37 @@ For non-trivial changes, ask:
 
 If improvements identified: implement them (maintaining test coverage).
 
-### Step 5: Verify Implementation
+### Step 5: Verify and Hand Off
 
-Verify all work before proceeding:
+Verify all work before handing off:
 
 1. **Action Items** - Each implemented and tested
 2. **Test Coverage** - All new code has tests, all pass
 3. **Acceptance Criteria** - Each verified
 
-Output verification results:
+**If any fail:** Do not proceed. Continue working until all pass.
+
+**Commit all changes:**
+```bash
+git add -A && git commit -m "<identifier>: Implementation complete"
+```
+
+**Capture worktree info:**
+- `worktree_path`: Result of `pwd`
+- `branch`: Result of `git branch --show-current`
+- `base_branch`: The branch the worktree was created from (typically `main` or the branch active before worktree creation)
+
+**Output the following block exactly:**
+
+```
+IMPLEMENTATION_READY
+worktree: <worktree_path>
+branch: <branch>
+base-branch: <base_branch>
+identifier: <identifier>
+```
+
+Then output verification results:
 
 ```markdown
 ## Verification Results
@@ -101,108 +122,7 @@ Output verification results:
 - [x] [Criterion 1] - Verified by [method]
 ```
 
-**If any fail:** Do not proceed. Continue working until all pass.
-
-### Step 6: Multi-Agent Verification
-
-**You MUST call the Skill tool now:** `Skill(skill="groundwork:validation-loop")`
-
-Do NOT declare implementation complete or skip validation. This step is non-negotiable.
-
-This runs verification agents in parallel with autonomous fix-and-retry.
-
-After validation passes, output:
-
-```
-Validation loop passed
-```
-
-**DO NOT proceed to Step 7 until validation loop passing confirmation is output.**
-
-### Step 7: Finalize Worktree
-
-**DO NOT declare completion until you have executed this Step.**
-
-1. **Verify all changes committed:**
-   ```bash
-   git status --porcelain
-   ```
-
-2. **If uncommitted changes exist:**
-   - Stage and commit with descriptive message
-   - Use identifier in commit message
-
-**Determine merge action based on merge-mode:**
-
-| Mode | Behavior |
-|------|----------|
-| `auto` | Proceed to merge immediately |
-| `ask` | Prompt user for decision |
-| `env` | Check `GROUNDWORK_AUTO_MERGE` env var; if true → merge, else → prompt |
-
-**If prompting user:**
-
-Use `AskUserQuestion` to ask:
-
-> "Would you like me to merge this into [base-branch] now?"
-> - Option 1: "Yes, merge now"
-> - Option 2: "No, I'll merge manually later"
-
-**Wait for user response before proceeding.**
-
-**If merging:**
-
-1. Return to original repository
-2. Checkout base branch
-3. Merge: `git merge --no-ff <branch> -m "Merge <branch>: [Title]"`
-4. If success: Remove worktree, delete branch
-5. If conflicts: Report conflicts and keep worktree for manual resolution
-
-**If not merging or conflicts occurred:**
-
-Report worktree location and manual merge instructions:
-
-```markdown
-## Implementation Complete in Worktree
-
-**Location:** .worktrees/<identifier>
-**Branch:** task/<identifier> or feature/<identifier>
-
-When ready to merge:
-```bash
-git checkout [base-branch]
-git merge --no-ff <branch>
-git worktree remove .worktrees/<identifier>
-git branch -d <branch>
-```
-
-To continue working:
-```bash
-cd .worktrees/<identifier>
-```
-```
-
-### Step 8: Report Completion
-
-Output implementation summary:
-
-```markdown
-## Implementation Complete
-
-**What was done:**
-- [Summary of changes]
-
-**Files modified:**
-- `path/to/file` - [description]
-
-**Tests added:**
-- `path/to/test` - [what it tests]
-
-**Acceptance criteria verified:**
-- [x] [Criterion] - [How verified]
-
-**Worktree status:** [Merged to <branch> | Pending at .worktrees/<identifier> | N/A (standalone)]
-```
+**Return control to the caller.** Do NOT run validation-loop, merge, or report completion.
 
 ---
 
@@ -216,20 +136,5 @@ When called from parent skills, these parameters are passed via session context:
 |-----------|-------------|---------|
 | `identifier` | Task or feature ID | `TASK-004`, `FEATURE-user-login` |
 | `title` | Human-readable title | "Add user authentication" |
-| `merge-mode` | How to handle merge | `auto`, `ask`, `env` |
 | `action-items` | List of work items | From task file or requirements |
 | `acceptance-criteria` | Verification criteria | From task file or requirements |
-
-### Merge Mode Behavior
-
-- **`auto`**: Merge immediately without prompting (for CI/batch workflows)
-- **`ask`**: Always prompt user for merge decision (default for ad-hoc features)
-- **`env`**: Check `GROUNDWORK_AUTO_MERGE` env var - if true, behave like `auto`; otherwise prompt (for planned tasks)
-
-### Caller Mapping
-
-| Caller | merge-mode | Reason |
-|--------|------------|--------|
-| `execute-task` | `env` | Respects batch automation setting |
-| `build-unplanned-feature` | `ask` | Ad-hoc work needs user confirmation |
-| Standalone | `ask` | Default to user confirmation |
