@@ -2,6 +2,7 @@
 name: housekeeper
 description: Reviews that housekeeping tasks are properly updated - task status marked complete, action items checked off, spec/architecture updates, and documentation changes. Use after task implementation.
 model: sonnet
+maxTurns: 30
 ---
 
 # Housekeeper Agent

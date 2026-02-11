@@ -2,6 +2,7 @@
 name: architecture-alignment-checker
 description: Verifies implementation aligns with architecture decisions, component responsibilities, and technology choices. Use after task implementation.
 model: sonnet
+maxTurns: 30
 ---
 
 # Architecture Alignment Checker Agent

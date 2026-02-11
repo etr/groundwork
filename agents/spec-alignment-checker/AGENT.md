@@ -2,6 +2,7 @@
 name: spec-alignment-checker
 description: Verifies implementation aligns with task definition, product specs, and EARS requirements. Use after task implementation to ensure spec compliance.
 model: sonnet
+maxTurns: 30
 ---
 
 # Spec Alignment Checker Agent
