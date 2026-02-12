@@ -148,26 +148,24 @@ Present summary to the user:
 
 **Wait for user response before proceeding.**
 
-### Step 7: Implementation Subagent
+### Step 7: Implementation (task-executor Agent)
 
 **If you are in plan mode:** Call `ExitPlanMode()` immediately. Do not explore files, do not read code, do not create plans. Wait for user approval then continue with Step 7.
 
 1. **Update status** - Change task to `**Status:** In Progress`
 
-2. **Dispatch to a Task subagent** with a fresh context window. This prevents context drift from Steps 1-6.
+2. **Dispatch to the task-executor agent** with a fresh context window. This agent has `implement-feature`, `use-git-worktree`, and `test-driven-development` skills preloaded — it does not need to call `Skill()` or spawn subagents.
 
 **Build the Task prompt with ALL gathered context.** You MUST include actual values, not placeholders:
 
     Task(
-      subagent_type="general-purpose",
+      subagent_type="groundwork:task-executor",
       description="Execute TASK-NNN",
       prompt="You are implementing a task that has already been fully planned.
 
-    DIRECTIVES:
-    [If GROUNDWORK_BATCH_MODE=true in session: include both lines below]
-    [If interactive: omit DIRECTIVES section entirely]
-    GROUNDWORK_AUTO_MERGE=true
-    GROUNDWORK_BATCH_MODE=true
+    [If GROUNDWORK_BATCH_MODE=true in session: include the line below]
+    [If interactive: omit this line]
+    Do NOT use AskUserQuestion — proceed automatically.
 
     PROJECT ROOT: [absolute path to project root]
 
@@ -188,7 +186,7 @@ Present summary to the user:
     [Summary of validated plan from Step 5]
 
     INSTRUCTIONS:
-    1. Call Skill(skill='groundwork:implement-feature')
+    1. Follow your preloaded skills to create a worktree, implement with TDD, and commit.
     2. The task definition above provides all session context — do NOT re-ask the user for requirements.
     3. When complete, output your final line in EXACTLY this format:
        RESULT: IMPLEMENTED | <worktree_path> | <branch> | <base_branch>
@@ -196,7 +194,6 @@ Present summary to the user:
        RESULT: FAILURE | [one-line reason]
 
     IMPORTANT:
-    - Your FIRST action MUST be calling Skill(skill='groundwork:implement-feature')
     - Do NOT run validation-loop or merge — the caller handles those
     - Do NOT use AskUserQuestion for merge decisions
     - Your LAST line of output MUST be the RESULT line
@@ -208,38 +205,18 @@ Present summary to the user:
 - `RESULT: FAILURE | ...` — Report failure; in batch mode output `RESULT: FAILURE | [TASK-NNN] ...` and stop
 - No parseable RESULT line — Report: "Implementation subagent did not return a structured result. Check worktree status manually."
 
-### Step 7.5: Validation Subagent
+### Step 7.5: Validation (Direct Skill Call)
 
-Dispatch validation to a **separate Task subagent** with a fresh context window:
+**Call the validation-loop skill directly.** Do NOT wrap this in a subagent — this skill runs in the main conversation, which CAN spawn the 8 validation subagents it needs.
 
-    Task(
-      subagent_type="general-purpose",
-      description="Validate TASK-NNN",
-      prompt="You are validating an implementation that is ready for review.
+1. `cd` into the worktree path from Step 7
+2. Call: `Skill(skill='groundwork:validation-loop')`
+3. The validation-loop skill will run 8 verification agents in parallel and fix issues autonomously.
 
-    PROJECT ROOT: [absolute path to project root]
-    WORKTREE PATH: [worktree_path from Step 7]
-
-    INSTRUCTIONS:
-    1. cd into the worktree path above
-    2. Call Skill(skill='groundwork:validation-loop')
-    3. The validation-loop skill will run 8 verification agents and fix issues autonomously.
-    4. When complete, output your final line in EXACTLY this format:
-       RESULT: VALIDATED | [one-line summary of validation outcome]
-       OR:
-       RESULT: FAILURE | [one-line reason]
-
-    IMPORTANT:
-    - Your FIRST action MUST be cd into the worktree, then calling the validation-loop skill
-    - Do NOT modify implementation logic — only fix issues the validation agents flag
-    - Your LAST line of output MUST be the RESULT line
-    "
-    )
-
-**After the subagent returns**, parse the result:
-- `RESULT: VALIDATED | ...` — Proceed to Step 7.7
-- `RESULT: FAILURE | ...` — Report failure; in batch mode output `RESULT: FAILURE | [TASK-NNN] Validation failed: ...` and stop
-- No parseable RESULT line — Report: "Validation subagent did not return a structured result. Check worktree status manually."
+**After validation-loop completes:**
+- All agents approved → Proceed to Step 7.7
+- Validation failed → Report failure; in batch mode output `RESULT: FAILURE | [TASK-NNN] Validation failed: ...` and stop
+- Stuck on recurring issue → Report the stuck finding and stop
 
 ### Step 7.7: Merge
 
@@ -353,7 +330,7 @@ Before marking complete, verify ALL:
 - [ ] Plan agent was used (not your own plan)
 - [ ] TDD was followed
 - [ ] All acceptance criteria verified
-- [ ] validation-loop returned PASS (via validation subagent)
+- [ ] validation-loop returned PASS (via direct Skill call)
 - [ ] Merge completed or user acknowledged worktree location
 
 If any unchecked: task is NOT complete.

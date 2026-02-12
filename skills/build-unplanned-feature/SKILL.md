@@ -84,14 +84,14 @@ Then use `AskUserQuestion` to ask:
 
 **Wait for user response before proceeding.**
 
-### Step 5: Implementation Subagent
+### Step 5: Implementation (task-executor Agent)
 
-Implementation is dispatched to a **Task subagent** with a fresh context window. This prevents context drift from the clarification conversation above.
+Implementation is dispatched to the **task-executor agent** with a fresh context window. This agent has `implement-feature`, `use-git-worktree`, and `test-driven-development` skills preloaded — it does not need to call `Skill()` or spawn subagents.
 
 **Build the Task prompt with ALL gathered context from Steps 1-4.** You MUST include actual values, not placeholders:
 
     Task(
-      subagent_type="general-purpose",
+      subagent_type="groundwork:task-executor",
       description="Implement <identifier>",
       prompt="You are implementing a feature that has already been fully specified.
 
@@ -111,7 +111,7 @@ Implementation is dispatched to a **Task subagent** with a fresh context window.
     [Bulleted list of exclusions, or 'None specified']
 
     INSTRUCTIONS:
-    1. Call Skill(skill='groundwork:implement-feature')
+    1. Follow your preloaded skills to create a worktree, implement with TDD, and commit.
     2. The feature definition above provides all session context — do NOT re-ask the user for requirements.
     3. When complete, output your final line in EXACTLY this format:
        RESULT: IMPLEMENTED | <worktree_path> | <branch> | <base_branch>
@@ -119,7 +119,6 @@ Implementation is dispatched to a **Task subagent** with a fresh context window.
        RESULT: FAILURE | [one-line reason]
 
     IMPORTANT:
-    - Your FIRST action MUST be calling Skill(skill='groundwork:implement-feature')
     - Do NOT run validation-loop or merge — the caller handles those
     - Do NOT use AskUserQuestion for merge decisions
     - Your LAST line of output MUST be the RESULT line
@@ -131,38 +130,18 @@ Implementation is dispatched to a **Task subagent** with a fresh context window.
 - `RESULT: FAILURE | ...` — Report the failure and worktree location for investigation, stop
 - No parseable RESULT line — Report: "Implementation subagent did not return a structured result. Check worktree status manually." Stop.
 
-### Step 6: Validation Subagent
+### Step 6: Validation (Direct Skill Call)
 
-Dispatch validation to a **separate Task subagent** with a fresh context window:
+**Call the validation-loop skill directly.** Do NOT wrap this in a subagent — this skill runs in the main conversation, which CAN spawn the 8 validation subagents it needs.
 
-    Task(
-      subagent_type="general-purpose",
-      description="Validate <identifier>",
-      prompt="You are validating an implementation that is ready for review.
+1. `cd` into the worktree path from Step 5
+2. Call: `Skill(skill='groundwork:validation-loop')`
+3. The validation-loop skill will run 8 verification agents in parallel and fix issues autonomously.
 
-    PROJECT ROOT: [absolute path to project root]
-    WORKTREE PATH: [worktree_path from Step 5]
-
-    INSTRUCTIONS:
-    1. cd into the worktree path above
-    2. Call Skill(skill='groundwork:validation-loop')
-    3. The validation-loop skill will run 8 verification agents and fix issues autonomously.
-    4. When complete, output your final line in EXACTLY this format:
-       RESULT: VALIDATED | [one-line summary of validation outcome]
-       OR:
-       RESULT: FAILURE | [one-line reason]
-
-    IMPORTANT:
-    - Your FIRST action MUST be cd into the worktree, then calling the validation-loop skill
-    - Do NOT modify implementation logic — only fix issues the validation agents flag
-    - Your LAST line of output MUST be the RESULT line
-    "
-    )
-
-**After the subagent returns**, parse the result:
-- `RESULT: VALIDATED | ...` — Proceed to Step 7
-- `RESULT: FAILURE | ...` — Report the failure and worktree location for investigation, stop
-- No parseable RESULT line — Report: "Validation subagent did not return a structured result. Check worktree status manually." Stop.
+**After validation-loop completes:**
+- All agents approved → Proceed to Step 7
+- Validation failed → Report the failure and worktree location for investigation, stop
+- Stuck on recurring issue → Report the stuck finding and stop
 
 ### Step 7: Merge Decision
 
