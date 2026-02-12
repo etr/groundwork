@@ -1,7 +1,7 @@
 ---
 name: groundwork:just-do-it
 description: Execute all remaining tasks in sequence until completion. Usage /groundwork:just-do-it
-allowed-tools: ["Read", "Bash", "Glob", "Grep", "Task", "AskUserQuestion"]
+allowed-tools: ["Read", "Edit", "Write", "Bash", "Glob", "Grep", "Task", "AskUserQuestion"]
 disable-model-invocation: true
 ---
 

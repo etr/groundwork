@@ -2,7 +2,7 @@
 name: groundwork:build-unplanned
 description: Build a feature from description with worktree isolation and TDD. Usage /groundwork:build-unplanned "Add user login"
 argument-hint: "[feature-description]"
-allowed-tools: ["Read", "Bash", "Glob", "Grep", "Task", "Skill", "AskUserQuestion"]
+allowed-tools: ["Read", "Edit", "Write", "Bash", "Glob", "Grep", "Task", "Skill", "AskUserQuestion"]
 disable-model-invocation: true
 ---
 
