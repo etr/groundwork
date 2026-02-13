@@ -3,6 +3,7 @@ name: task-executor
 description: Executes task implementation with worktree isolation and TDD. Use when a task needs to be implemented in an isolated worktree following TDD methodology.
 model: inherit
 maxTurns: 60
+color: blue
 memory: project
 skills:
   - groundwork:implement-feature

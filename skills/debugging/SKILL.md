@@ -1,6 +1,6 @@
 ---
 name: debugging
-description: Use when investigating bugs, unexpected behavior, test failures, or any code that does not work as expected - enforces systematic root cause analysis before any fix
+description: This skill should be used when investigating bugs, unexpected behavior, test failures, or any code that does not work as expected - enforces systematic root cause analysis before any fix
 user-invocable: false
 ---
 
@@ -85,7 +85,7 @@ Before investigating the bug, understand the code it lives in. Your mental model
 3. Identify what the code *should* do vs. what it *does*
 4. Check the obvious: dependencies installed? correct branch? config valid? environment correct?
 5. Read error messages completely — stack traces, line numbers, all of it
-6. Use git to fetch recent chanages
+6. Use git to fetch recent changes
 7. For multi-component systems (API → service → database, CI → build → deploy), instrument at each boundary *before* forming hypotheses. Run once, collect evidence from every layer, then analyze where the chain breaks.
 
 **Example — multi-layer instrumentation:**

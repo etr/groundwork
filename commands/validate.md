@@ -1,7 +1,7 @@
 ---
 name: groundwork:validate
 description: Re-run multi-agent verification on current changes. Usage /groundwork:validate
-allowed-tools: ["Bash", "Read", "Grep", "Glob", "Task", "AskUserQuestion"]
+allowed-tools: ["Bash", "Read", "Grep", "Glob", "Task", "AskUserQuestion", "Skill"]
 disable-model-invocation: true
 argument-hint: ""
 ---
@@ -10,4 +10,4 @@ argument-hint: ""
 
 Re-run multi-agent verification on current changes without re-executing the task.
 
-Invoke the `groundwork:validation-loop` skill.
+Invoke the `groundwork:validation-loop` skill: `Skill(skill="groundwork:validation-loop")`

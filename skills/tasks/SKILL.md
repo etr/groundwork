@@ -1,6 +1,6 @@
 ---
 name: tasks
-description: Use when user asks to create task list, plan implementation, break down work, or generate tickets from product specs and architecture
+description: This skill should be used when the user asks to create a task list, plan implementation, break down work, or generate tickets from product specs and architecture
 user-invocable: false
 requires: task-validation-loop
 ---

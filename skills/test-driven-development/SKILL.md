@@ -1,6 +1,6 @@
 ---
 name: test-driven-development
-description: Use when implementing any feature or bugfix, before writing implementation code
+description: This skill should be used when implementing any feature or bugfix, before writing implementation code
 user-invocable: false
 ---
 

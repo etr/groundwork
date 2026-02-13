@@ -50,9 +50,6 @@ List commands organized by purpose:
 - `/groundwork:source-architecture-from-code` - Update architecture docs
 - `/groundwork:check-specs-alignment` - Verify spec alignment (full audit)
 
-**Code Review:**
-- `/groundwork:code-review` - Review code changes
-
 **Plugin Management:**
 - `/groundwork:groundwork-check` - Validate plugin health
 - `/groundwork:groundwork-help` - Show this help

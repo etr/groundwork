@@ -1,6 +1,6 @@
 ---
 name: execute-task
-description: Use when executing a specific task - REQUIRES worktree isolation (mandatory), TDD methodology (mandatory), and validation-loop completion (mandatory). No exceptions.
+description: This skill should be used when the user asks to "execute a task", "work on task N", or "implement TASK-NNN" - orchestrates worktree isolation, TDD implementation, validation, and merge.
 requires: implement-feature, validation-loop
 user-invocable: false
 ---

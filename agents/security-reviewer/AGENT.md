@@ -3,6 +3,7 @@ name: security-reviewer
 description: Reviews code changes for security vulnerabilities including OWASP Top 10, input validation, authentication issues, and sensitive data handling. Use after task implementation.
 model: sonnet
 maxTurns: 30
+color: red
 ---
 
 # Security Reviewer Agent

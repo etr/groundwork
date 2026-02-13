@@ -1,6 +1,6 @@
 ---
 name: use-git-worktree
-description: Use when starting feature work that needs isolation from current workspace - creates isolated git worktrees with smart directory selection and safety verification
+description: This skill should be used when starting feature work that needs isolation from current workspace - creates isolated git worktrees with smart directory selection and safety verification
 user-invocable: false
 ---
 

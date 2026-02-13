@@ -2,6 +2,8 @@
 name: prd-architecture-checker
 description: Validates architecture proposals against PRD requirements. Ensures all functional requirements, NFRs, and features have architectural coverage before implementation begins.
 model: sonnet
+maxTurns: 30
+color: cyan
 ---
 
 # PRD-Architecture Checker Agent

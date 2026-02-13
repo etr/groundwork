@@ -1,6 +1,6 @@
 ---
 name: implement-feature
-description: Use when implementing a feature - executes TDD workflow in a worktree. Handles worktree creation and TDD only; callers handle validation and merge.
+description: This skill should be used when implementing a feature - executes TDD workflow in a worktree. Handles worktree creation and TDD only; callers handle validation and merge.
 requires: test-driven-development, use-git-worktree
 user-invocable: false
 ---

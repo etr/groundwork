@@ -3,6 +3,7 @@ name: design-consistency-checker
 description: Verifies design system compliance - tokens, accessibility, and pattern consistency. Use after task implementation to verify design alignment.
 model: sonnet
 maxTurns: 30
+color: magenta
 ---
 
 # Design Consistency Checker Agent

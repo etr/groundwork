@@ -3,6 +3,7 @@ name: code-quality-reviewer
 description: Reviews code changes for quality, readability, elegance, and test coverage. Use after task implementation to verify code meets quality standards.
 model: sonnet
 maxTurns: 30
+color: green
 ---
 
 # Code Quality Reviewer Agent

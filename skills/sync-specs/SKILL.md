@@ -1,6 +1,6 @@
 ---
 name: sync-specs
-description: Use when at session end when product requirements, features, or scope changed during the session
+description: This skill should be used at session end when product requirements, features, or scope changed during the session
 user-invocable: false
 ---
 
@@ -200,35 +200,6 @@ At session end, provide summary:
 ```
 
 ---
-
-## Converting to Claude Code Agent
-
-For automatic triggering in Claude Code, create an agent at `.claude/agents/sync-specs.md`:
-
-```markdown
----
-name: sync-specs
-description: Automatically sync PRD at session end
-trigger: session_end
-allowed-tools: Read, Write, Glob
----
-
-At the end of each session, analyze changes and update specs/product_specs.md.
-
-[Include workflow from this SKILL.md]
-```
-
-Alternatively, use a **hook** for lightweight triggering:
-
-```json
-{
-  "hooks": {
-    "post_session": {
-      "command": "claude --skill sync-specs --auto"
-    }
-  }
-}
-```
 
 ## Interaction with Other Skills
 

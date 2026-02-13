@@ -1,6 +1,6 @@
 ---
 name: sync-architecture
-description: Use when at session end when architectural decisions were made, new tech choices added, or implementation deviated from documented architecture
+description: This skill should be used at session end when architectural decisions were made, new tech choices were added, or implementation deviated from documented architecture
 user-invocable: false
 ---
 
@@ -183,37 +183,3 @@ At session end, provide summary:
 - [Any unresolved architectural questions from session]
 ```
 
----
-
-## Converting to Claude Code Agent
-
-For automatic triggering in Claude Code, create an agent at `.claude/agents/sync-architecture.md`:
-
-```markdown
----
-name: sync-architecture
-description: Automatically sync architecture doc at session end
-trigger: session_end
-allowed-tools: Read, Write, Glob
----
-
-At the end of each session, analyze changes and update specs/architecture.md.
-
-[Include workflow from this SKILL.md]
-```
-
-Alternatively, use a **hook** for lightweight triggering:
-
-```json
-{
-  "hooks": {
-    "post_session": {
-      "command": "claude --skill sync-architecture --auto"
-    }
-  }
-}
-```
-
-This skill is designed to work as both:
-- **Manual skill** - User invokes `/groundwork:source-architecture-from-code`
-- **Claude Code agent** - Automatically triggers at session end

@@ -1,6 +1,6 @@
 ---
 name: build-unplanned-feature
-description: Use when building a feature from a description without existing task definitions - combines requirement gathering, TDD implementation, and validation
+description: This skill should be used when building a feature from a description without existing task definitions - combines requirement gathering, TDD implementation, and validation
 requires: understanding-feature-requests, implement-feature, validation-loop
 user-invocable: false
 ---

@@ -1,6 +1,6 @@
 ---
 name: next-task
-description: Use when user asks to work on the next task, continue with tasks, or wants to know what to do next
+description: This skill should be used when the user asks to work on the next task, continue with tasks, or wants to know what to do next
 requires: execute-task
 user-invocable: false
 ---

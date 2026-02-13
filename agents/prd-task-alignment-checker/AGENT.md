@@ -2,6 +2,8 @@
 name: prd-task-alignment-checker
 description: Validates task list coverage of PRD requirements. Ensures all EARS requirements are addressed by at least one task.
 model: sonnet
+maxTurns: 30
+color: cyan
 ---
 
 # PRD Task Alignment Checker Agent

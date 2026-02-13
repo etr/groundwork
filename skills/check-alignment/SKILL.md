@@ -1,6 +1,6 @@
 ---
 name: check-alignment
-description: Use when user asks to check alignment, verify consistency, detect drift, or ensure code matches specs/architecture
+description: This skill should be used when the user asks to check alignment, verify consistency, detect drift, or ensure code matches specs and architecture
 user-invocable: false
 ---
 

@@ -2,6 +2,8 @@
 name: architecture-task-alignment-checker
 description: Validates task list follows architecture decisions. Ensures tasks reference correct components, technologies, and patterns.
 model: sonnet
+maxTurns: 30
+color: cyan
 ---
 
 # Architecture Task Alignment Checker Agent
