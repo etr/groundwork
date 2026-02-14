@@ -46,7 +46,7 @@ describe('extractFrontmatter', () => {
     const result = extractFrontmatter(skillFile);
 
     assert.strictEqual(result.name, 'product-design');
-    assert.ok(result.description.includes('Use when'));
+    assert.ok(result.description.includes('used when'));
   });
 
   test('returns empty strings for missing file', () => {
