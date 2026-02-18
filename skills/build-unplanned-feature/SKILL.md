@@ -91,7 +91,7 @@ Implementation is dispatched to the **task-executor agent** with a fresh context
 **Build the Task prompt with ALL gathered context from Steps 1-4.** You MUST include actual values, not placeholders:
 
     Task(
-      subagent_type="groundwork:task-executor",
+      subagent_type="groundwork:task-executor:task-executor",
       description="Implement <identifier>",
       prompt="You are implementing a feature that has already been fully specified.
 

@@ -159,7 +159,7 @@ Present summary to the user:
 **Build the Task prompt with ALL gathered context.** You MUST include actual values, not placeholders:
 
     Task(
-      subagent_type="groundwork:task-executor",
+      subagent_type="groundwork:task-executor:task-executor",
       description="Execute TASK-NNN",
       prompt="You are implementing a task that has already been fully planned.
 

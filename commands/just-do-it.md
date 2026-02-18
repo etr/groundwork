@@ -106,7 +106,7 @@ Save the plan summary. If the plan does not mention worktree or TDD, reject it a
 
 ```
 Task(
-  subagent_type="groundwork:task-executor",
+  subagent_type="groundwork:task-executor:task-executor",
   description="Implement TASK-NNN",
   prompt="You are implementing a task as part of an automated batch run.
 
