@@ -215,11 +215,32 @@ Before writing the architecture document, validate it against the PRD:
 
 ## Step 6: Suggest Next Step
 
-After writing the architecture document, suggest the next workflow step:
+After successfully updating the architecture document, ask what should be the next workflow step:
 
-> "Architecture documented with [N] decision records.
->
-> **Next step:** Run `/groundwork:create-tasks` to generate implementation tasks from your PRD and architecture."
+```json
+{
+  "questions": [{
+    "question": "What would you like to do next?",
+    "header": "Next step",
+    "options": [
+      {
+        "label": "Design UX",
+        "description": "Plan user experience designs and flows"
+      },
+      {
+        "label": "Create tasks",
+        "description": "Break product/architecture/UX down into tasks"
+      }
+    ],
+    "multiSelect": false
+  }]
+}
+```
+
+**Handle the response:**
+
+- **Design UX**: Invoke the `groundwork:ux-design` skill to create UX designs
+- **Create tasks**: Invoke the `groundwork:tasks` skill to create a list of executable tasks
 
 ## Decision Record Format (ADR-lite)
 

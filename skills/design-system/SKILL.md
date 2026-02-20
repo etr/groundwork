@@ -228,6 +228,35 @@ Present summary for review, then write the file.
 >
 > Ready to document this in `specs/design_system.md`?"
 
+## Step 9: Suggest Next Step
+
+After successfully updating the architecture document, ask what should be the next workflow step:
+
+```json
+{
+  "questions": [{
+    "question": "What would you like to do next?",
+    "header": "Next step",
+    "options": [
+      {
+        "label": "Design architecture",
+        "description": "Translate these requirements into technical architecture decisions"
+      },
+      {
+        "label": "Create tasks",
+        "description": "Break product/architecture/UX down into tasks"
+      }
+    ],
+    "multiSelect": false
+  }]
+}
+```
+
+**Handle the response:**
+
+- **Design architecture**: Invoke the `groundwork:architecture` skill to design the technical approach
+- **Create tasks**: Invoke the `groundwork:tasks` skill to create a list of executable tasks
+
 ---
 
 ## Decision Record Format
