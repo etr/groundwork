@@ -15,23 +15,40 @@ user-invocable: false
 2. Write the plan file with the following structure:
 
    ```markdown
-   ## Task: [TASK-NNN] [Title]
-   [Goal, Action Items, Acceptance Criteria from task file]
+   ## Task: [TASK-NNN] [Task Title]
 
-   ## Implementation Plan
-   [Plan agent output from Step 5]
+   **Milestone:** [name]
+   **Component:** [from architecture]
+
+   ### Execution Context
+   **Working Directory:** .worktrees/TASK-NNN
+   **Branch:** task/TASK-NNN
+   **Merge Mode:** [auto-merge (env) | manual]
+
+   ### Goal
+   [from task file]
 
    ## Execution Workflow
    1. **Worktree** — Create `.worktrees/TASK-NNN` branch `task/TASK-NNN`
    2. **TDD** — For each action item: write failing test → implement → verify
-   3. **Validation** — Run 8 parallel validation agents (code quality, security, spec alignment, architecture, simplification, housekeeping, performance, design consistency)
+   3. **Validation** — Run 8 parallel validation agents using the `groundwork:validation-loop` skill (code quality, security, spec alignment, architecture, simplification, housekeeping, performance, design consistency)
    4. **Merge** — Merge branch into base, clean up worktree
+
+   ## Implementation Plan
+   **IMPORTANT: DO NOT just execute the plan below. ** You MUST invoke the skill `groundwork:execute-task` skipping directly to Step 7 and using the plan below as context.    
+
+   set `GROUNDWORK_EXECUTE_SKIP_TO_STEP_SEVEN=true`.
+
+   ### Plan to be used for Step 7 of `groundwork:execute-task`
+   [Plan agent output from Step 5]
    ```
 
 3. Call `ExitPlanMode()`
-4. After user approval, continue from Step 6
 
 ## WORKFLOW
+
+### Step 0: Check skip
+If session context contains `GROUNDWORK_EXECUTE_SKIP_TO_STEP_SEVEN=true`, skip directly to step 7.
 
 ### Step 1: Parse Task Identifier
 

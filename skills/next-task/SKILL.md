@@ -11,6 +11,8 @@ Finds the next uncompleted task from `specs/tasks.md` and delegates execution to
 
 ## Workflow
 
+**IMPORTANT**: Your job is NOT to build a plan or build anything, it is to exclusively to find the next task to execute. Don't do planning or building until the full workflow is executed. If you find yourself planning or executing, STOP and follow the workflow.
+
 ### Step 1: Load Tasks
 
 Read the tasks file to find available tasks:

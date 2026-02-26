@@ -1,7 +1,7 @@
 {
   "name": "groundwork",
   "description": "Comprehensive skills library for Claude Code: planning, design, TDD, debugging, collaboration patterns, and proven techniques",
-  "version": "1.0.0",
+  "version": "1.0.3",
   "author": {
     "name": "Groundwork Contributors"
   },
