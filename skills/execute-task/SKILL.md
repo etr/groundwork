@@ -7,6 +7,30 @@ user-invocable: false
 
 # Execute Task Skill
 
+## Plan Mode Handling
+
+**If you are in plan mode**, follow these instructions instead of plan mode's default phases:
+
+1. Execute Steps 1-5 below as normal (they are read-only)
+2. Write the plan file with the following structure:
+
+   ```markdown
+   ## Task: [TASK-NNN] [Title]
+   [Goal, Action Items, Acceptance Criteria from task file]
+
+   ## Implementation Plan
+   [Plan agent output from Step 5]
+
+   ## Execution Workflow
+   1. **Worktree** — Create `.worktrees/TASK-NNN` branch `task/TASK-NNN`
+   2. **TDD** — For each action item: write failing test → implement → verify
+   3. **Validation** — Run 8 parallel validation agents (code quality, security, spec alignment, architecture, simplification, housekeeping, performance, design consistency)
+   4. **Merge** — Merge branch into base, clean up worktree
+   ```
+
+3. Call `ExitPlanMode()`
+4. After user approval, continue from Step 6
+
 ## WORKFLOW
 
 ### Step 1: Parse Task Identifier
@@ -149,8 +173,6 @@ Present summary to the user:
 **Wait for user response before proceeding.**
 
 ### Step 7: Implementation (task-executor Agent)
-
-**If you are in plan mode:** Call `ExitPlanMode()` immediately. Do not explore files, do not read code, do not create plans. Wait for user approval then continue with Step 7.
 
 1. **Update status** - Change task to `**Status:** In Progress`
 
