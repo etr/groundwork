@@ -31,6 +31,16 @@ design_system ← Read specs/design_system.md (if exists, optional)
 
 **Detection:** Check for file first (takes precedence), then directory. When reading a directory, aggregate all `.md` files recursively.
 
+### 1.5. Determine Active Agents
+
+| Agent | Skip when |
+|---|---|
+| `design-task-alignment-checker` | No `design_system` found AND no UI/frontend tasks in task list |
+
+`prd-task-alignment-checker` and `architecture-task-alignment-checker` always run (their inputs are prerequisites).
+
+Record skipped agents with verdict `skipped`.
+
 ### 2. Launch Validation Agents
 
 Use Task tool to launch all 3 agents in parallel:
@@ -93,7 +103,12 @@ Present results in table format:
    - **accessibility-missing**: Add acceptance criteria to task
    - **over-tasked**: Remove task or add requirement to PRD (user decision)
 
-3. **Re-run Agent Validation** - Launch all 3 agents again with updated task list
+3. **Re-run Agent Validation** — Re-launch ONLY agents that returned `request-changes`. Agents that approved retain their verdict unless the fix changed content in their domain:
+   - **PRD alignment checker**: re-run if tasks were added/removed or requirements mapping changed
+   - **Architecture alignment checker**: re-run if component assignments or technology references changed
+   - **Design alignment checker**: re-run if accessibility criteria or design token references changed
+
+   For agents NOT re-run, carry forward their previous `approve` verdict and score.
 
 4. **Check Results**
    - ALL approve → **PASS**, return success

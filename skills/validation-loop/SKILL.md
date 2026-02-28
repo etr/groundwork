@@ -30,6 +30,25 @@ Collect for the agents:
 - Architecture path: path to `specs/architecture.md` or `specs/architecture/` (do NOT read contents)
 - Design system path: path to `specs/design_system.md` or `specs/design_system/` (do NOT read contents)
 
+### 1.5. Determine Active Agents
+
+Based on context gathered, skip agents whose primary review subject does not exist:
+
+| Agent | Skip when |
+|---|---|
+| `design-consistency-checker` | No `design_system_path` AND no CSS/styling files in `changed_file_paths` |
+| `spec-alignment-checker` | No `specs_path` found |
+| `architecture-alignment-checker` | No `architecture_path` found |
+
+**Always run** regardless of context:
+- `code-quality-reviewer` — always applicable to code changes
+- `security-reviewer` — always applicable to code changes
+- `code-simplifier` — always applicable to code changes
+- `performance-reviewer` — always applicable to code changes
+- `housekeeper` — handles missing paths gracefully, still checks task status
+
+Record skipped agents in the aggregation table with verdict `skipped` and a note explaining why.
+
 ### 2. Launch Verification Agents
 
 Use Task tool to launch all 8 agents in parallel:
@@ -98,7 +117,25 @@ Each returns JSON:
    - Run tests - must pass
    - Confirm acceptance criteria
 
-4. **Re-run Agent Validation** - Launch all 8 agents again
+4. **Re-run Agent Validation** — Re-launch ONLY agents that returned `request-changes` in the previous iteration.
+
+   **Domain spillover**: If a fix modified code relevant to an agent that previously approved, re-run that agent too:
+
+   | Fix touches... | Also re-run |
+   |---|---|
+   | Auth, crypto, input validation | security-reviewer |
+   | Layer boundaries, component structure | architecture-alignment-checker |
+   | CSS, design tokens, accessibility | design-consistency-checker |
+   | Spec/requirement behavior | spec-alignment-checker |
+   | Test files | code-quality-reviewer |
+   | Task status, docs, spec files | housekeeper |
+   | Hot paths, algorithmic changes | performance-reviewer |
+   | Code structure, naming | code-simplifier |
+
+   **When in doubt, re-run.** False passes are worse than extra agent runs.
+
+   For agents NOT re-run, carry forward their previous `approve` verdict and score into the aggregation table.
+
    - Do NOT re-read updated files into the orchestrator context — agents will re-read the updated files themselves
    - Only update `changed_file_paths` or `diff_stat` if the set of changed files has changed
 

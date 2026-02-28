@@ -62,7 +62,8 @@ Parse the tasks to find the next task to work on:
 
 ### Step 4: Delegate to Execute Task
 
-Once a task is identified, **you MUST call the Skill tool:**
-  `Skill(skill="groundwork:execute-task", args="TASK-NNN")`
+**You MUST call the Skill tool now:** `Skill(skill="groundwork:execute-task", args="<task-id>")`
 
-Do NOT load project context, present summaries, or begin task execution yourself. The execute-task skill handles the complete workflow. Call it NOW with the identified task identifier.
+Replace `<task-id>` with the identified task identifier (e.g., `TASK-004`).
+
+Do NOT load project context, explore the codebase, present summaries, or begin task execution yourself. The execute-task skill handles the complete workflow including worktree setup, TDD, and validation.
