@@ -1,7 +1,7 @@
 ---
 name: researcher
 description: Researches technologies, frameworks, and patterns BEFORE architecture decisions or task planning. Gathers official docs, ecosystem recommendations, and common pitfalls.
-model: sonnet
+model: opus
 maxTurns: 30
 color: blue
 ---
