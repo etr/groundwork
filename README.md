@@ -18,6 +18,14 @@ Then install the plugin:
 claude plugin install groundwork
 ```
 
+#### Update via Marketplace
+
+```bash
+claude plugin marketplace update groundwork-marketplace
+
+claude plugin update groundwork
+```
+
 ### Direct Installation
 
 ```bash
