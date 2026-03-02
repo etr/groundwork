@@ -181,7 +181,8 @@ On approval:
      - Decision log entries → `specs/design_system/05-decisions.md`
 4. Maintain decision ID sequences (find highest DP/BRD/UXD-NNN, increment)
 5. Update "Last updated" timestamp
-6. Update "Status" if appropriate
+6. If `specs/ux-preview.html` exists, regenerate it to reflect the updated design system decisions
+7. Update "Status" if appropriate
 
 **Important:**
 - New decisions get the next available ID in their prefix sequence

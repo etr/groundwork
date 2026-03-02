@@ -42,8 +42,13 @@ The tonal direction is derived from the product's persona, vision, and competiti
 - **Input:**
   - `specs/product_specs.md` (PRD with personas, vision, NFRs)
   - `specs/architecture.md` (technical constraints, API patterns)
-- **Output:** `specs/design_system.md`
-- **Transient:** `specs/design-comparison.html` (color/font comparison, deleted after identity is chosen)
+- **Output:**
+  - `specs/design_system.md`
+  - `specs/ux-preview.html` (visual reference, regenerated when design system changes)
+- **Transient:**
+  - `specs/design-comparison.html` (color/font comparison, deleted after identity is chosen)
+  - `specs/atmosphere-comparison.html` (atmosphere comparison, deleted after atmosphere is chosen)
+  - `specs/pattern-showcase.html` (complete system preview, deleted after Step 8 documentation)
 
 ## Prerequisites
 
@@ -262,9 +267,13 @@ Delete `specs/design-comparison.html` after the palette and typography are docum
 
 ## Phase 3: UX Patterns
 
-### Step 7: Recommend Patterns as a System
+### Step 7: Define Patterns and Atmosphere
 
-Derive from architecture + PRD (minimal questions needed).
+Derive from architecture + PRD (minimal questions needed). This step has three phases: propose patterns and atmosphere candidates (7a), visually compare atmosphere options (7b), and showcase the complete system (7c).
+
+#### Step 7a: Propose Patterns and Atmosphere Candidates
+
+Present functional pattern recommendations for immediate approval, plus 2-3 named atmosphere candidates for visual comparison.
 
 > "Based on your architecture, product needs, and our **[tonal direction]** direction, here's the UX pattern system:
 >
@@ -288,30 +297,93 @@ Derive from architecture + PRD (minimal questions needed).
 > **Responsive: [Pattern] — [why]**
 > [Specific recommendation tied to primary device context.]
 >
-> **Visual Atmosphere:**
-> - **Background textures:** [e.g., subtle noise on surfaces, gradient washes on hero sections, solid flat for data areas]
-> - **Card treatments:** [e.g., glass morphism with blur, sharp drop shadows, flat with border, soft elevation]
-> - **Section dividers:** [e.g., hairline rules, gradient fades, whitespace only, decorative accent lines]
-> - **Image treatments:** [e.g., rounded corners with shadow, duotone filter, masked into shapes, full-bleed]
+> ---
 >
-> **Spatial Composition:**
-> - **Alignment style:** [e.g., strict 12-column grid, organic offset, centered single-column, asymmetric split]
-> - **Density:** [e.g., generous whitespace letting content breathe, compact utilitarian, varied rhythm by section type]
-> - **Hero treatments:** [e.g., full-bleed imagery, typographic-only, split layout with illustration, contained card]
-> - **Content rhythm:** [e.g., regular cadence with consistent section heights, varied sizes creating visual interest, alternating layouts]
+> For the visual feel, I have **[2-3] atmosphere directions** to compare. Each bundles texture, card treatment, spacing, animation, and hover feel into a coherent package — same identity colors and fonts, different spatial and tactile character:
 >
-> **Motion & Interaction Character:**
-> - **Entrance patterns:** [e.g., fade-up with stagger, instant cut, slide from direction of origin]
-> - **Hover signatures:** [e.g., subtle lift + shadow deepen on cards, color shift on buttons, underline slide on links]
-> - **Scroll behavior:** [e.g., sticky section headers, gentle parallax on hero, reveal-on-scroll for content sections]
-> - **Timing:** Micro-interactions 100-200ms, transitions 200-300ms
-> - Respect `prefers-reduced-motion`
+> **Atmosphere A: [Name]**
+> Surface: [texture description]. Cards: [treatment]. Dividers: [style]. Density: [spatial feel]. Entrances: [animation style]. Hover: [signature]. Best for: [context].
 >
-> This is a cohesive system. Any patterns you want me to reconsider?"
+> **Atmosphere B: [Name]**
+> Surface: [texture]. Cards: [treatment]. Dividers: [style]. Density: [spatial feel]. Entrances: [animation style]. Hover: [signature]. Best for: [context].
+>
+> **Atmosphere C: [Name]** *(if warranted)*
+> ...
+>
+> I'll generate a visual comparison so you can see these atmosphere directions side-by-side."
 
 **Handle Feedback:**
-- User agrees -> Document all as UXD-001 through UXD-00N
-- User questions one -> Explain reasoning, adjust if needed
+- User agrees with functional patterns → Document as UXD-001 through UXD-00N, proceed to 7b
+- User questions a pattern → Explain reasoning, adjust if needed
+- User has strong atmosphere preference already → Skip 7b, go to 7c
+
+#### Step 7b: Generate Atmosphere Comparison (`specs/atmosphere-comparison.html`)
+
+Generate a self-contained HTML file that renders the same identity (colors, fonts) under each atmosphere direction side-by-side, with mini page layouts showing how each atmosphere *feels* in practice.
+
+**Architecture — data-driven, single render function:**
+
+1. **CSS custom properties** — Identity variables (colors, fonts) shared at `:root`. Per-atmosphere treatment variables on each column: `--surface-texture`, `--card-treatment`, `--card-shadow`, `--divider-style`, `--section-gap`, `--entrance-type`, `--entrance-duration`, `--hover-signature`, `--hover-transform`.
+
+2. **JS atmosphere array** — each entry contains:
+   - `id`, `name`, `subtitle`
+   - shared `identity` object (colors, fonts — same for all)
+   - `treatments` object: texture, cards, dividers, density, entrance, hover
+   - `personality` description
+   - `bestFor` context
+
+3. **Single `renderColumn(atmosphere)` function** — generates mini page layouts per column (not isolated components, because atmosphere is about spatial feel):
+   - Hero section (headline, subtext, CTA) — shows texture, density, entrance
+   - Card grid (2x2) — shows card treatment, hover signature, stagger entrance
+   - Form area (2 inputs + submit in a card) — shows card treatment, divider
+   - Section dividers between areas
+
+4. **Motion**: Entrance animations auto-play via IntersectionObserver. Hover states interactive. `prefers-reduced-motion` respected.
+
+5. **Decision helper table**: Surface texture, card treatment, dividers, density, entrance animation, hover signature, personality, best-for context.
+
+6. **Self-contained**: No external deps except Google Fonts. SVG noise filter inlined for textures.
+
+**After generating:**
+
+> "Open `specs/atmosphere-comparison.html` to see the atmosphere directions side-by-side. Same identity in every column — different feel."
+
+**Handle evaluation feedback:**
+- User picks a winner → Document as UXD decisions, delete file, proceed to 7c
+- User wants tweaks → Regenerate with adjustments
+- User likes elements from multiple → Regenerate a mixed option
+
+#### Step 7c: Generate Pattern Showcase (`specs/pattern-showcase.html`)
+
+Generate a single-page preview of the complete finalized system — identity + chosen atmosphere + all functional patterns in one responsive page. This is NOT a comparison — one full-width layout showing how everything works together.
+
+**Architecture — data-driven, single render function:**
+
+1. **CSS custom properties** — Single set combining identity variables + chosen atmosphere treatments.
+
+2. **JS config object** (single, not array) — `identity`, `atmosphere`, `patterns` (navigation type, loading type, error approach, empty state style, form validation style).
+
+3. **Single `renderShowcase(config)` function** — full page layout:
+   - Navigation (per chosen pattern type)
+   - Hero/landing section (chosen density, texture, entrance)
+   - Card grid (3-4 cards, chosen card treatment, hover signature, stagger)
+   - Form section (chosen validation pattern, inline error/success states shown)
+   - Empty state panel (chosen empty state pattern)
+   - Toast notification (auto-triggers after 2s or via button)
+   - Data display with loading skeleton → populated transition
+
+4. **Motion**: All entrances auto-play on scroll. Hovers interactive. Loading skeleton auto-transitions. Toast auto-triggers. `prefers-reduced-motion` respected.
+
+5. **Self-contained, single-column responsive layout.**
+
+**After generating:**
+
+> "Open `specs/pattern-showcase.html` to see the complete system in action. Scroll through and hover over elements to feel the interaction character."
+
+**Handle evaluation feedback:**
+- User approves → Proceed to Step 8
+- User wants adjustments → Regenerate with changes
+- User spots conflict between patterns → Adjust pattern, regenerate
 
 ---
 
@@ -324,6 +396,38 @@ Populate all sections:
 2. **Brand Identity** - Colors, typography, voice
 3. **UX Patterns** - Navigation, loading, errors, forms, responsive, motion
 4. **Decision Log** - All decisions with context and rationale
+
+Delete `specs/pattern-showcase.html` after the design system document is written.
+
+### Step 8b: Generate UX Preview (`specs/ux-preview.html`)
+
+After writing `specs/design_system.md`, generate a persistent visual reference from the finalized documented decisions. This is similar in structure to the pattern-showcase but serves as a developer reference — it includes token names, hex values, and font names alongside the visual demonstrations.
+
+**Architecture — data-driven, single render function:**
+
+1. **CSS custom properties** — Single set derived from the documented identity (§2.1-2.2) and atmosphere (§2.5) decisions.
+
+2. **JS config object** (single, not array) — `identity` (colors, fonts from BRD decisions), `atmosphere` (treatments from UXD atmosphere decisions), `patterns` (from UXD pattern decisions).
+
+3. **Single `renderPreview(config)` function** — full page layout:
+   - Header with design system name, tonal direction badge, generation date
+   - Color palette swatches with token names and hex values
+   - Typography scale showcase (all `--text-*` tokens with specimen text)
+   - Navigation pattern demo
+   - Card grid showing card treatment, hover signature, entrance stagger
+   - Form section with validation states
+   - Empty state panel
+   - Toast notification (button-triggered)
+   - Loading skeleton → populated transition
+   - Motion timing reference (visualized durations)
+
+4. **Key difference from pattern-showcase:** Includes a reference header section showing token names, hex values, and font names — making it useful as a developer reference, not just a visual impression.
+
+5. **Self-contained**, single-column responsive layout. `prefers-reduced-motion` respected.
+
+**After generating:**
+
+> "I've also generated `specs/ux-preview.html` — a visual reference for the design system. Open it anytime to see how the system looks and feels."
 
 Present summary for review, then write the file.
 
