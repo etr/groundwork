@@ -77,6 +77,12 @@ For non-trivial changes, ask:
 
 If improvements identified: implement them (maintaining test coverage).
 
+### Step 4b: Frontend Visual Polish
+
+**For UI/frontend tasks**, apply visual polish before handing off. Read the design system spec (`specs/design_system.md`) if it exists.
+
+**Rule of thumb:** Every view should have at least one element that makes it visually distinctive. If everything is the same white card with the same border, it needs more visual variety.
+
 ### Step 5: Verify and Hand Off
 
 Verify all work before handing off:

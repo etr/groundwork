@@ -204,6 +204,27 @@ Next failing test for next feature.
 | **Clear** | Name describes behavior | `test('test1')` |
 | **Shows intent** | Demonstrates desired API | Obscures what code should do |
 
+## What NOT to Test
+
+Not everything benefits from TDD. Writing tests for these wastes budget and creates maintenance burden:
+
+**Skip tests for:**
+- Static markup and CSS classes (layout, colors, spacing, font sizes)
+- Element counts ("renders 6 nav items") — only fails on intentional changes
+- Pure presentational components with zero logic (just HTML + Tailwind)
+- Tooltip styling, container classes, overflow attributes
+- That an icon renders as an SVG
+
+**DO test:**
+- Conditional rendering (shows X when condition Y)
+- Computed values (formats currency, calculates percentage)
+- User interactions (click, keyboard, filter, sort, pagination)
+- State transitions (toggle, edit mode, selection)
+- Edge cases (empty data, zero values, overflow)
+- Business rules (color thresholds, frequency detection, amortization math)
+
+**Rule of thumb:** If the test would only fail when someone intentionally changes the UI, it's not testing behavior — it's preventing change. Delete it.
+
 ## Why Order Matters
 
 **"I'll write tests after to verify it works"**
@@ -329,7 +350,7 @@ Extract validation for multiple fields if needed.
 
 Before marking work complete:
 
-- [ ] Every new function/method has a test
+- [ ] Every function/method with logic (conditionals, computation, side effects) has a test
 - [ ] Watched each test fail before implementing
 - [ ] Each test failed for expected reason (feature missing, not typo)
 - [ ] Wrote minimal code to pass each test
@@ -351,8 +372,10 @@ Can't check all boxes? You skipped TDD. Start over.
 
 ## Coverage Requirements
 
-### Target: 80%+ Coverage
-- Unit tests + Integration tests + E2E tests combined
+### Target: 80%+ Coverage of Logic Paths
+- Coverage means branch/logic coverage, not line coverage of markup
+- Pure presentational components (no conditionals, no computed values) do NOT need unit tests — they are validated visually
+- Do not write tests solely to increase coverage numbers
 - All edge cases covered
 - Error scenarios tested
 - Boundary conditions verified
