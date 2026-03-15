@@ -15,6 +15,14 @@ Before invoking this skill, ensure:
 - Tests pass
 - Changes are ready for review
 
+## Step 0: Resolve Project Context
+
+**Before loading specs, ensure project context is resolved:**
+
+1. **Check `.groundwork.yml`:** Does a monorepo config file exist at the repo root?
+   - If yes → Check if `GROUNDWORK_PROJECT` is set. If not, list projects and ask the user to select one.
+2. Proceed with the resolved project context. All `{{specs_dir}}/` paths will resolve to the correct location.
+
 ## Workflow
 
 ### 1. Gather Context
@@ -26,9 +34,9 @@ Collect for the agents:
 - Diff stat: `git diff --stat HEAD~1` → brief change summary (lines added/removed per file)
 - Test file paths: identify associated test files by convention (do NOT read them)
 - Task definition (goal, action items, acceptance criteria) → keep, brief
-- Specs path: path to `specs/product_specs.md` or `specs/product_specs/` (do NOT read contents)
-- Architecture path: path to `specs/architecture.md` or `specs/architecture/` (do NOT read contents)
-- Design system path: path to `specs/design_system.md` or `specs/design_system/` (do NOT read contents)
+- Specs path: path to `{{specs_dir}}/product_specs.md` or `{{specs_dir}}/product_specs/` (do NOT read contents)
+- Architecture path: path to `{{specs_dir}}/architecture.md` or `{{specs_dir}}/architecture/` (do NOT read contents)
+- Design system path: path to `{{specs_dir}}/design_system.md` or `{{specs_dir}}/design_system/` (do NOT read contents)
 
 ### 1.5. Determine Active Agents
 
@@ -182,11 +190,11 @@ After all agents approve, collect **all findings from every iteration** across a
 
 If zero unexecuted findings → skip this step entirely.
 
-Otherwise, persist them to `specs/minor_todos.md`:
+Otherwise, persist them to `{{specs_dir}}/minor_todos.md`:
 
 1. **Determine task identifier**: Extract from the task definition context (e.g., `TASK-NNN: Title`). If no task context is available, use `"manual-validation"`.
 
-2. **Create or update `specs/minor_todos.md`**:
+2. **Create or update `{{specs_dir}}/minor_todos.md`**:
    - If the file does not exist, create it with this header:
      ```markdown
      # Minor TODOs
@@ -224,7 +232,7 @@ All 8 agents approved after [N] iteration(s).
 Issues fixed:
 - [Iteration N] Agent: Description
 
-Unexecuted findings: [N] finding(s) persisted to `specs/minor_todos.md`
+Unexecuted findings: [N] finding(s) persisted to `{{specs_dir}}/minor_todos.md`
 ```
 
 Return control to calling skill.

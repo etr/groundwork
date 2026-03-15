@@ -1,6 +1,6 @@
 # Architecture Document Template
 
-Use this template when creating `specs/architecture.md`.
+Use this template when creating `{{specs_dir}}/architecture.md`.
 
 ```markdown
 # System Architecture
@@ -186,6 +186,6 @@ Use this template when creating `specs/architecture.md`.
 [Domain terms]
 
 ### B. References
-- PRD: `specs/product_specs.md`
+- PRD: `{{specs_dir}}/product_specs.md`
 - [External docs, RFCs, etc]
 ```

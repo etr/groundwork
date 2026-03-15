@@ -1,6 +1,6 @@
 # Design System Template
 
-Use this template when creating `specs/design_system.md`.
+Use this template when creating `{{specs_dir}}/design_system.md`.
 
 ```markdown
 # Design System Specification

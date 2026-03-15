@@ -6,13 +6,21 @@ user-invocable: false
 
 # Sync Architecture Skill
 
-Keeps `specs/architecture.md` synchronized with actual implementation decisions.
+Keeps `{{specs_dir}}/architecture.md` synchronized with actual implementation decisions.
+
+## Step 0: Resolve Project Context
+
+**Before loading specs, ensure project context is resolved:**
+
+1. **Check `.groundwork.yml`:** Does a monorepo config file exist at the repo root?
+   - If yes → Check if `GROUNDWORK_PROJECT` is set. If not, list projects and ask the user to select one.
+2. Proceed with the resolved project context. All `{{specs_dir}}/` paths will resolve to the correct location.
 
 ## File Locations
 
 - **Target:** Architecture document (may be single file or directory)
-  - Single file: `specs/architecture.md`
-  - Directory: `specs/architecture/` (content split across files)
+  - Single file: `{{specs_dir}}/architecture.md`
+  - Directory: `{{specs_dir}}/architecture/` (content split across files)
 - **Context:** Current session history, codebase changes
 
 **Detection:** Check for single file first (takes precedence), then directory.
@@ -126,15 +134,15 @@ On approval:
 
 1. **Detect spec format** - Check if architecture is single file or directory
 2. **Read current content:**
-   - Single file: Read `specs/architecture.md`
-   - Directory: Aggregate all `.md` files from `specs/architecture/`
+   - Single file: Read `{{specs_dir}}/architecture.md`
+   - Directory: Aggregate all `.md` files from `{{specs_dir}}/architecture/`
 3. **Route updates to appropriate files:**
-   - **Single file mode:** Edit `specs/architecture.md` directly
+   - **Single file mode:** Edit `{{specs_dir}}/architecture.md` directly
    - **Directory mode:** Route each update:
-     - Decision records (DR-NNN) → Find or create in `specs/architecture/11-decisions/<DR-NNN>.md`
-     - Components → `specs/architecture/04-components/<component>.md`
-     - Data architecture → `specs/architecture/05-data.md`
-     - Security → `specs/architecture/07-security.md`
+     - Decision records (DR-NNN) → Find or create in `{{specs_dir}}/architecture/11-decisions/<DR-NNN>.md`
+     - Components → `{{specs_dir}}/architecture/04-components/<component>.md`
+     - Data architecture → `{{specs_dir}}/architecture/05-data.md`
+     - Security → `{{specs_dir}}/architecture/07-security.md`
      - Updates to existing content → Find the file containing that content
 4. Update "Last updated" timestamp
 5. Add entry to change log if present

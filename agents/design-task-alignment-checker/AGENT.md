@@ -61,8 +61,8 @@ Verify consistency across related tasks:
 ## Input Context
 
 You will receive:
-- `task_list`: The complete task list (specs/tasks.md contents)
-- `design_system`: Design system specification (specs/design_system.md) - may be absent
+- `task_list`: The complete task list ({{specs_dir}}/tasks.md contents)
+- `design_system`: Design system specification ({{specs_dir}}/design_system.md) - may be absent
 
 ## Review Process
 

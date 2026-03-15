@@ -8,6 +8,14 @@ user-invocable: false
 
 Verifies that implementation aligns with product specs and architecture, surfacing misalignments for resolution.
 
+## Step 0: Resolve Project Context
+
+**Before loading specs, ensure project context is resolved:**
+
+1. **Check `.groundwork.yml`:** Does a monorepo config file exist at the repo root?
+   - If yes → Check if `GROUNDWORK_PROJECT` is set. If not, list projects and ask the user to select one.
+2. Proceed with the resolved project context. All `{{specs_dir}}/` paths will resolve to the correct location.
+
 ## Workflow
 
 ### Step 1: Load All Context
@@ -15,16 +23,16 @@ Verifies that implementation aligns with product specs and architecture, surfaci
 Read the following specs (each may be a single file or directory):
 
 - **Product specs** - PRD with EARS requirements
-  - Single file: `specs/product_specs.md`
-  - Directory: `specs/product_specs/` (aggregate all `.md` files)
+  - Single file: `{{specs_dir}}/product_specs.md`
+  - Directory: `{{specs_dir}}/product_specs/` (aggregate all `.md` files)
 
 - **Architecture** - Architecture decisions
-  - Single file: `specs/architecture.md`
-  - Directory: `specs/architecture/` (aggregate all `.md` files)
+  - Single file: `{{specs_dir}}/architecture.md`
+  - Directory: `{{specs_dir}}/architecture/` (aggregate all `.md` files)
 
 - **Tasks** - Task list (if exists)
-  - Single file: `specs/tasks.md`
-  - Directory: `specs/tasks/` (aggregate all `.md` files)
+  - Single file: `{{specs_dir}}/tasks.md`
+  - Directory: `{{specs_dir}}/tasks/` (aggregate all `.md` files)
 
 **Detection:** Check for file first (takes precedence), then directory. When reading a directory, aggregate all `.md` files recursively with `_index.md` first, then numerically-prefixed files, then alphabetically.
 

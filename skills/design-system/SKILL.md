@@ -40,19 +40,32 @@ The tonal direction is derived from the product's persona, vision, and competiti
 ## File Locations
 
 - **Input:**
-  - `specs/product_specs.md` (PRD with personas, vision, NFRs)
-  - `specs/architecture.md` (technical constraints, API patterns)
+  - `{{specs_dir}}/product_specs.md` (PRD with personas, vision, NFRs)
+  - `{{specs_dir}}/architecture.md` (technical constraints, API patterns)
 - **Output:**
-  - `specs/design_system.md`
-  - `specs/ux-preview.html` (visual reference, regenerated when design system changes)
+  - `{{specs_dir}}/design_system.md`
+  - `{{specs_dir}}/ux-preview.html` (visual reference, regenerated when design system changes)
 - **Transient:**
-  - `specs/design-comparison.html` (color/font comparison, deleted after identity is chosen)
-  - `specs/atmosphere-comparison.html` (atmosphere comparison, deleted after atmosphere is chosen)
-  - `specs/pattern-showcase.html` (complete system preview, deleted after Step 8 documentation)
+  - `{{specs_dir}}/design-comparison.html` (color/font comparison, deleted after identity is chosen)
+  - `{{specs_dir}}/atmosphere-comparison.html` (atmosphere comparison, deleted after atmosphere is chosen)
+  - `{{specs_dir}}/pattern-showcase.html` (complete system preview, deleted after Step 8 documentation)
+
+## Step 0: Resolve Project Context
+
+**Before anything else, resolve the project context:**
+
+1. **Check `.groundwork.yml`:** Does a monorepo config file exist at the repo root?
+   - If yes → Check if `GROUNDWORK_PROJECT` is set. If not, list projects and ask the user to select one. Set the project context before continuing.
+   - If no → Continue to step 2.
+2. **Check `{{specs_dir}}/`:** Does a specs directory exist?
+   - If yes → Single-project repo, proceed normally.
+   - If no → Ask the user: "Is this a single-project repo or a monorepo with multiple projects?"
+     - **Single project** → Proceed normally (specs will be created at `{{specs_dir}}/`)
+     - **Monorepo** → Invoke `Skill(skill="groundwork:repo-setup")` to create `.groundwork.yml`, then continue.
 
 ## Prerequisites
 
-Check for PRD first. If `specs/product_specs.md` doesn't exist, prompt user to run `/product-design` first.
+Check for PRD first. If `{{specs_dir}}/product_specs.md` doesn't exist, prompt user to run `/product-design` first.
 
 Architecture file is optional but helpful for UX pattern decisions.
 
@@ -169,7 +182,7 @@ Aim for 2-4 candidates total (avoids decision fatigue). Include user-provided co
 
 ### Step 5: Generate Visual Comparison
 
-Generate `specs/design-comparison.html` — a self-contained file that renders identical UI components under each candidate identity option, side-by-side, with a decision helper table.
+Generate `{{specs_dir}}/design-comparison.html` — a self-contained file that renders identical UI components under each candidate identity option, side-by-side, with a decision helper table.
 
 **Architecture — data-driven, single render function:**
 
@@ -215,7 +228,7 @@ Generate `specs/design-comparison.html` — a self-contained file that renders i
 
 **After generating:**
 
-> "I've generated the visual comparison at `specs/design-comparison.html`. Open it in your browser to see the identity options side-by-side."
+> "I've generated the visual comparison at `{{specs_dir}}/design-comparison.html`. Open it in your browser to see the identity options side-by-side."
 
 **Handle evaluation feedback:**
 - User picks a winner → Document as BRD decisions, define semantic colors and type scale, proceed to Step 6
@@ -248,7 +261,7 @@ Type scale based on chosen body font:
 | `--text-2xl` | 24px | Page headers |
 | `--text-3xl` | 30px | Hero text |
 
-Delete `specs/design-comparison.html` after the palette and typography are documented.
+Delete `{{specs_dir}}/design-comparison.html` after the palette and typography are documented.
 
 ### Step 6: Brand Voice
 
@@ -317,7 +330,7 @@ Present functional pattern recommendations for immediate approval, plus 2-3 name
 - User questions a pattern → Explain reasoning, adjust if needed
 - User has strong atmosphere preference already → Skip 7b, go to 7c
 
-#### Step 7b: Generate Atmosphere Comparison (`specs/atmosphere-comparison.html`)
+#### Step 7b: Generate Atmosphere Comparison (`{{specs_dir}}/atmosphere-comparison.html`)
 
 Generate a self-contained HTML file that renders the same identity (colors, fonts) under each atmosphere direction side-by-side, with mini page layouts showing how each atmosphere *feels* in practice.
 
@@ -346,14 +359,14 @@ Generate a self-contained HTML file that renders the same identity (colors, font
 
 **After generating:**
 
-> "Open `specs/atmosphere-comparison.html` to see the atmosphere directions side-by-side. Same identity in every column — different feel."
+> "Open `{{specs_dir}}/atmosphere-comparison.html` to see the atmosphere directions side-by-side. Same identity in every column — different feel."
 
 **Handle evaluation feedback:**
 - User picks a winner → Document as UXD decisions, delete file, proceed to 7c
 - User wants tweaks → Regenerate with adjustments
 - User likes elements from multiple → Regenerate a mixed option
 
-#### Step 7c: Generate Pattern Showcase (`specs/pattern-showcase.html`)
+#### Step 7c: Generate Pattern Showcase (`{{specs_dir}}/pattern-showcase.html`)
 
 Generate a single-page preview of the complete finalized system — identity + chosen atmosphere + all functional patterns in one responsive page. This is NOT a comparison — one full-width layout showing how everything works together.
 
@@ -378,7 +391,7 @@ Generate a single-page preview of the complete finalized system — identity + c
 
 **After generating:**
 
-> "Open `specs/pattern-showcase.html` to see the complete system in action. Scroll through and hover over elements to feel the interaction character."
+> "Open `{{specs_dir}}/pattern-showcase.html` to see the complete system in action. Scroll through and hover over elements to feel the interaction character."
 
 **Handle evaluation feedback:**
 - User approves → Proceed to Step 8
@@ -389,7 +402,7 @@ Generate a single-page preview of the complete finalized system — identity + c
 
 ## Step 8: Document Design System
 
-Create `specs/design_system.md` using template in `references/design-system-template.md`.
+Create `{{specs_dir}}/design_system.md` using template in `references/design-system-template.md`.
 
 Populate all sections:
 1. **Foundations** - DP-NNN principles, accessibility level, tokens
@@ -397,11 +410,11 @@ Populate all sections:
 3. **UX Patterns** - Navigation, loading, errors, forms, responsive, motion
 4. **Decision Log** - All decisions with context and rationale
 
-Delete `specs/pattern-showcase.html` after the design system document is written.
+Delete `{{specs_dir}}/pattern-showcase.html` after the design system document is written.
 
-### Step 8b: Generate UX Preview (`specs/ux-preview.html`)
+### Step 8b: Generate UX Preview (`{{specs_dir}}/ux-preview.html`)
 
-After writing `specs/design_system.md`, generate a persistent visual reference from the finalized documented decisions. This is similar in structure to the pattern-showcase but serves as a developer reference — it includes token names, hex values, and font names alongside the visual demonstrations.
+After writing `{{specs_dir}}/design_system.md`, generate a persistent visual reference from the finalized documented decisions. This is similar in structure to the pattern-showcase but serves as a developer reference — it includes token names, hex values, and font names alongside the visual demonstrations.
 
 **Architecture — data-driven, single render function:**
 
@@ -427,7 +440,7 @@ After writing `specs/design_system.md`, generate a persistent visual reference f
 
 **After generating:**
 
-> "I've also generated `specs/ux-preview.html` — a visual reference for the design system. Open it anytime to see how the system looks and feels."
+> "I've also generated `{{specs_dir}}/ux-preview.html` — a visual reference for the design system. Open it anytime to see how the system looks and feels."
 
 Present summary for review, then write the file.
 
@@ -439,7 +452,7 @@ Present summary for review, then write the file.
 > **Visual Atmosphere:** [surface/texture summary — e.g., subtle grain textures, glass cards, generous whitespace]
 > **UX Patterns:** [Nav type], [Loading strategy], [Error approach], [Motion character]
 >
-> Ready to document this in `specs/design_system.md`?"
+> Ready to document this in `{{specs_dir}}/design_system.md`?"
 
 ## Step 9: Suggest Next Step
 

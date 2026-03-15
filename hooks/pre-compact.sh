@@ -63,6 +63,14 @@ if [ -f "$SKILL_CONTEXT_FILE" ]; then
   fi
 fi
 
+# Check for active project context
+if [ -n "$GROUNDWORK_PROJECT" ]; then
+  CONTEXT_ITEMS+=("Active project: $GROUNDWORK_PROJECT")
+fi
+if [ -n "$GROUNDWORK_PROJECT_ROOT" ]; then
+  CONTEXT_ITEMS+=("Project root: $GROUNDWORK_PROJECT_ROOT")
+fi
+
 # Build additional context for compaction
 if [ ${#CONTEXT_ITEMS[@]} -gt 0 ]; then
   CONTEXT_STR=$(printf "%s\n" "${CONTEXT_ITEMS[@]}" | tr '\n' '; ')

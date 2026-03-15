@@ -8,12 +8,20 @@ user-invocable: false
 
 Autonomous verification loop that runs 3 specialized agents to validate task list completeness and alignment before implementation begins.
 
+## Step 0: Resolve Project Context
+
+**Before loading specs, ensure project context is resolved:**
+
+1. **Check `.groundwork.yml`:** Does a monorepo config file exist at the repo root?
+   - If yes → Check if `GROUNDWORK_PROJECT` is set. If not, list projects and ask the user to select one.
+2. Proceed with the resolved project context. All `{{specs_dir}}/` paths will resolve to the correct location.
+
 ## Prerequisites
 
 Before invoking this skill, ensure:
-- Task list is complete (specs/tasks/ directory or specs/tasks.md exists)
-- PRD exists (specs/product_specs.md)
-- Architecture exists (specs/architecture.md)
+- Task list is complete ({{specs_dir}}/tasks/ directory or {{specs_dir}}/tasks.md exists)
+- PRD exists ({{specs_dir}}/product_specs.md)
+- Architecture exists ({{specs_dir}}/architecture.md)
 - User has approved the task breakdown
 
 ## Workflow
@@ -23,10 +31,10 @@ Before invoking this skill, ensure:
 Collect inputs for the agents:
 
 ```
-task_list     ← Read specs/tasks.md (or specs/tasks/ directory)
-product_specs ← Read specs/product_specs.md (or specs/product_specs/ directory)
-architecture  ← Read specs/architecture.md (or specs/architecture/ directory)
-design_system ← Read specs/design_system.md (if exists, optional)
+task_list     ← Read {{specs_dir}}/tasks.md (or {{specs_dir}}/tasks/ directory)
+product_specs ← Read {{specs_dir}}/product_specs.md (or {{specs_dir}}/product_specs/ directory)
+architecture  ← Read {{specs_dir}}/architecture.md (or {{specs_dir}}/architecture/ directory)
+design_system ← Read {{specs_dir}}/design_system.md (if exists, optional)
 ```
 
 **Detection:** Check for file first (takes precedence), then directory. When reading a directory, aggregate all `.md` files recursively.
@@ -93,7 +101,7 @@ Present results in table format:
    ```
 
 2. **Fix Each Finding** - Apply each critical/major recommendation
-   - Modify the relevant task file in specs/tasks/ (or specs/tasks.md if single-file)
+   - Modify the relevant task file in {{specs_dir}}/tasks/ (or {{specs_dir}}/tasks.md if single-file)
    - Track what was changed
    - Note which finding each fix addresses
 

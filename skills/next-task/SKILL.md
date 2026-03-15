@@ -7,19 +7,27 @@ user-invocable: false
 
 # Next Task Skill
 
-Finds the next uncompleted task from `specs/tasks/` (or `specs/tasks.md`) and delegates execution to the `execute-task` skill.
+Finds the next uncompleted task from `{{specs_dir}}/tasks/` (or `{{specs_dir}}/tasks.md`) and delegates execution to the `execute-task` skill.
 
 ## Workflow
 
 **IMPORTANT**: Your job is NOT to build a plan or build anything, it is to exclusively to find the next task to execute. Don't do planning or building until the full workflow is executed. If you find yourself planning or executing, STOP and follow the workflow.
 
+### Step 0: Resolve Project Context
+
+**Before loading specs, ensure project context is resolved:**
+
+1. **Check `.groundwork.yml`:** Does a monorepo config file exist at the repo root?
+   - If yes → Check if `GROUNDWORK_PROJECT` is set. If not, list projects and ask the user to select one.
+2. Proceed with the resolved project context. All `{{specs_dir}}/` paths will resolve to the correct location.
+
 ### Step 1: Load Task Index
 
 Read **only** the task index to find available tasks — do NOT read individual task files:
-- Directory mode: `specs/tasks/_index.md` (preferred — contains status table)
-- Single file fallback: `specs/tasks.md`
+- Directory mode: `{{specs_dir}}/tasks/_index.md` (preferred — contains status table)
+- Single file fallback: `{{specs_dir}}/tasks.md`
 
-**Detection:** Check for `specs/tasks/_index.md` first, then `specs/tasks.md`. Do NOT aggregate all task files — the index contains the status table with all the information needed to find the next task.
+**Detection:** Check for `{{specs_dir}}/tasks/_index.md` first, then `{{specs_dir}}/tasks.md`. Do NOT aggregate all task files — the index contains the status table with all the information needed to find the next task.
 
 ### Step 2: Find Next Task
 
@@ -65,7 +73,7 @@ Parse the status table in `_index.md` to find the next task:
 |-----------|----------|
 | No `specs/` directory | "No specs directory found. Run `/groundwork:design-product` to start defining your project." |
 | Missing tasks file | "Tasks file not found. Run `/groundwork:create-tasks` to generate tasks from your PRD and architecture." |
-| No tasks found | "No tasks found in specs/tasks/. The directory may need to be regenerated with `/groundwork:create-tasks`." |
+| No tasks found | "No tasks found in {{specs_dir}}/tasks/. The directory may need to be regenerated with `/groundwork:create-tasks`." |
 | All tasks complete | "All tasks complete! Consider running `/groundwork:source-product-specs-from-code` to update documentation or plan the next phase." |
 | Only blocked tasks | "All remaining tasks are blocked. Blocked tasks: [list]. Would you like to override and work on one anyway?" |
 | Parse error | "Could not parse tasks.md. Expected format: `### TASK-NNN: Title` with `**Status:**` field." |

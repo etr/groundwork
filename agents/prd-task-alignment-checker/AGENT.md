@@ -54,8 +54,8 @@ Check bidirectional traceability:
 ## Input Context
 
 You will receive:
-- `task_list`: The complete task list (specs/tasks.md contents)
-- `product_specs`: The PRD with EARS requirements (specs/product_specs.md)
+- `task_list`: The complete task list ({{specs_dir}}/tasks.md contents)
+- `product_specs`: The PRD with EARS requirements ({{specs_dir}}/product_specs.md)
 
 ## Review Process
 

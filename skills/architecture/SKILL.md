@@ -10,8 +10,8 @@ Interactive workflow for translating product requirements into architecture thro
 
 ## File Locations
 
-- **Input:** `specs/product_specs.md` (PRD with EARS requirements)
-- **Output:** `specs/architecture.md` (architecture document with decisions)
+- **Input:** `{{specs_dir}}/product_specs.md` (PRD with EARS requirements)
+- **Output:** `{{specs_dir}}/architecture.md` (architecture document with decisions)
 
 ## Workflow Overview
 
@@ -20,6 +20,19 @@ Interactive workflow for translating product requirements into architecture thro
 3. **Iterate Decisions** - For each decision: present options → discuss → decide
 4. **Document** - Write architecture with full decision records
 
+## Step 0: Resolve Project Context
+
+**Before anything else, resolve the project context:**
+
+1. **Check `.groundwork.yml`:** Does a monorepo config file exist at the repo root?
+   - If yes → Check if `GROUNDWORK_PROJECT` is set. If not, list projects and ask the user to select one. Set the project context before continuing.
+   - If no → Continue to step 2.
+2. **Check `{{specs_dir}}/`:** Does a specs directory exist?
+   - If yes → Single-project repo, proceed normally.
+   - If no → Ask the user: "Is this a single-project repo or a monorepo with multiple projects?"
+     - **Single project** → Proceed normally (specs will be created at `{{specs_dir}}/`)
+     - **Monorepo** → Invoke `Skill(skill="groundwork:repo-setup")` to create `.groundwork.yml`, then continue.
+
 ## Step 1: Load Context
 
 Read the product specs (may be single file or directory) and extract:
@@ -27,7 +40,7 @@ Read the product specs (may be single file or directory) and extract:
 - Feature list and EARS requirements
 - Implicit constraints (budget, team size, timeline if mentioned)
 
-**Detection:** Check for `specs/product_specs.md` first (single file), then `specs/product_specs/` directory. When reading a directory, aggregate all `.md` files recursively with `_index.md` first, then numerically-prefixed files, then alphabetically.
+**Detection:** Check for `{{specs_dir}}/product_specs.md` first (single file), then `{{specs_dir}}/product_specs/` directory. When reading a directory, aggregate all `.md` files recursively with `_index.md` first, then numerically-prefixed files, then alphabetically.
 
 If PRD doesn't exist, prompt user to run `/product-design` first.
 
@@ -175,7 +188,7 @@ Before recording a decision, check for conflicts with earlier decisions:
 
 When all major decisions are made, create the architecture document using template in `references/architecture-template.md`.
 
-**Output location:** `specs/architecture.md` (single file by default)
+**Output location:** `{{specs_dir}}/architecture.md` (single file by default)
 - For large architectures, user can later run `/split-spec architecture` to convert to directory format
 
 **Critical:** Include ALL decision records with discarded options and reasoning. This is essential for future maintainers to understand *why* choices were made.
@@ -210,7 +223,7 @@ Before writing the architecture document, validate it against the PRD:
    - Re-validate until approved
 
 3. If verdict is `approve`:
-   - Proceed to write `specs/architecture.md`
+   - Proceed to write `{{specs_dir}}/architecture.md`
    - Note any minor findings as suggestions for documentation improvement
 
 ## Step 6: Suggest Next Step

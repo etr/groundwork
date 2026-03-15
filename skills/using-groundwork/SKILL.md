@@ -84,6 +84,15 @@ When multiple skills could apply, use this order:
 
 The skill itself tells you which type it is.
 
+## Monorepo Awareness
+
+When working in a monorepo (`.groundwork.yml` exists):
+- **Always check project context** before reading/writing specs
+- If `GROUNDWORK_PROJECT` is not set, prompt the user to select a project
+- All `{{specs_dir}}/` paths resolve to the selected project's specs directory
+- Use `/groundwork:select-project` to switch between projects
+- Use `/groundwork:setup-repo` to configure the repo structure
+
 ## User Instructions
 
 Instructions say WHAT, not HOW. "Add X" or "Fix Y" doesn't mean skip workflows.

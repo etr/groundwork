@@ -6,7 +6,7 @@ user-invocable: false
 
 # Split Spec
 
-Converts a single-file spec (e.g., `specs/product_specs.md`) into a directory-based format with content split across multiple files for better organization of large specs.
+Converts a single-file spec (e.g., `{{specs_dir}}/product_specs.md`) into a directory-based format with content split across multiple files for better organization of large specs.
 
 ## Usage
 
@@ -31,7 +31,7 @@ Converts a single-file spec (e.g., `specs/product_specs.md`) into a directory-ba
    - `tasks` → Tasks file
 
 2. Check if single-file version exists:
-   - `specs/<spec-name>.md` must exist
+   - `{{specs_dir}}/<spec-name>.md` must exist
    - If directory already exists, warn and ask to confirm overwrite
 
 3. Read the current file content for parsing.
@@ -78,7 +78,7 @@ specs/tasks/
 
 ### Step 3: Create Directory Structure
 
-1. Create the spec directory: `specs/<spec-name>/`
+1. Create the spec directory: `{{specs_dir}}/<spec-name>/`
 2. Create subdirectories as needed (e.g., `03-features/`, `11-decisions/`)
 3. Write each section to its appropriate file
 
@@ -102,7 +102,7 @@ For Tasks:
 
 Before removing the original file:
 
-1. Create backup at `specs/<spec-name>.md.bak`
+1. Create backup at `{{specs_dir}}/<spec-name>.md.bak`
 2. Verify backup is readable
 
 ### Step 5: Verify Aggregation
@@ -117,9 +117,9 @@ After splitting:
 ```markdown
 ## Split Complete: <spec-name>
 
-**Original:** specs/<spec-name>.md (backed up to .bak)
+**Original:** {{specs_dir}}/<spec-name>.md (backed up to .bak)
 **New structure:**
-- specs/<spec-name>/
+- {{specs_dir}}/<spec-name>/
   - _index.md
   - [list other files created]
 
@@ -127,15 +127,15 @@ After splitting:
 **Content verified:** Aggregated content matches original
 
 **Note:** All skills now automatically read from both file and directory formats.
-To revert: `mv specs/<spec-name>.md.bak specs/<spec-name>.md && rm -rf specs/<spec-name>/`
+To revert: `mv {{specs_dir}}/<spec-name>.md.bak {{specs_dir}}/<spec-name>.md && rm -rf {{specs_dir}}/<spec-name>/`
 ```
 
 ### Step 6: Error Handling
 
 | Error | Response |
 |-------|----------|
-| Spec not found | "No specs/<spec-name>.md found. Create it first with the appropriate skill." |
-| Directory exists | "specs/<spec-name>/ already exists. Overwrite? (yes/no)" |
+| Spec not found | "No {{specs_dir}}/<spec-name>.md found. Create it first with the appropriate skill." |
+| Directory exists | "{{specs_dir}}/<spec-name>/ already exists. Overwrite? (yes/no)" |
 | Parse failure | "Could not parse sections. Manual splitting may be needed." |
 | Write failure | "Failed to write files. Check permissions and disk space." |
 | Verification failed | "Warning: Aggregated content differs from original. Check the split files manually." |
@@ -160,11 +160,11 @@ To revert: `mv specs/<spec-name>.md.bak specs/<spec-name>.md && rm -rf specs/<sp
 To convert back to single-file format:
 
 1. Aggregate directory content in order
-2. Write to `specs/<spec-name>.md`
+2. Write to `{{specs_dir}}/<spec-name>.md`
 3. Remove directory
 
 Or simply restore from backup if available:
 ```bash
-mv specs/<spec-name>.md.bak specs/<spec-name>.md
-rm -rf specs/<spec-name>/
+mv {{specs_dir}}/<spec-name>.md.bak {{specs_dir}}/<spec-name>.md
+rm -rf {{specs_dir}}/<spec-name>/
 ```

@@ -69,12 +69,12 @@ If session context contains `GROUNDWORK_BATCH_MODE=true`, batch mode is active. 
 ### Step 2: Load Task File
 
 Read the tasks file from the worktree:
-- Single file: `specs/tasks.md`
-- Directory: `specs/tasks/` (aggregated in sorted order)
+- Single file: `{{specs_dir}}/tasks.md`
+- Directory: `{{specs_dir}}/tasks/` (aggregated in sorted order)
 
 Search for `### TASK-NNN:` pattern.
 
-**Error:** Task not found → "TASK-NNN not found in specs/tasks/"
+**Error:** Task not found → "TASK-NNN not found in {{specs_dir}}/tasks/"
 
 ### Step 3: Validate Task is Workable
 
@@ -103,10 +103,10 @@ Search for `### TASK-NNN:` pattern.
 ### Step 4: Load Project Context
 
 Read from the worktree:
-1. **Product specs** - `specs/product_specs.md` or `specs/product_specs/`
-2. **Architecture** - `specs/architecture.md` or `specs/architecture/`
-3. **Design system** - `specs/design_system.md` (if exists)
-4. **Tasks** - `specs/tasks.md` or `specs/tasks/`
+1. **Product specs** - `{{specs_dir}}/product_specs.md` or `{{specs_dir}}/product_specs/`
+2. **Architecture** - `{{specs_dir}}/architecture.md` or `{{specs_dir}}/architecture/`
+3. **Design system** - `{{specs_dir}}/design_system.md` (if exists)
+4. **Tasks** - `{{specs_dir}}/tasks.md` or `{{specs_dir}}/tasks/`
 
 **If specs missing:** Report which are missing and suggest commands to create them.
 **If design system missing:** Not an error — proceed without it. Note its absence for the planner.
@@ -197,7 +197,7 @@ Present summary to the user:
 
 ### Step 7: Implementation (task-executor Agent)
 
-1. **Update status** - Change task file to `**Status:** In Progress` and update the status table in `specs/tasks/_index.md` (change the task's row to `In Progress`)
+1. **Update status** - Change task file to `**Status:** In Progress` and update the status table in `{{specs_dir}}/tasks/_index.md` or `{{specs_dir}}/tasks.md` (change the task's row to `In Progress`)
 
 2. **Dispatch to the task-executor agent** with a fresh context window. This agent has `implement-feature`, `use-git-worktree`, and `test-driven-development` skills preloaded — it does not need to call `Skill()` or spawn subagents.
 
@@ -325,7 +325,7 @@ cd .worktrees/TASK-NNN
 
 After successful merge or user acknowledgment:
 
-1. **Update status** - Change task file to `**Status:** Complete` and update the status table in `specs/tasks/_index.md` (change the task's row to `Complete`)
+1. **Update status** - Change task file to `**Status:** Complete` and update the status table in `{{specs_dir}}/tasks/_index.md` (change the task's row to `Complete`)
 
 ### Step 9: Complete and Report
 

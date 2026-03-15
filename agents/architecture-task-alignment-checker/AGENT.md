@@ -57,8 +57,8 @@ Verify tasks respect API contracts:
 ## Input Context
 
 You will receive:
-- `task_list`: The complete task list (specs/tasks.md contents)
-- `architecture_doc`: Architecture decisions and component design (specs/architecture.md)
+- `task_list`: The complete task list ({{specs_dir}}/tasks.md contents)
+- `architecture_doc`: Architecture decisions and component design ({{specs_dir}}/architecture.md)
 
 ## Review Process
 

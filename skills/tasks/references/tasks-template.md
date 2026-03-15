@@ -1,6 +1,6 @@
 # Tasks Directory Template
 
-Use this structure when creating task files in `specs/tasks/`.
+Use this structure when creating task files in `{{specs_dir}}/tasks/`.
 
 ## Directory Structure
 
@@ -23,8 +23,8 @@ specs/tasks/
 # Implementation Tasks
 
 **Generated from:**
-- PRD: `specs/product_specs.md`
-- Architecture: `specs/architecture.md`
+- PRD: `{{specs_dir}}/product_specs.md`
+- Architecture: `{{specs_dir}}/architecture.md`
 
 **Last updated:** <today>
 **Status:** Draft | In Progress | Complete

@@ -83,19 +83,37 @@ if [ -f "$PRESERVED_STATE_FILE" ]; then
 fi
 
 # ============================================
-# Project State Detection
+# Project State Detection (via Node for monorepo support)
 # ============================================
 specs_notice=""
+project_context=""
 
-# Detect what exists
-has_prd=false; has_arch=false; has_tasks=false; has_code=false
+if [ -f "${PLUGIN_ROOT}/lib/detect-project-state.js" ]; then
+  project_state=$(timeout 3 node "${PLUGIN_ROOT}/lib/detect-project-state.js" 2>/dev/null || echo '{}')
 
-([ -f "specs/product_specs.md" ] || [ -d "specs/product_specs" ]) && has_prd=true
-([ -f "specs/architecture.md" ] || [ -d "specs/architecture" ]) && has_arch=true
-([ -f "specs/tasks.md" ] || [ -d "specs/tasks" ]) && has_tasks=true
+  # Parse project state JSON
+  is_monorepo=$(echo "$project_state" | grep -o '"isMonorepo":true' | head -1)
+  project_name=$(echo "$project_state" | sed -n 's/.*"projectName":"\([^"]*\)".*/\1/p')
+  has_prd=$(echo "$project_state" | grep -o '"hasPRD":true' | head -1)
+  has_arch=$(echo "$project_state" | grep -o '"hasArchitecture":true' | head -1)
+  has_tasks=$(echo "$project_state" | grep -o '"hasTasks":true' | head -1)
+
+  # Set flags for downstream use
+  [ -n "$has_prd" ] && has_prd=true || has_prd=false
+  [ -n "$has_arch" ] && has_arch=true || has_arch=false
+  [ -n "$has_tasks" ] && has_tasks=true || has_tasks=false
+else
+  # Fallback to bash detection
+  has_prd=false; has_arch=false; has_tasks=false
+  ([ -f "specs/product_specs.md" ] || [ -d "specs/product_specs" ]) && has_prd=true
+  ([ -f "specs/architecture.md" ] || [ -d "specs/architecture" ]) && has_arch=true
+  ([ -f "specs/tasks.md" ] || [ -d "specs/tasks" ]) && has_tasks=true
+  is_monorepo=""
+  project_name=""
+fi
 
 # Check for code files (quick check - just see if any exist)
-# Use find as primary method for reliability, with extensions including kotlin, swift, scala
+has_code=false
 if find . -maxdepth 3 \( \
   -name "*.py" -o -name "*.ts" -o -name "*.js" -o -name "*.go" -o -name "*.rs" \
   -o -name "*.java" -o -name "*.rb" -o -name "*.php" -o -name "*.c" -o -name "*.cpp" \
@@ -105,16 +123,31 @@ if find . -maxdepth 3 \( \
 fi
 
 # Generate suggestion message based on state
-if $has_prd && $has_arch && $has_tasks; then
-    specs_notice="\n\n**Project context available:** PRD, Architecture, Tasks in specs/. Use /groundwork:work-on-next-task to work on the next task."
+if [ -n "$is_monorepo" ] && [ -n "$project_name" ]; then
+  # Monorepo with project selected
+  project_context="Project: ${project_name}. "
+  if $has_prd && $has_arch && $has_tasks; then
+    specs_notice="\n\n**${project_context}PRD, Architecture, Tasks available.** Use /groundwork:work-on-next-task to work on the next task."
+  elif $has_prd && $has_arch; then
+    specs_notice="\n\n**${project_context}PRD and Architecture available.** Run /groundwork:create-tasks to generate implementation tasks."
+  elif $has_prd; then
+    specs_notice="\n\n**${project_context}PRD available.** Run /groundwork:design-architecture to design the technical approach."
+  else
+    specs_notice="\n\n**${project_context}** No specs found. Run /groundwork:design-product to get started."
+  fi
+elif [ -n "$is_monorepo" ]; then
+  # Monorepo detected but no project selected
+  specs_notice="\n\n**Monorepo detected.** Run /groundwork:select-project or start a skill to choose a project."
+elif $has_prd && $has_arch && $has_tasks; then
+  specs_notice="\n\n**Project context available:** PRD, Architecture, Tasks in specs/. Use /groundwork:work-on-next-task to work on the next task."
 elif $has_prd && $has_arch; then
-    specs_notice="\n\n**PRD and Architecture available.** Run /groundwork:create-tasks to generate implementation tasks."
+  specs_notice="\n\n**PRD and Architecture available.** Run /groundwork:create-tasks to generate implementation tasks."
 elif $has_prd; then
-    specs_notice="\n\n**PRD available.** Run /groundwork:design-architecture to design the technical approach based on your requirements."
+  specs_notice="\n\n**PRD available.** Run /groundwork:design-architecture to design the technical approach based on your requirements."
 elif $has_code; then
-    specs_notice="\n\n**Project has code but no specs.** I can analyze your codebase to propose initial product specifications. Run /product-design to get started."
+  specs_notice="\n\n**Project has code but no specs.** I can analyze your codebase to propose initial product specifications. Run /product-design to get started."
 else
-    specs_notice="\n\n**Getting started:** Run /groundwork:design-product to define your product requirements."
+  specs_notice="\n\n**Getting started:** Run /groundwork:design-product to define your product requirements."
 fi
 
 # Add gh warning, update notice, and restored state if applicable

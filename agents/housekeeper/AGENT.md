@@ -30,19 +30,19 @@ Given the implementation in the changed files, verify action items are marked co
 
 Check if specs require updating based on changes:
 
-**Product Specs** (`specs/product_specs.md` or `specs/product_specs/`):
+**Product Specs** (`{{specs_dir}}/product_specs.md` or `{{specs_dir}}/product_specs/`):
 - If implementation changes user-facing behavior: Is the PRD updated?
 - If new EARS requirements emerged: Are they documented?
 - If existing requirements changed: Are they modified in the spec?
 - If feature scope expanded/reduced: Does the PRD reflect this?
 
-**Architecture** (`specs/architecture.md` or `specs/architecture/`):
+**Architecture** (`{{specs_dir}}/architecture.md` or `{{specs_dir}}/architecture/`):
 - If new technology introduced: Is there an ADR?
 - If component responsibilities changed: Is architecture doc updated?
 - If new integration patterns: Are they documented?
 - If deviating from existing ADR: Is there a superseding decision?
 
-**Design System** (`specs/design_system.md` or `specs/design_system/`):
+**Design System** (`{{specs_dir}}/design_system.md` or `{{specs_dir}}/design_system/`):
 - If design tokens changed (colors, spacing, typography): Is the design system updated?
 - If new UX patterns introduced: Are they documented?
 - If brand identity changes (colors, typography, voice): Are they recorded?

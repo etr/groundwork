@@ -17,18 +17,44 @@ Interactive workflow for iteratively designing and documenting product requireme
 4. **Commit** - Edit the PRD document when requirements are approved
 5. **Next Step** - Ask user what to do next (architecture, UX, or another feature)
 
-## Step 0: Do we have context?
+## Step 0: Resolve Project Context
+
+**Before anything else, resolve the project context:**
+
+1. **Check `.groundwork.yml`:** Does a monorepo config file exist at the repo root?
+   - If yes → Check if `GROUNDWORK_PROJECT` is set. If not, list projects and ask the user to select one. Set the project context before continuing.
+   - If no → Continue to step 2.
+2. **Check `{{specs_dir}}/`:** Does a specs directory exist?
+   - If yes → Single-project repo, proceed normally.
+   - If no → Ask the user: "Is this a single-project repo or a monorepo with multiple projects?"
+     - **Single project** → Proceed normally (specs will be created at `{{specs_dir}}/`)
+     - **Monorepo** → Invoke `Skill(skill="groundwork:repo-setup")` to create `.groundwork.yml`, then continue.
+
+## Step 0a: Feature-Project Mismatch Check (monorepo only)
+
+**Skip this check if:**
+- Not in monorepo mode (no `.groundwork.yml`)
+- The project was just selected as part of Step 0 above (the user explicitly chose)
+
+**If in monorepo mode with a previously selected project:**
+- Evaluate whether the requested feature "sounds like" it belongs to the selected project
+- If a mismatch is detected (e.g., user asks to design "push notifications for mobile" but `web-app` is selected):
+  > "This feature sounds like it might belong to **[other-project]** rather than **[current-project]**. Continue with [current-project] or switch?"
+- If the user confirms the current project, proceed normally
+- If the user wants to switch, invoke `Skill(skill="groundwork:project-selector")` and then continue
+
+## Step 0b: Do we have context?
 
 If the user called the skill without any context, ask them to provide context on what feature they want to add, modify or remove.
 
-## Step 0.5: Load Project Context
+## Step 0c: Load Project Context
 
 Before clarifying the request, load existing specs so you can detect contradictions and understand constraints:
 
 **Check for and read (if they exist):**
-- `specs/architecture.md` (or `specs/architecture/` directory) — technology choices, component boundaries, decision records. Use to catch architecturally infeasible requirements early.
-- `specs/design_system.md` — design principles, brand decisions, UX patterns. Use to ensure new features align with established design language.
-- `specs/product_specs.md` (or `specs/product_specs/` directory) — already loaded implicitly by the contradiction check, but read it explicitly here for full cross-feature context.
+- `{{specs_dir}}/architecture.md` (or `{{specs_dir}}/architecture/` directory) — technology choices, component boundaries, decision records. Use to catch architecturally infeasible requirements early.
+- `{{specs_dir}}/design_system.md` — design principles, brand decisions, UX patterns. Use to ensure new features align with established design language.
+- `{{specs_dir}}/product_specs.md` (or `{{specs_dir}}/product_specs/` directory) — already loaded implicitly by the contradiction check, but read it explicitly here for full cross-feature context.
 
 For each, check single file first, then directory. If a directory, aggregate all `.md` files.
 
@@ -175,21 +201,21 @@ Ask: "Does this capture your requirements? Any changes before I update the PRD?"
 ## Step 4: Commit to PRD
 
 **PRD Location:** The PRD may be stored as:
-- Single file: `specs/product_specs.md`
-- Directory: `specs/product_specs/` (with content split across files)
+- Single file: `{{specs_dir}}/product_specs.md`
+- Directory: `{{specs_dir}}/product_specs/` (with content split across files)
 
 When the user approves:
 
 1. **Check if PRD exists** - Look for single file first, then directory
-   - If missing, create `specs/product_specs.md` using the template in `references/prd-template.md`
-   - Ensure `specs/` directory exists first
+   - If missing, create `{{specs_dir}}/product_specs.md` using the template in `references/prd-template.md`
+   - Ensure `{{specs_dir}}/` directory exists first
 
 2. **Route the content** - Determine where to write based on spec format:
-   - **Single file mode:** Edit `specs/product_specs.md` directly
+   - **Single file mode:** Edit `{{specs_dir}}/product_specs.md` directly
    - **Directory mode:** Route to appropriate file:
-     - Features with ID (e.g., PRD-AUTH-*) → `specs/product_specs/03-features/<feature-code>.md`
-     - Open questions → `specs/product_specs/05-open-questions.md`
-     - If unsure, append to `specs/product_specs/_index.md`
+     - Features with ID (e.g., PRD-AUTH-*) → `{{specs_dir}}/product_specs/03-features/<feature-code>.md`
+     - Open questions → `{{specs_dir}}/product_specs/05-open-questions.md`
+     - If unsure, append to `{{specs_dir}}/product_specs/_index.md`
 
 3. **Find insertion point** - New features go in Section 3 (Feature list) after existing features
 4. **Edit the document** - Use `str_replace` to insert the new feature block

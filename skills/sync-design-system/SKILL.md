@@ -6,13 +6,21 @@ user-invocable: false
 
 # Sync Design System Skill
 
-Keeps `specs/design_system.md` synchronized with design implementation decisions made during sessions.
+Keeps `{{specs_dir}}/design_system.md` synchronized with design implementation decisions made during sessions.
+
+## Step 0: Resolve Project Context
+
+**Before loading specs, ensure project context is resolved:**
+
+1. **Check `.groundwork.yml`:** Does a monorepo config file exist at the repo root?
+   - If yes → Check if `GROUNDWORK_PROJECT` is set. If not, list projects and ask the user to select one.
+2. Proceed with the resolved project context. All `{{specs_dir}}/` paths will resolve to the correct location.
 
 ## File Locations
 
 - **Target:** Design system document (may be single file or directory)
-  - Single file: `specs/design_system.md`
-  - Directory: `specs/design_system/` (content split across files)
+  - Single file: `{{specs_dir}}/design_system.md`
+  - Directory: `{{specs_dir}}/design_system/` (content split across files)
 - **Context:** Current session history, codebase changes
 
 **Detection:** Check for single file first (takes precedence), then directory.
@@ -165,23 +173,23 @@ On approval:
 
 1. **Detect spec format** - Check if design system is single file or directory
 2. **Read current content:**
-   - Single file: Read `specs/design_system.md`
-   - Directory: Aggregate all `.md` files from `specs/design_system/`
+   - Single file: Read `{{specs_dir}}/design_system.md`
+   - Directory: Aggregate all `.md` files from `{{specs_dir}}/design_system/`
 3. **Route updates to appropriate files:**
-   - **Single file mode:** Edit `specs/design_system.md` directly
+   - **Single file mode:** Edit `{{specs_dir}}/design_system.md` directly
    - **Directory mode:** Route each update:
-     - Design principles (DP-NNN) → `specs/design_system/01-foundations.md`
-     - Accessibility → `specs/design_system/01-foundations.md`
-     - Token changes → `specs/design_system/01-foundations.md`
-     - Color system (BRD-NNN) → `specs/design_system/02-brand-identity.md`
-     - Typography → `specs/design_system/02-brand-identity.md`
-     - Brand voice → `specs/design_system/02-brand-identity.md`
-     - UX patterns (UXD-NNN) → `specs/design_system/03-ux-patterns.md`
-     - Component guidelines → `specs/design_system/04-components.md`
-     - Decision log entries → `specs/design_system/05-decisions.md`
+     - Design principles (DP-NNN) → `{{specs_dir}}/design_system/01-foundations.md`
+     - Accessibility → `{{specs_dir}}/design_system/01-foundations.md`
+     - Token changes → `{{specs_dir}}/design_system/01-foundations.md`
+     - Color system (BRD-NNN) → `{{specs_dir}}/design_system/02-brand-identity.md`
+     - Typography → `{{specs_dir}}/design_system/02-brand-identity.md`
+     - Brand voice → `{{specs_dir}}/design_system/02-brand-identity.md`
+     - UX patterns (UXD-NNN) → `{{specs_dir}}/design_system/03-ux-patterns.md`
+     - Component guidelines → `{{specs_dir}}/design_system/04-components.md`
+     - Decision log entries → `{{specs_dir}}/design_system/05-decisions.md`
 4. Maintain decision ID sequences (find highest DP/BRD/UXD-NNN, increment)
 5. Update "Last updated" timestamp
-6. If `specs/ux-preview.html` exists, regenerate it to reflect the updated design system decisions
+6. If `{{specs_dir}}/ux-preview.html` exists, regenerate it to reflect the updated design system decisions
 7. Update "Status" if appropriate
 
 **Important:**

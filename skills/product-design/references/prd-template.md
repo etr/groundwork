@@ -1,6 +1,6 @@
 # PRD Template
 
-Use this template when `specs/product_specs.md` does not exist.
+Use this template when `{{specs_dir}}/product_specs.md` does not exist.
 
 ```markdown
 # EARS-based Product Requirements

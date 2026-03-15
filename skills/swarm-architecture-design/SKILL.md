@@ -45,7 +45,7 @@ Follow the `groundwork:architecture` skill's Step 1 exactly.
 
 Read the product specs and extract non-functional requirements, feature list, EARS requirements, and implicit constraints. Summarize key architectural drivers.
 
-**Detection:** Check for `specs/product_specs.md` first (single file), then `specs/product_specs/` directory. If PRD doesn't exist, prompt user to run `/product-design` first.
+**Detection:** Check for `{{specs_dir}}/product_specs.md` first (single file), then `{{specs_dir}}/product_specs/` directory. If PRD doesn't exist, prompt user to run `/product-design` first.
 
 ## Step 2: Identify Decision Areas
 

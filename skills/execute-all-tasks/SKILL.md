@@ -14,8 +14,8 @@ Executes all remaining tasks in sequence until completion, stopping on first fai
 ### Step 1: Load and Analyze Tasks
 
 1. Read the tasks file to find all tasks:
-   - Single file: `specs/tasks.md`
-   - Directory: `specs/tasks/` (aggregated in sorted order)
+   - Single file: `{{specs_dir}}/tasks.md`
+   - Directory: `{{specs_dir}}/tasks/` (aggregated in sorted order)
 
 2. Parse all tasks and extract:
    - Task ID (e.g., `TASK-001`)
@@ -69,7 +69,7 @@ Each task is executed through 5 phases orchestrated directly from this conversat
 
 For each remaining task in dependency order:
 
-1. **Read the task section** from `specs/tasks.md` (or aggregated from `specs/tasks/`) to extract the full task definition (goal, action items, acceptance criteria, dependencies).
+1. **Read the task section** from `{{specs_dir}}/tasks.md` (or aggregated from `{{specs_dir}}/tasks/`) to extract the full task definition (goal, action items, acceptance criteria, dependencies).
 
 2. **Announce start:** "Starting TASK-NNN: [Title]"
 
@@ -87,10 +87,10 @@ Task definition:
 [goal, action items, acceptance criteria from task file]
 
 Relevant product specs:
-[extracted from specs/product_specs.md or specs/product_specs/]
+[extracted from {{specs_dir}}/product_specs.md or {{specs_dir}}/product_specs/]
 
 Relevant architecture:
-[extracted from specs/architecture.md or specs/architecture/]
+[extracted from {{specs_dir}}/architecture.md or {{specs_dir}}/architecture/]
 
 REQUIREMENTS FOR THE PLAN:
 1. All work happens in worktree .worktrees/TASK-NNN (not main workspace)
@@ -198,11 +198,11 @@ After all agents approve, collect **all findings from every Phase C/D iteration*
 
 If zero unexecuted findings → skip this phase entirely.
 
-Otherwise, persist them to `specs/minor_todos.md`:
+Otherwise, persist them to `{{specs_dir}}/minor_todos.md`:
 
 1. **Task identifier**: Use the current task's `TASK-NNN: Title`.
 
-2. **Create or update `specs/minor_todos.md`**:
+2. **Create or update `{{specs_dir}}/minor_todos.md`**:
    - If the file does not exist, create it with this header:
      ```markdown
      # Minor TODOs

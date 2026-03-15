@@ -6,13 +6,21 @@ user-invocable: false
 
 # Sync Product Specs Skill
 
-Keeps `specs/product_specs.md` synchronized with product decisions made during sessions.
+Keeps `{{specs_dir}}/product_specs.md` synchronized with product decisions made during sessions.
+
+## Step 0: Resolve Project Context
+
+**Before loading specs, ensure project context is resolved:**
+
+1. **Check `.groundwork.yml`:** Does a monorepo config file exist at the repo root?
+   - If yes → Check if `GROUNDWORK_PROJECT` is set. If not, list projects and ask the user to select one.
+2. Proceed with the resolved project context. All `{{specs_dir}}/` paths will resolve to the correct location.
 
 ## File Locations
 
 - **Target:** Product specs (may be single file or directory)
-  - Single file: `specs/product_specs.md`
-  - Directory: `specs/product_specs/` (content split across files)
+  - Single file: `{{specs_dir}}/product_specs.md`
+  - Directory: `{{specs_dir}}/product_specs/` (content split across files)
 - **Context:** Current session history
 
 **Detection:** Check for single file first (takes precedence), then directory.
@@ -126,14 +134,14 @@ On approval:
 
 1. **Detect spec format** - Check if PRD is single file or directory
 2. **Read current content:**
-   - Single file: Read `specs/product_specs.md`
-   - Directory: Aggregate all `.md` files from `specs/product_specs/`
+   - Single file: Read `{{specs_dir}}/product_specs.md`
+   - Directory: Aggregate all `.md` files from `{{specs_dir}}/product_specs/`
 3. **Route updates to appropriate files:**
-   - **Single file mode:** Edit `specs/product_specs.md` directly
+   - **Single file mode:** Edit `{{specs_dir}}/product_specs.md` directly
    - **Directory mode:** Route each update:
-     - Features with ID (e.g., PRD-AUTH-*) → Find or create in `specs/product_specs/03-features/<feature-code>.md`
-     - Open questions → `specs/product_specs/05-open-questions.md`
-     - NFR changes → `specs/product_specs/02-non-functional.md`
+     - Features with ID (e.g., PRD-AUTH-*) → Find or create in `{{specs_dir}}/product_specs/03-features/<feature-code>.md`
+     - Open questions → `{{specs_dir}}/product_specs/05-open-questions.md`
+     - NFR changes → `{{specs_dir}}/product_specs/02-non-functional.md`
      - Updates to existing content → Find the file containing that content
 4. Maintain requirement ID sequence (find highest PRD-XXX-REQ-NNN, increment)
 5. Update "Last updated" timestamp

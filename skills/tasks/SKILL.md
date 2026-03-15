@@ -9,13 +9,21 @@ requires: task-validation-loop
 
 Translates product specs and architecture into actionable implementation tasks.
 
+## Step 0: Resolve Project Context
+
+**Before loading specs, ensure project context is resolved:**
+
+1. **Check `.groundwork.yml`:** Does a monorepo config file exist at the repo root?
+   - If yes → Check if `GROUNDWORK_PROJECT` is set. If not, list projects and ask the user to select one.
+2. Proceed with the resolved project context. All `{{specs_dir}}/` paths will resolve to the correct location.
+
 ## File Locations
 
 - **Input:**
-  - `specs/product_specs.md` (PRD with EARS requirements)
-  - `specs/architecture.md` (architecture with decision records)
-  - `specs/design_system.md` (design system with DP/BRD/UXD decisions) - optional
-- **Output:** `specs/tasks/` directory with per-milestone subdirectories:
+  - `{{specs_dir}}/product_specs.md` (PRD with EARS requirements)
+  - `{{specs_dir}}/architecture.md` (architecture with decision records)
+  - `{{specs_dir}}/design_system.md` (design system with DP/BRD/UXD decisions) - optional
+- **Output:** `{{specs_dir}}/tasks/` directory with per-milestone subdirectories:
   ```
   specs/tasks/
   ├── _index.md          # Overview, milestone summary, dependency graph
@@ -44,17 +52,17 @@ Translates product specs and architecture into actionable implementation tasks.
 Read the input specs (each may be a single file or directory) and extract:
 
 **From PRD:**
-- Single file: `specs/product_specs.md`
-- Directory: `specs/product_specs/` (aggregate all `.md` files)
+- Single file: `{{specs_dir}}/product_specs.md`
+- Directory: `{{specs_dir}}/product_specs/` (aggregate all `.md` files)
 - Extract: Feature list with EARS requirements, Non-functional requirements, Release strategy (Alpha → Beta → GA)
 
 **From Architecture:**
-- Single file: `specs/architecture.md`
-- Directory: `specs/architecture/` (aggregate all `.md` files)
+- Single file: `{{specs_dir}}/architecture.md`
+- Directory: `{{specs_dir}}/architecture/` (aggregate all `.md` files)
 - Extract: Component list and responsibilities, Technology choices, Decision records (understand constraints)
 
 **From Design System (if exists):**
-- Single file: `specs/design_system.md`
+- Single file: `{{specs_dir}}/design_system.md`
 - Extract: Design principles (DP-NNN), Brand decisions (BRD-NNN), UX patterns (UXD-NNN)
 - Use for: Design-related tasks, component styling tasks, accessibility requirements
 
@@ -71,7 +79,7 @@ If design system exists, incorporate design context into UI/frontend tasks.
 
 Before defining milestones, check if tasks already exist:
 
-1. Check for `specs/tasks/_index.md` or `specs/tasks.md`
+1. Check for `{{specs_dir}}/tasks/_index.md` or `{{specs_dir}}/tasks.md`
 2. If found, read to understand existing milestones, task numbering, and status
 
 **If existing tasks found:**
@@ -304,14 +312,14 @@ Present the complete task list organized by milestone. Ask:
 > - Do the dependencies look right?
 > - Should any tasks be split or combined?"
 
-Iterate until user approves, then write task files to `specs/tasks/`.
+Iterate until user approves, then write task files to `{{specs_dir}}/tasks/`.
 
 **Output structure:**
-1. Create or update `specs/tasks/_index.md` with overview, milestone summary table, dependency graph, **task status table**, and critical path
-2. For each new milestone, create a directory: `specs/tasks/M{N}-{slug}/` (e.g., `M1-core-auth/`)
-3. Write one file per task: `specs/tasks/M{N}-{slug}/TASK-{NNN}.md`
+1. Create or update `{{specs_dir}}/tasks/_index.md` with overview, milestone summary table, dependency graph, **task status table**, and critical path
+2. For each new milestone, create a directory: `{{specs_dir}}/tasks/M{N}-{slug}/` (e.g., `M1-core-auth/`)
+3. Write one file per task: `{{specs_dir}}/tasks/M{N}-{slug}/TASK-{NNN}.md`
 4. Each task file is self-contained — includes all fields from the Required Task Format
-5. Write or update `specs/tasks/parking-lot.md` for deferred tasks (if any)
+5. Write or update `{{specs_dir}}/tasks/parking-lot.md` for deferred tasks (if any)
 
 **Task status table in `_index.md`** (required — used by `next-task` to find work without reading every task file):
 ```markdown
@@ -376,7 +384,7 @@ Common task types to ensure coverage:
 
 ### Design System Tasks
 
-When `specs/design_system.md` exists, include design-specific tasks:
+When `{{specs_dir}}/design_system.md` exists, include design-specific tasks:
 
 | Task Type | Related Decisions | Example |
 |-----------|-------------------|---------|

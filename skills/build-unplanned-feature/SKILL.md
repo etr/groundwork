@@ -9,6 +9,14 @@ user-invocable: false
 
 Enables ad-hoc feature development without existing task definitions. Combines requirement gathering, worktree isolation, TDD implementation, multi-agent validation, and merge.
 
+## Step 0: Resolve Project Context
+
+**Before loading specs, ensure project context is resolved:**
+
+1. **Check `.groundwork.yml`:** Does a monorepo config file exist at the repo root?
+   - If yes → Check if `GROUNDWORK_PROJECT` is set. If not, list projects and ask the user to select one.
+2. Proceed with the resolved project context. All `{{specs_dir}}/` paths will resolve to the correct location.
+
 ## Workflow
 
 ### Step 1: Parse Feature Description
@@ -24,9 +32,9 @@ Store the raw description for clarification.
 Before clarifying requirements, check for existing project specs so the clarification can detect contradictions and the implementation can follow established patterns.
 
 **Check for and read (if they exist):**
-- `specs/product_specs.md` (or `specs/product_specs/` directory) → `PRD_CONTEXT`
-- `specs/architecture.md` (or `specs/architecture/` directory) → `ARCHITECTURE_CONTEXT`
-- `specs/design_system.md` → `DESIGN_CONTEXT`
+- `{{specs_dir}}/product_specs.md` (or `{{specs_dir}}/product_specs/` directory) → `PRD_CONTEXT`
+- `{{specs_dir}}/architecture.md` (or `{{specs_dir}}/architecture/` directory) → `ARCHITECTURE_CONTEXT`
+- `{{specs_dir}}/design_system.md` → `DESIGN_CONTEXT`
 
 For each, check single file first, then directory. If a directory, aggregate all `.md` files.
 
