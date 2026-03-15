@@ -34,3 +34,5 @@ using-groundwork = drop
 help-with-groundwork = drop
 check-groundwork = drop
 skills-of-groundwork = drop
+swarm-debugging = drop
+swarm-architecture-design = drop

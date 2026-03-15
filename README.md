@@ -193,6 +193,7 @@ Investigate and resolve issues systematically.
 | Command | Args | Description | When to Use |
 |---------|------|-------------|-------------|
 | `/debug` | `[bug description]` | Systematic 5-phase debugging workflow | Investigating bugs or test failures |
+| `/swarm-debug` | `[bug description]` | Parallel hypothesis investigation with agent teams | Multiple plausible root causes, needs adversarial testing |
 
 ### Verification Commands
 
@@ -272,6 +273,16 @@ Systematic 5-phase investigation:
 
 Phases: Observe → Hypothesize → Predict → Test → Conclude. No fix is applied until the root cause is confirmed.
 
+#### Swarm Debugging (Claude Code only)
+
+When a bug has multiple plausible root causes, spawn an agent team to investigate hypotheses in parallel:
+
+```
+/swarm-debug Login fails silently when session cookie is expired
+```
+
+Each teammate investigates a different hypothesis and actively tries to disprove the others. Requires `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` to be enabled — falls back to standard debugging otherwise.
+
 ### Verification
 
 Check quality and alignment at any point:
@@ -313,6 +324,7 @@ Skills are internal workflow definitions invoked automatically by the model when
 | Skill | Description |
 |-------|-------------|
 | `debugging` | Systematic root cause analysis before any fix is applied |
+| `swarm-debugging` | Parallel hypothesis investigation using agent teams (Claude Code only, requires `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS`) |
 
 ### Verification
 
