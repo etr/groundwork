@@ -176,6 +176,39 @@ Also escalate when:
 - Conflicting requirements between agents
 - Missing information to implement fix
 
+### 5.5. Persist Unexecuted Findings
+
+After all agents approve, collect **all findings from every iteration** across all agents. Exclude findings that were fixed during the fix-and-retry loop (Step 4 tracks which finding each fix addresses). The remainder are **unexecuted findings**.
+
+If zero unexecuted findings → skip this step entirely.
+
+Otherwise, persist them to `specs/minor_todos.md`:
+
+1. **Determine task identifier**: Extract from the task definition context (e.g., `TASK-NNN: Title`). If no task context is available, use `"manual-validation"`.
+
+2. **Create or update `specs/minor_todos.md`**:
+   - If the file does not exist, create it with this header:
+     ```markdown
+     # Minor TODOs
+
+     Accumulated unexecuted findings from validation runs. Check items off as addressed.
+     ```
+   - If the file exists, read it for deduplication.
+
+3. **Deduplicate**: For each unexecuted finding, check if an existing **unchecked** entry matches on: agent name + file path + finding text (exclude line numbers from comparison since they shift between runs). Skip duplicates.
+
+4. **Format new entries** as a run block:
+   ```markdown
+   ---
+
+   ## Run: YYYY-MM-DD | TASK-NNN: Title
+
+   - [ ] `minor` **agent-name** | `file:line` | category: finding -- recommendation
+   - [ ] `major` **agent-name** | `file:line` | category: finding -- recommendation
+   ```
+
+5. **Prepend** the new run block after the file header (newest runs first).
+
 ### 6. Return Result
 
 **On PASS:**
@@ -191,8 +224,7 @@ All 8 agents approved after [N] iteration(s).
 Issues fixed:
 - [Iteration N] Agent: Description
 
-Minor suggestions (optional):
-- ...
+Unexecuted findings: [N] finding(s) persisted to `specs/minor_todos.md`
 ```
 
 Return control to calling skill.

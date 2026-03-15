@@ -192,6 +192,39 @@ If any agent returns `request-changes`:
 4. Repeat until all agents approve
 5. **Stuck detection:** If the same finding persists after 3 iterations, report it and continue (do not block indefinitely)
 
+#### Phase D.5: Persist Unexecuted Findings
+
+After all agents approve, collect **all findings from every Phase C/D iteration** across all agents. Exclude findings that were fixed by the general-purpose fix agent in Phase D. The remainder are **unexecuted findings**.
+
+If zero unexecuted findings → skip this phase entirely.
+
+Otherwise, persist them to `specs/minor_todos.md`:
+
+1. **Task identifier**: Use the current task's `TASK-NNN: Title`.
+
+2. **Create or update `specs/minor_todos.md`**:
+   - If the file does not exist, create it with this header:
+     ```markdown
+     # Minor TODOs
+
+     Accumulated unexecuted findings from validation runs. Check items off as addressed.
+     ```
+   - If the file exists, read it for deduplication.
+
+3. **Deduplicate**: For each unexecuted finding, check if an existing **unchecked** entry matches on: agent name + file path + finding text (exclude line numbers from comparison since they shift between runs). Skip duplicates.
+
+4. **Format new entries** as a run block:
+   ```markdown
+   ---
+
+   ## Run: YYYY-MM-DD | TASK-NNN: Title
+
+   - [ ] `minor` **agent-name** | `file:line` | category: finding -- recommendation
+   - [ ] `major` **agent-name** | `file:line` | category: finding -- recommendation
+   ```
+
+5. **Prepend** the new run block after the file header (newest runs first).
+
 #### Phase E: Merge
 
 From the project root (NOT the worktree):
