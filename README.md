@@ -152,6 +152,16 @@ Skip formal planning and go straight to building:
 /build-unplanned Add user avatar upload with image resizing
 ```
 
+### Monorepo Project
+
+Set up a monorepo and start planning for a specific project:
+
+```
+/setup-repo               # Detect monorepo, create .groundwork.yml
+/select-project           # Choose which project to work on
+/design-product           # Define requirements for selected project
+```
+
 ### Existing Codebase
 
 Analyze existing code to generate initial specifications:
@@ -174,6 +184,8 @@ Define what to build and how to build it.
 | `/design-architecture` | `[feature-name]` | Design technical architecture with decision records | After PRD exists, need technical design |
 | `/ux-design` | `[product-name]` | Establish design system — foundations, brand, UX patterns | Need visual/UX consistency for UI projects |
 | `/create-tasks` | `[filter]` | Generate implementation tasks from PRD + architecture | After specs exist, ready to plan implementation |
+| `/setup-repo` | — | Configure repo — detect single-project or monorepo | First time using Groundwork in a repo |
+| `/swarm-design-architecture` | `[feature-name]` | Parallel adversarial architecture design with agent teams | Multiple viable tech options, need balanced comparison |
 
 ### Implementation Commands
 
@@ -185,6 +197,7 @@ Execute tasks and build features.
 | `/work-on-next-task` | — | Execute the next unblocked task automatically | Working through tasks sequentially |
 | `/just-do-it` | — | Execute all remaining tasks in dependency order | Want batch execution of all remaining work |
 | `/build-unplanned` | `[description]` | Build feature from description — no task definitions needed | Quick feature without formal planning |
+| `/select-project` | `[project-name]` | Switch to a different project in a monorepo | Working across multiple projects |
 
 ### Debugging Commands
 
@@ -292,6 +305,40 @@ Check quality and alignment at any point:
 /check-specs-alignment       # Audit drift between code and specs
 ```
 
+## Monorepo Support
+
+Groundwork supports monorepos — repositories containing multiple projects, each with their own specs and tasks.
+
+### Setup
+
+Run `/setup-repo` to configure your repository. Groundwork detects common monorepo patterns (workspace configs, `apps/`, `packages/`, `services/` directories) and asks you to confirm the structure. For monorepos, it creates a `.groundwork.yml` configuration file at the repo root.
+
+### Configuration File
+
+```yaml
+version: 1
+projects:
+  web-app:
+    path: apps/web-app
+  api-server:
+    path: services/api
+  shared-lib:
+    path: packages/shared
+```
+
+### Switching Projects
+
+Use `/select-project` to switch between projects. This sets the active project context so all planning, implementation, and sync commands operate on the correct project. Selection persists across sessions.
+
+You can also pass a project name directly: `/select-project api-server`
+
+### How It Works
+
+- Specs are stored per-project: `<project-path>/specs/`
+- All planning, implementation, and sync commands are monorepo-aware
+- Project selection persists across sessions via `~/.claude/groundwork-state/`
+- Environment variables: `GROUNDWORK_PROJECT` (project name), `GROUNDWORK_PROJECT_ROOT` (absolute path)
+
 ## Skills
 
 Skills are internal workflow definitions invoked automatically by the model when you run commands. You don't need to call skills directly (they are, in fact, hidden) — commands handle this for you.
@@ -307,6 +354,10 @@ Skills are internal workflow definitions invoked automatically by the model when
 | `tasks` | Generate implementation tasks from product specs and architecture |
 | `task-validation-loop` | Multi-agent verification that tasks cover PRD, follow architecture, and respect design |
 | `using-groundwork` | Introduction to finding and using Groundwork skills |
+| `swarm-architecture-design` | Parallel adversarial architecture design with advocate agents |
+| `skills-of-groundwork` | Dynamically discover and list all available skills |
+| `help-with-groundwork` | List all available commands, skills, and agents |
+| `check-groundwork` | Validate the Groundwork plugin for common issues |
 
 ### Implementation
 
@@ -318,6 +369,9 @@ Skills are internal workflow definitions invoked automatically by the model when
 | `build-unplanned-feature` | Build a feature from description — requirement gathering, TDD, and validation |
 | `use-git-worktree` | Create isolated git worktrees for feature work |
 | `test-driven-development` | Red-Green-Refactor with coverage targets |
+| `execute-all-tasks` | Execute all remaining tasks in batch mode with dependency ordering |
+| `repo-setup` | Configure repo structure for single-project or monorepo |
+| `project-selector` | Switch between projects in a monorepo |
 
 ### Debugging
 
@@ -380,6 +434,12 @@ These run after task list creation via the `task-validation-loop` skill:
 | Agent | Description |
 |-------|-------------|
 | `prd-architecture-checker` | Validates architecture proposals cover all PRD requirements and NFRs |
+
+#### Task Execution (1 agent)
+
+| Agent | Description |
+|-------|-------------|
+| `task-executor` | Executes task implementation with worktree isolation, TDD, and skill preloading |
 
 #### Research (1 agent)
 
