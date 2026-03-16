@@ -69,7 +69,7 @@ For non-trivial changes, ask:
 
 > "Is there a more elegant way to implement this?"
 
-**Read `docs/clean-code-principles.md` now** using the Read tool, then apply its guidance on:
+**Read `${CLAUDE_PLUGIN_ROOT}/docs/clean-code-principles.md` now** using the Read tool, then apply its guidance on:
 - Simpler abstractions
 - Better naming
 - Reduced complexity

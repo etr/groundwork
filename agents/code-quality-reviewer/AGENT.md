@@ -45,7 +45,7 @@ You are a code quality reviewer. Your job is to analyze code changes and provide
 - Proper cleanup in error paths
 
 ### 6. Clean Code Standards
-**Read `docs/clean-code-principles.md` using the Read tool before evaluating.** Apply its principles when evaluating:
+**Read `${CLAUDE_PLUGIN_ROOT}/docs/clean-code-principles.md` using the Read tool before evaluating.** Apply its principles when evaluating:
 - Naming quality (Names Rules)
 - Function design (Functions Rules)
 - Code structure (Source Code Structure)
