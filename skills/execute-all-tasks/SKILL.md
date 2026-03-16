@@ -155,7 +155,7 @@ git diff --name-only HEAD~1    # changed file paths
 git diff --stat HEAD~1          # diff stat summary
 ```
 
-Then launch all 8 validation agents **in parallel** using the Task tool:
+Then launch all 9 validation agents **in parallel** using the Task tool:
 
 ```
 Task(subagent_type="groundwork:code-quality-reviewer:code-quality-reviewer", description="Review TASK-NNN quality", prompt="...")
@@ -165,6 +165,7 @@ Task(subagent_type="groundwork:architecture-alignment-checker:architecture-align
 Task(subagent_type="groundwork:code-simplifier:code-simplifier", description="Simplify TASK-NNN code", prompt="...")
 Task(subagent_type="groundwork:housekeeper:housekeeper", description="Check TASK-NNN housekeeping", prompt="...")
 Task(subagent_type="groundwork:performance-reviewer:performance-reviewer", description="Review TASK-NNN performance", prompt="...")
+Task(subagent_type="groundwork:test-quality-reviewer:test-quality-reviewer", description="Review TASK-NNN test quality", prompt="...")
 Task(subagent_type="groundwork:design-consistency-checker:design-consistency-checker", description="Check TASK-NNN design", prompt="...")
 ```
 
@@ -188,7 +189,7 @@ If any agent returns `request-changes`:
    Output: RESULT: FIXED | [summary of fixes]"
    )
    ```
-3. Re-run all 8 validation agents (same as Phase C)
+3. Re-run all 9 validation agents (same as Phase C)
 4. Repeat until all agents approve
 5. **Stuck detection:** If the same finding persists after 3 iterations, report it and continue (do not block indefinitely)
 

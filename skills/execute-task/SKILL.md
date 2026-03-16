@@ -31,7 +31,7 @@ user-invocable: false
    ## Execution Workflow
    1. **Worktree** — Create `.worktrees/TASK-NNN` branch `task/TASK-NNN`
    2. **TDD** — For each action item: write failing test → implement → verify
-   3. **Validation** — Run 8 parallel validation agents using the `groundwork:validation-loop` skill (code quality, security, spec alignment, architecture, simplification, housekeeping, performance, design consistency)
+   3. **Validation** — Run 9 parallel validation agents using the `groundwork:validation-loop` skill (code quality, test quality, security, spec alignment, architecture, simplification, housekeeping, performance, design consistency)
    4. **Merge** — Merge branch into base, clean up worktree
 
    ## Implementation Plan
@@ -252,11 +252,11 @@ Present summary to the user:
 
 ### Step 7.5: Validation (Direct Skill Call)
 
-**Call the validation-loop skill directly.** Do NOT wrap this in a subagent — this skill runs in the main conversation, which CAN spawn the 8 validation subagents it needs.
+**Call the validation-loop skill directly.** Do NOT wrap this in a subagent — this skill runs in the main conversation, which CAN spawn the 9 validation subagents it needs.
 
 1. `cd` into the worktree path from Step 7
 2. Call: `Skill(skill='groundwork:validation-loop')`
-3. The validation-loop skill will run 8 verification agents in parallel and fix issues autonomously.
+3. The validation-loop skill will run 9 verification agents in parallel and fix issues autonomously.
 
 **After validation-loop completes:**
 - All agents approved → Proceed to Step 7.7

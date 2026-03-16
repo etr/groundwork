@@ -201,7 +201,7 @@ Validate code quality and spec alignment.
 
 | Command | Args | Description | When to Use |
 |---------|------|-------------|-------------|
-| `/validate` | — | Re-run 8-agent verification on current changes | Verify code quality after manual changes |
+| `/validate` | — | Re-run 9-agent verification on current changes | Verify code quality after manual changes |
 | `/check-specs-alignment` | `[context]` | Audit code alignment with PRD and architecture | Periodic drift detection |
 
 ### Synchronization Commands
@@ -288,7 +288,7 @@ Each teammate investigates a different hypothesis and actively tries to disprove
 Check quality and alignment at any point:
 
 ```
-/validate                    # Run all 8 verification agents
+/validate                    # Run all 9 verification agents
 /check-specs-alignment       # Audit drift between code and specs
 ```
 
@@ -349,13 +349,14 @@ For contributors and curious users — how the plugin works under the hood.
 
 Agents are specialized sub-processes that run verification and validation tasks. They are invoked automatically by skills like `validation-loop` and `task-validation-loop`.
 
-#### Implementation Verification (8 agents)
+#### Implementation Verification (9 agents)
 
 These run after task implementation via the `validation-loop` skill:
 
 | Agent | Description |
 |-------|-------------|
 | `code-quality-reviewer` | Reviews code for quality, readability, elegance, and test coverage |
+| `test-quality-reviewer` | Reviews test quality — structural correctness, coverage completeness, redundancy, best practices |
 | `security-reviewer` | Reviews for security vulnerabilities — OWASP Top 10, input validation, auth issues |
 | `spec-alignment-checker` | Verifies implementation aligns with task definition and product specs |
 | `architecture-alignment-checker` | Verifies implementation aligns with architecture decisions and technology choices |

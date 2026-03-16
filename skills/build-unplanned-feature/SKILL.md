@@ -171,11 +171,11 @@ Implementation is dispatched to the **task-executor agent** with a fresh context
 
 ### Step 7: Validation (Direct Skill Call)
 
-**Call the validation-loop skill directly.** Do NOT wrap this in a subagent — this skill runs in the main conversation, which CAN spawn the 8 validation subagents it needs.
+**Call the validation-loop skill directly.** Do NOT wrap this in a subagent — this skill runs in the main conversation, which CAN spawn the 9 validation subagents it needs.
 
 1. `cd` into the worktree path from Step 6
 2. Call: `Skill(skill='groundwork:validation-loop')`
-3. The validation-loop skill will run 8 verification agents in parallel and fix issues autonomously.
+3. The validation-loop skill will run 9 verification agents in parallel and fix issues autonomously.
 
 **After validation-loop completes:**
 - All agents approved → Proceed to Step 7

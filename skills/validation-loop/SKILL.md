@@ -6,7 +6,7 @@ user-invocable: false
 
 # Validation Loop Skill
 
-Autonomous verification loop that runs 8 specialized agents and fixes issues until all approve.
+Autonomous verification loop that runs 9 specialized agents and fixes issues until all approve.
 
 ## Prerequisites
 
@@ -53,17 +53,19 @@ Based on context gathered, skip agents whose primary review subject does not exi
 - `security-reviewer` — always applicable to code changes
 - `code-simplifier` — always applicable to code changes
 - `performance-reviewer` — always applicable to code changes
+- `test-quality-reviewer` — always applicable to code changes
 - `housekeeper` — handles missing paths gracefully, still checks task status
 
 Record skipped agents in the aggregation table with verdict `skipped` and a note explaining why.
 
 ### 2. Launch Verification Agents
 
-Use Task tool to launch all 8 agents in parallel:
+Use Task tool to launch all 9 agents in parallel:
 
 | Agent (`subagent_type`) | Context to Provide |
 |-------------------------|-------------------|
 | `groundwork:code-quality-reviewer:code-quality-reviewer` | `changed_file_paths`, `diff_stat`, `task_definition`, `test_file_paths` |
+| `groundwork:test-quality-reviewer:test-quality-reviewer` | `changed_file_paths`, `diff_stat`, `task_definition`, `test_file_paths` |
 | `groundwork:security-reviewer:security-reviewer` | `changed_file_paths`, `diff_stat`, `task_definition` |
 | `groundwork:spec-alignment-checker:spec-alignment-checker` | `changed_file_paths`, `diff_stat`, `task_definition`, `specs_path` |
 | `groundwork:architecture-alignment-checker:architecture-alignment-checker` | `changed_file_paths`, `diff_stat`, `task_definition`, `architecture_path` |
@@ -92,6 +94,7 @@ Each returns JSON:
 | Agent | Score | Verdict | Critical | Major | Minor |
 |-------|-------|---------|----------|-------|-------|
 | Code Quality | 85 | approve | 0 | 1 | 2 |
+| Test Quality | 88 | approve | 0 | 1 | 0 |
 | Security | 95 | approve | 0 | 0 | 1 |
 | Spec Alignment | 90 | approve | 0 | 1 | 0 |
 | Architecture | 88 | approve | 0 | 1 | 1 |
@@ -128,7 +131,7 @@ Each returns JSON:
    - Run tests - must pass
    - Confirm acceptance criteria
 
-4. **Re-run Agent Validation** — Re-launch ONLY agents that returned `request-changes` in the previous iteration.
+4. **Re-run Agent Validation** — Always re-launch the code-simplifier and quality-reviewer. For the other agents, re-launch ONLY agents that returned `request-changes` in the previous iteration.
 
    **Domain spillover**: If a fix modified code relevant to an agent that previously approved, re-run that agent too:
 
@@ -138,7 +141,7 @@ Each returns JSON:
    | Layer boundaries, component structure | architecture-alignment-checker |
    | CSS, design tokens, accessibility | design-consistency-checker |
    | Spec/requirement behavior | spec-alignment-checker |
-   | Test files | code-quality-reviewer |
+   | Test files | code-quality-reviewer, test-quality-reviewer |
    | Task status, docs, spec files | housekeeper |
    | Hot paths, algorithmic changes | performance-reviewer |
    | Code structure, naming | code-simplifier |
@@ -223,7 +226,7 @@ Otherwise, persist them to `{{specs_dir}}/minor_todos.md`:
 ```markdown
 ## Verification PASSED
 
-All 8 agents approved after [N] iteration(s).
+All 9 agents approved after [N] iteration(s).
 
 | Agent | Score | Verdict | Summary |
 |-------|-------|---------|---------|
