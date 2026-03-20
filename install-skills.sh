@@ -35,6 +35,7 @@ Targets (at least one required):
   --codex          Install to Codex CLI
   --opencode       Install to OpenCode
   --kiro           Install to Kiro
+  --pi             Install to Pi coding agent
 
 Scope (exactly one required):
   --global         Install to user-level config directory
@@ -53,6 +54,7 @@ Examples:
   ./install-skills.sh --codex --global --dry-run
   ./install-skills.sh --kiro --project --force
   ./install-skills.sh --codex --opencode --global
+  ./install-skills.sh --pi --global
   ./install-skills.sh --claude-code --global --allow-manual-claude-code-install
 EOF
 }
@@ -65,6 +67,7 @@ parse_args() {
             --codex)       TARGETS+=("codex") ;;
             --opencode)    TARGETS+=("opencode") ;;
             --kiro)        TARGETS+=("kiro") ;;
+            --pi)          TARGETS+=("pi") ;;
             --global)      SCOPE="global" ;;
             --project)     SCOPE="project" ;;
             --force)       FORCE=true ;;
@@ -79,7 +82,7 @@ parse_args() {
     done
 
     if [[ ${#TARGETS[@]} -eq 0 ]]; then
-        echo "Error: At least one target required (--claude-code, --codex, --opencode, --kiro)"
+        echo "Error: At least one target required (--claude-code, --codex, --opencode, --kiro, --pi)"
         exit 1
     fi
 
@@ -184,6 +187,9 @@ get_dest_base() {
         kiro)
             if [[ "$SCOPE" == "global" ]]; then echo "$HOME/.kiro"
             else echo ".kiro"; fi ;;
+        pi)
+            if [[ "$SCOPE" == "global" ]]; then echo "$HOME/.pi/agent"
+            else echo ".pi"; fi ;;
     esac
 }
 
@@ -258,7 +264,7 @@ transform_frontmatter() {
     case "$component" in
         skill)
             case "$target" in
-                codex|kiro)
+                codex|kiro|pi)
                     echo "name: $installed_name"
                     echo "description: $desc"
                     ;;
@@ -281,6 +287,29 @@ transform_body() {
     local target="$1" content="$2"
     local task_repl="Adapt to your agent/automation capabilities."
 
+    # Pi-specific tool name transforms (run before shared pipeline)
+    if [[ "$target" == "pi" ]]; then
+        content=$(echo "$content" | sed \
+            -e 's|\bRead\b tool|read tool|g' \
+            -e 's|\bEdit\b tool|edit tool|g' \
+            -e 's|\bWrite\b tool|write tool|g' \
+            -e 's|\bBash\b tool|bash tool|g' \
+            -e 's|\bGlob\b tool|find tool|g' \
+            -e 's|\bGrep\b tool|grep tool|g' \
+            -e 's|`Read`|`read`|g' \
+            -e 's|`Edit`|`edit`|g' \
+            -e 's|`Write`|`write`|g' \
+            -e 's|`Bash`|`bash`|g' \
+            -e 's|`Glob`|`find`|g' \
+            -e 's|`Grep`|`grep`|g' \
+            -e 's|`Task`|`groundwork_agent`|g' \
+            -e 's|the Task tool|the groundwork_agent tool|g' \
+            -e 's|Task tool|groundwork_agent tool|g' \
+            -e 's|Use Task tool|Use groundwork_agent tool|g' \
+            -e 's|subagent_type|agent|g' \
+        )
+    fi
+
     # Build appendix-aware sed expressions conditionally per target
     local appendix_seds=()
     if [[ "$target" == "opencode" ]]; then
@@ -293,7 +322,7 @@ transform_body() {
             -e 's|[Ii]nvoke `\([^`]*\)` skill|Follow the \1 workflow steps (see appendix below)|g'
         )
     else
-        # Codex/Kiro: no inlining — preserve skill name reference for BODY_SED_CMDS mapping
+        # Codex/Kiro/Pi: no inlining — preserve skill name reference for BODY_SED_CMDS mapping
         appendix_seds=(
             -e 's|\*\*You MUST call the Skill tool now:\*\* `\([^`]*\)`|You MUST call the skill `\1` now.|g'
             -e 's|Invoke the `\(groundwork:[^`]*\)` skill|Follow the workflow steps in skill `\1`|g'
@@ -454,6 +483,7 @@ $new_body"
             codex)    dest="$dest_base/skills/$installed/SKILL.md" ;;
             opencode) dest="$dest_base/skills/$installed/SKILL.md" ;;
             kiro)     dest="$dest_base/skills/$installed/SKILL.md" ;;
+            pi)       dest="$dest_base/skills/$installed/SKILL.md" ;;
         esac
 
         write_file "$dest" "$result" "skill"
@@ -521,10 +551,44 @@ $new_body" "agent"
                 write_file "$dest_base/agents/${agent_name}.json" "$json_content" "agent config"
                 write_file "$dest_base/agents/${agent_name}-prompt.md" "$new_body" "agent prompt"
                 ;;
+            pi)
+                # Install as a skill with review- prefix (Pi has no native agent concept)
+                local installed_name="review-${agent_name}"
+                local new_fm
+                new_fm=$(transform_frontmatter "$target" "skill" "$content" "$installed_name")
+                local dest="$dest_base/skills/${installed_name}/SKILL.md"
+                write_file "$dest" "$new_fm
+$new_body" "review agent"
+                ;;
         esac
 
         ((AGENT_COUNT++)) || true
     done
+}
+
+# ============================================================
+# Install: Pi Extension
+# ============================================================
+
+install_pi_extension() {
+    local dest_base
+    dest_base=$(get_dest_base "pi")
+    local ext_dir="$dest_base/extensions/groundwork"
+
+    if [[ "$DRY_RUN" == true ]]; then
+        echo "  [dry-run] $ext_dir/ (Pi extension)"
+        return 0
+    fi
+
+    # Copy the pre-built extension from source
+    if [[ -d "$SOURCE_DIR/pi-extension" ]]; then
+        mkdir -p "$ext_dir/lib"
+        cp "$SOURCE_DIR/pi-extension/"*.ts "$ext_dir/" 2>/dev/null || true
+        cp "$SOURCE_DIR/pi-extension/lib/"*.ts "$ext_dir/lib/" 2>/dev/null || true
+        echo "  [wrote] $ext_dir/ (Pi extension)"
+    else
+        echo "  [warn] Pi extension source not found at $SOURCE_DIR/pi-extension"
+    fi
 }
 
 # ============================================================
@@ -535,12 +599,12 @@ print_summary() {
     local target="$1"
     echo ""
     echo "  Summary for $target:"
-    if [[ "$target" == "codex" && "$SKILLS_ONLY" != true && $AGENT_COUNT -gt 0 ]]; then
+    if [[ ("$target" == "codex" || "$target" == "pi") && "$SKILLS_ONLY" != true && $AGENT_COUNT -gt 0 ]]; then
         echo "    Skills installed: $((SKILL_COUNT + AGENT_COUNT)) (includes $AGENT_COUNT review agents)"
     else
         echo "    Skills installed: $SKILL_COUNT"
     fi
-    if [[ "$SKILLS_ONLY" != true && "$target" != "codex" ]]; then
+    if [[ "$SKILLS_ONLY" != true && "$target" != "codex" && "$target" != "pi" ]]; then
         echo "    Agents installed: $AGENT_COUNT"
     fi
 }
@@ -592,6 +656,11 @@ main() {
         if [[ "$SKILLS_ONLY" != true ]]; then
             install_commands_for_target "$target"
             install_agents_for_target "$target"
+        fi
+
+        # Pi: install the TypeScript extension for lifecycle integration
+        if [[ "$target" == "pi" ]]; then
+            install_pi_extension
         fi
 
         print_summary "$target"
