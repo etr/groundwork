@@ -56,8 +56,19 @@ The tonal direction is derived from the product's persona, vision, and competiti
 
 1. **Check `.groundwork.yml`:** Does a monorepo config file exist at the repo root?
    - If yes → Check if `GROUNDWORK_PROJECT` is set. If not, list projects and ask the user to select one. Set the project context before continuing.
-   - If no → Continue to step 2.
-2. **Check `{{specs_dir}}/`:** Does a specs directory exist?
+   - If no → Continue to item 3.
+2. **CWD mismatch check (monorepo only):**
+   - Skip if not in monorepo mode or if the project was just selected in item 1 above.
+   - If CWD is the repo root → fine, proceed.
+   - Check which project's path CWD falls inside (compare against all projects in `.groundwork.yml`).
+   - If CWD is inside the selected project's path → fine, proceed.
+   - If CWD is inside a different project's path → warn via `AskUserQuestion`:
+     > "You're working from `<cwd>` (inside **[cwd-project]**), but the selected Groundwork project is **[selected-project]** (`[selected-project-path]/`). What would you like to do?"
+     > - "Switch to [cwd-project]"
+     > - "Stay with [selected-project]"
+     If the user switches, invoke `Skill(skill="groundwork:project-selector")`.
+   - If CWD doesn't match any project → proceed without warning (shared directory).
+3. **Check `{{specs_dir}}/`:** Does a specs directory exist?
    - If yes → Single-project repo, proceed normally.
    - If no → Ask the user: "Is this a single-project repo or a monorepo with multiple projects?"
      - **Single project** → Proceed normally (specs will be created at `{{specs_dir}}/`)

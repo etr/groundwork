@@ -22,6 +22,16 @@ main() {
 STATE_DIR="${HOME}/.claude/groundwork-state"
 mkdir -p "$STATE_DIR" 2>/dev/null || true
 
+# Compute TTY-based session ID for per-instance isolation
+SESSION_TTY=$(ps -o tty= -p $PPID 2>/dev/null | tr -d ' ')
+if [ -n "$SESSION_TTY" ]; then
+  SESSION_TTY_HASH=$(echo -n "$SESSION_TTY" | md5sum 2>/dev/null | cut -c1-12)
+  # Fallback for macOS where md5sum may not exist
+  if [ -z "$SESSION_TTY_HASH" ]; then
+    SESSION_TTY_HASH=$(echo -n "$SESSION_TTY" | md5 2>/dev/null | cut -c1-12)
+  fi
+fi
+
 # Loaded announcement
 loaded_message="**Groundwork loaded.** "
 
@@ -73,12 +83,26 @@ fi
 # Session State Restoration
 # ============================================
 restored_state=""
-PRESERVED_STATE_FILE="${STATE_DIR}/preserved-context.txt"
+
+# Try session-specific preserved context first, then fall back to legacy
+if [ -n "$SESSION_TTY_HASH" ]; then
+  PRESERVED_STATE_FILE="${STATE_DIR}/preserved-context-${SESSION_TTY_HASH}.txt"
+else
+  PRESERVED_STATE_FILE="${STATE_DIR}/preserved-context.txt"
+fi
+
 if [ -f "$PRESERVED_STATE_FILE" ]; then
   preserved_content=$(cat "$PRESERVED_STATE_FILE" 2>/dev/null || echo "")
   if [ -n "$preserved_content" ]; then
     restored_state="\n\n**Restored from previous session:** ${preserved_content}"
     rm -f "$PRESERVED_STATE_FILE" 2>/dev/null || true
+  fi
+elif [ -n "$SESSION_TTY_HASH" ] && [ -f "${STATE_DIR}/preserved-context.txt" ]; then
+  # Migration fallback: read legacy preserved context
+  preserved_content=$(cat "${STATE_DIR}/preserved-context.txt" 2>/dev/null || echo "")
+  if [ -n "$preserved_content" ]; then
+    restored_state="\n\n**Restored from previous session:** ${preserved_content}"
+    rm -f "${STATE_DIR}/preserved-context.txt" 2>/dev/null || true
   fi
 fi
 
@@ -89,7 +113,7 @@ specs_notice=""
 project_context=""
 
 if [ -f "${PLUGIN_ROOT}/lib/detect-project-state.js" ]; then
-  project_state=$(timeout 3 node "${PLUGIN_ROOT}/lib/detect-project-state.js" 2>/dev/null || echo '{}')
+  project_state=$(GROUNDWORK_SESSION_TTY="$SESSION_TTY" timeout 3 node "${PLUGIN_ROOT}/lib/detect-project-state.js" 2>/dev/null || echo '{}')
 
   # Parse project state JSON
   is_monorepo=$(echo "$project_state" | grep -o '"isMonorepo":true' | head -1)
@@ -159,8 +183,13 @@ specs_notice="${specs_notice}${gh_warning}${update_notice}${restored_state}"
 specs_content=""
 if $has_prd || $has_arch; then
   if [ -f "${PLUGIN_ROOT}/lib/inject-specs.js" ]; then
-    specs_content=$(timeout 3 node "${PLUGIN_ROOT}/lib/inject-specs.js" 2>/dev/null || echo '')
+    specs_content=$(GROUNDWORK_SESSION_TTY="$SESSION_TTY" timeout 3 node "${PLUGIN_ROOT}/lib/inject-specs.js" 2>/dev/null || echo '')
   fi
+fi
+
+# Clean up stale session files (best-effort, non-blocking)
+if [ -n "$SESSION_TTY" ] && [ -f "${PLUGIN_ROOT}/lib/project-context.js" ]; then
+  GROUNDWORK_SESSION_TTY="$SESSION_TTY" node -e "try{require('${PLUGIN_ROOT}/lib/project-context').cleanupStaleSessions()}catch(e){}" 2>/dev/null || true
 fi
 
 # Escape outputs for JSON - use jq if available, fallback to bash

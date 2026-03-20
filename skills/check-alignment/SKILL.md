@@ -14,7 +14,18 @@ Verifies that implementation aligns with product specs and architecture, surfaci
 
 1. **Check `.groundwork.yml`:** Does a monorepo config file exist at the repo root?
    - If yes → Check if `GROUNDWORK_PROJECT` is set. If not, list projects and ask the user to select one.
-2. Proceed with the resolved project context. All `{{specs_dir}}/` paths will resolve to the correct location.
+2. **CWD mismatch check (monorepo only):**
+   - Skip if not in monorepo mode or if the project was just selected in item 1 above.
+   - If CWD is the repo root → fine, proceed.
+   - Check which project's path CWD falls inside (compare against all projects in `.groundwork.yml`).
+   - If CWD is inside the selected project's path → fine, proceed.
+   - If CWD is inside a different project's path → warn via `AskUserQuestion`:
+     > "You're working from `<cwd>` (inside **[cwd-project]**), but the selected Groundwork project is **[selected-project]** (`[selected-project-path]/`). What would you like to do?"
+     > - "Switch to [cwd-project]"
+     > - "Stay with [selected-project]"
+     If the user switches, invoke `Skill(skill="groundwork:project-selector")`.
+   - If CWD doesn't match any project → proceed without warning (shared directory).
+3. Proceed with the resolved project context. All `{{specs_dir}}/` paths will resolve to the correct location.
 
 ## Workflow
 

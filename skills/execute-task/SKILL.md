@@ -47,8 +47,21 @@ user-invocable: false
 
 ## WORKFLOW
 
-### Step 0: Check skip
-If session context contains `GROUNDWORK_EXECUTE_SKIP_TO_STEP_SEVEN=true`, skip directly to step 7.
+### Step 0: Resolve Context
+
+1. **Check skip flag:** If session context contains `GROUNDWORK_EXECUTE_SKIP_TO_STEP_SEVEN=true`, skip directly to Step 7.
+2. **Check `.groundwork.yml`:** If monorepo config exists at repo root, check if `GROUNDWORK_PROJECT` is set. If not, list projects and ask user to select one.
+3. **CWD mismatch check (monorepo only):**
+   - Skip if not in monorepo mode or if the project was just selected in item 2 above.
+   - If CWD is the repo root → fine, proceed.
+   - Check which project's path CWD falls inside (compare against all projects in `.groundwork.yml`).
+   - If CWD is inside the selected project's path → fine, proceed.
+   - If CWD is inside a different project's path → warn via `AskUserQuestion`:
+     > "You're working from `<cwd>` (inside **[cwd-project]**), but the selected Groundwork project is **[selected-project]** (`[selected-project-path]/`). What would you like to do?"
+     > - "Switch to [cwd-project]"
+     > - "Stay with [selected-project]"
+     If the user switches, invoke `Skill(skill="groundwork:project-selector")`.
+   - If CWD doesn't match any project → proceed without warning (shared directory).
 
 ### Step 1: Parse Task Identifier
 

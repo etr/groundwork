@@ -27,6 +27,15 @@ main() {
 
   mkdir -p "$STATE_DIR"
 
+  # Compute TTY-based session ID (same method as session-start)
+  SESSION_TTY=$(ps -o tty= -p $PPID 2>/dev/null | tr -d ' ')
+  if [ -n "$SESSION_TTY" ]; then
+    SESSION_TTY_HASH=$(echo -n "$SESSION_TTY" | md5sum 2>/dev/null | cut -c1-12)
+    if [ -z "$SESSION_TTY_HASH" ]; then
+      SESSION_TTY_HASH=$(echo -n "$SESSION_TTY" | md5 2>/dev/null | cut -c1-12)
+    fi
+  fi
+
   # Read hook input from stdin
   INPUT_JSON=$(cat 2>/dev/null || echo '{}')
 
@@ -63,12 +72,25 @@ if [ -f "$SKILL_CONTEXT_FILE" ]; then
   fi
 fi
 
-# Check for active project context
-if [ -n "$GROUNDWORK_PROJECT" ]; then
-  CONTEXT_ITEMS+=("Active project: $GROUNDWORK_PROJECT")
-fi
-if [ -n "$GROUNDWORK_PROJECT_ROOT" ]; then
-  CONTEXT_ITEMS+=("Project root: $GROUNDWORK_PROJECT_ROOT")
+# Check for active project context from session file
+if [ -n "$SESSION_TTY" ] && [ -f "${PLUGIN_ROOT}/lib/project-context.js" ]; then
+  PROJECT_JSON=$(GROUNDWORK_SESSION_TTY="$SESSION_TTY" node -e "
+    try {
+      const pc = require('${PLUGIN_ROOT}/lib/project-context');
+      const s = pc.restoreSelection(pc.getSessionId());
+      if (s) console.log(JSON.stringify(s));
+    } catch(e) {}
+  " 2>/dev/null || echo "")
+  if [ -n "$PROJECT_JSON" ]; then
+    ACTIVE_PROJECT=$(echo "$PROJECT_JSON" | sed -n 's/.*"projectName":"\([^"]*\)".*/\1/p')
+    ACTIVE_ROOT=$(echo "$PROJECT_JSON" | sed -n 's/.*"projectPath":"\([^"]*\)".*/\1/p')
+    if [ -n "$ACTIVE_PROJECT" ]; then
+      CONTEXT_ITEMS+=("Active project: $ACTIVE_PROJECT")
+    fi
+    if [ -n "$ACTIVE_ROOT" ]; then
+      CONTEXT_ITEMS+=("Project root: $ACTIVE_ROOT")
+    fi
+  fi
 fi
 
 # Build additional context for compaction
@@ -76,8 +98,12 @@ if [ ${#CONTEXT_ITEMS[@]} -gt 0 ]; then
   CONTEXT_STR=$(printf "%s\n" "${CONTEXT_ITEMS[@]}" | tr '\n' '; ')
   CONTEXT_STR="${CONTEXT_STR%%; }"
 
-  # Persist state to file for session-start restoration
-  PRESERVED_STATE_FILE="${STATE_DIR}/preserved-context.txt"
+  # Persist state to file for session-start restoration (session-specific)
+  if [ -n "$SESSION_TTY_HASH" ]; then
+    PRESERVED_STATE_FILE="${STATE_DIR}/preserved-context-${SESSION_TTY_HASH}.txt"
+  else
+    PRESERVED_STATE_FILE="${STATE_DIR}/preserved-context.txt"
+  fi
   echo "$CONTEXT_STR" > "$PRESERVED_STATE_FILE" 2>/dev/null || true
 
   cat << EOF

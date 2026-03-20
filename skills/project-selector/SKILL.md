@@ -38,7 +38,12 @@ Use `AskUserQuestion` to ask which project to work on.
 
 1. Set `GROUNDWORK_PROJECT=<selected-name>`
 2. Set `GROUNDWORK_PROJECT_ROOT=<absolute-path>`
-3. Persist selection to `~/.claude/groundwork-state/<repo-hash>-project.txt`
+3. Persist selection via the persist script:
+   ```bash
+   GROUNDWORK_SESSION_TTY=$(ps -o tty= -p $PPID 2>/dev/null | tr -d ' ') \
+     node ${PLUGIN_ROOT}/lib/persist-project.js <selected-name>
+   ```
+   Where `${PLUGIN_ROOT}` is the groundwork plugin directory (use the plugin root path from the session context).
 
 Confirm: "Switched to project **<name>**. Specs at `<path>/specs/`."
 

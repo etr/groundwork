@@ -15,7 +15,18 @@ Enables ad-hoc feature development without existing task definitions. Combines r
 
 1. **Check `.groundwork.yml`:** Does a monorepo config file exist at the repo root?
    - If yes → Check if `GROUNDWORK_PROJECT` is set. If not, list projects and ask the user to select one.
-2. Proceed with the resolved project context. All `{{specs_dir}}/` paths will resolve to the correct location.
+2. **CWD mismatch check (monorepo only):**
+   - Skip if not in monorepo mode or if the project was just selected in item 1 above.
+   - If CWD is the repo root → fine, proceed.
+   - Check which project's path CWD falls inside (compare against all projects in `.groundwork.yml`).
+   - If CWD is inside the selected project's path → fine, proceed.
+   - If CWD is inside a different project's path → warn via `AskUserQuestion`:
+     > "You're working from `<cwd>` (inside **[cwd-project]**), but the selected Groundwork project is **[selected-project]** (`[selected-project-path]/`). What would you like to do?"
+     > - "Switch to [cwd-project]"
+     > - "Stay with [selected-project]"
+     If the user switches, invoke `Skill(skill="groundwork:project-selector")`.
+   - If CWD doesn't match any project → proceed without warning (shared directory).
+3. Proceed with the resolved project context. All `{{specs_dir}}/` paths will resolve to the correct location.
 
 ## Workflow
 
@@ -165,7 +176,7 @@ Implementation is dispatched to the **task-executor agent** with a fresh context
     )
 
 **After the subagent returns**, parse the result:
-- `RESULT: IMPLEMENTED | <path> | <branch> | <base-branch>` — Save these values, proceed to Step 6
+- `RESULT: IMPLEMENTED | <path> | <branch> | <base-branch>` — Save these values, proceed to Step 7
 - `RESULT: FAILURE | ...` — Report the failure and worktree location for investigation, stop
 - No parseable RESULT line — Report: "Implementation subagent did not return a structured result. Check worktree status manually." Stop.
 
@@ -178,7 +189,7 @@ Implementation is dispatched to the **task-executor agent** with a fresh context
 3. The validation-loop skill will run 9 verification agents in parallel and fix issues autonomously.
 
 **After validation-loop completes:**
-- All agents approved → Proceed to Step 7
+- All agents approved → Proceed to Step 8
 - Validation failed → Report the failure and worktree location for investigation, stop
 - Stuck on recurring issue → Report the stuck finding and stop
 

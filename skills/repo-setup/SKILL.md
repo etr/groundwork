@@ -50,12 +50,13 @@ projects:
     path: <relative/path>
 ```
 
-4. Ask which project to start with using `AskUserQuestion`.
-5. Set project context: `GROUNDWORK_PROJECT=<name>` and `GROUNDWORK_PROJECT_ROOT=<path>`
+4. Ensure `.groundwork.local` is in `.gitignore` (add it if missing).
+5. Ask which project to start with using `AskUserQuestion`.
+6. Set project context: `GROUNDWORK_PROJECT=<name>` and `GROUNDWORK_PROJECT_ROOT=<path>`
 
 ### Step 4: Persist Selection
 
-For monorepo mode, persist the selection to `~/.claude/groundwork-state/<repo-hash>-project.txt` so it survives session restarts.
+For monorepo mode, persist the selection to `.groundwork.local` at the repo root (gitignored) so it survives session restarts.
 
 Confirm: "Project **<name>** selected. Specs will be stored in `<path>/specs/`."
 

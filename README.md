@@ -336,7 +336,7 @@ You can also pass a project name directly: `/select-project api-server`
 
 - Specs are stored per-project: `<project-path>/specs/`
 - All planning, implementation, and sync commands are monorepo-aware
-- Project selection persists across sessions via `~/.claude/groundwork-state/`
+- Project selection persists across sessions via `.groundwork.local` at the repo root (gitignored)
 - Environment variables: `GROUNDWORK_PROJECT` (project name), `GROUNDWORK_PROJECT_ROOT` (absolute path)
 
 ## Skills
