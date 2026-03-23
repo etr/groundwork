@@ -141,6 +141,14 @@ Define foundational token categories without waiting for approval on each:
 **Border Radius:**
 - `--radius-none` (0) through `--radius-full` (pills)
 
+**Token Architecture Principles:**
+- **Two-layer hierarchy:** Define primitive tokens (raw values like `--blue-500`) and semantic tokens (contextual names like `--color-primary`). Only the semantic layer changes for dark mode.
+- **Semantic names:** `--space-sm` communicates intent better than `--spacing-8`. Names describe purpose, not pixel values.
+- **Gap over margins:** Prefer CSS `gap` for spacing between siblings — eliminates margin collapse and simplifies composition.
+- **Semantic z-index scale:** Define named layers (dropdown, sticky, modal-backdrop, modal, toast, tooltip) rather than arbitrary numbers.
+
+See `references/spatial-design-guide.md` for full spatial system rationale (4pt grid, optical adjustments, container queries).
+
 Present as a cohesive system. Only adjust if user has concerns.
 
 ---
@@ -152,6 +160,15 @@ Present as a cohesive system. Only adjust if user has concerns.
 Before proposing options, confirm the **tonal direction** established in Step 2. Each option should be a genuine exploration of that direction (or a deliberate contrast if offering range), not a convergence on "clean professional minimal."
 
 Propose 2-4 complete visual identity options, each pairing a color strategy with typography that suits its personality. Draw from the product context, personas, and design principles.
+
+**Color System Guidance:**
+- **Use OKLCH color space** for palette generation — perceptually uniform (unlike HSL where "50% lightness" varies wildly across hues). Define palettes in OKLCH, output hex/RGB for implementation.
+- **Tinted neutrals:** Never use pure gray. Add a subtle brand hue to the neutral scale (chroma ~0.01 in OKLCH). Creates warmth and cohesion without visible color.
+- **Never pure black or white:** `#000000` and `#ffffff` don't exist in nature. Use tinted near-black/near-white from the neutral scale.
+- **60-30-10 visual weight:** Neutral surfaces 60%, secondary/structural color 30%, accent 10%. Accent works because it's rare.
+- **Alpha is a design smell:** If using `rgba()` or `opacity` for color variations, the palette is incomplete. Define explicit tokens for every needed shade.
+
+See `references/color-and-contrast-guide.md` for dangerous color combinations, dark mode strategy, and the two-layer token approach.
 
 **Anti-pattern warnings:**
 - Do not propose options where all use the same font family
@@ -272,20 +289,44 @@ Type scale based on chosen body font:
 | `--text-2xl` | 24px | Page headers |
 | `--text-3xl` | 30px | Hero text |
 
+**Typography System Principles:**
+- **Vertical rhythm:** Use line-height as the base unit for all vertical spacing. If base line-height is 24px, section margins should be multiples of 24px.
+- **Fewer sizes, more contrast:** A 5-size system with clear visual steps beats 8 muddy-close sizes. Use a modular scale ratio (1.25 major third, 1.333 perfect fourth) — see `references/typography-examples.md`.
+- **Measure:** Set `max-width: 65ch` on body text containers for optimal readability.
+- **Fluid type for display, fixed for UI:** Use `clamp()` for hero/display text. Use fixed `rem` for app UI and controls — they need predictable sizing.
+- **Font loading:** Always use `font-display: swap` and metric-matched fallback stacks to prevent layout shift.
+- **16px minimum body text** — anything smaller is an accessibility issue on mobile.
+
+See `references/typography-guide.md` for OpenType features, dark mode typography adjustments, and font selection anti-patterns.
+
 Delete `{{specs_dir}}/design-comparison.html` after the palette and typography are documented.
 
-### Step 6: Brand Voice
+### Step 6: Brand Voice & UX Writing
 
 > "For UI copy, I recommend this voice:
 >
-> **Tone:** [Professional but approachable] - matches [persona] expectations
-> **Style:** [Concise, action-oriented] - supports [DP-001: Clarity First]
+> **Voice:** [constant personality — e.g., confident but warm, precise but human]
+> **Tone adapts to moment:** Celebratory for success, empathetic for errors, encouraging for empty states. Voice stays constant; tone shifts.
 >
-> Example error: 'We couldn't save your changes. Try again?'
-> Example empty state: 'No projects yet. Create your first one.'
+> **Button labels:** Verb + object — "Save changes" not "OK". Name destructive actions: "Delete project" not "Yes".
+> **Error formula:** What happened + Why + How to fix. Never blame the user.
+> **Empty states:** Acknowledge + Explain value + Provide action. Empty states are onboarding moments, not dead ends.
+> **Link text:** Must stand alone — "View pricing details" not "Click here".
+>
+> Example error: 'Couldn't save — the file exceeds 10MB. Compress it or choose a smaller file.'
+> Example empty state: 'No projects yet. Projects help you organize related tasks. Create your first one.'
 > Example success: 'Changes saved'
 >
 > Does this tone feel right?"
+
+**UX Writing Principles (for design_system.md documentation):**
+- One term per concept — build a glossary if the domain has ambiguous terms
+- Plan for text expansion (German +30%, French +20%) — never design to exact English string length
+- Avoid redundant copy — if the heading explains it, the intro paragraph is noise
+- Never use humor for error messages
+- Alt text describes information, not decoration: "Revenue increased 40% in Q3" not "Chart showing data"
+
+See `references/ux-writing-guide.md` for the full UX writing framework.
 
 ---
 
@@ -320,6 +361,7 @@ Present functional pattern recommendations for immediate approval, plus 2-3 name
 >
 > **Responsive: [Pattern] — [why]**
 > [Specific recommendation tied to primary device context.]
+> Mobile-first (`min-width` queries). Content-driven breakpoints — let content determine where to break, not device sizes. Detect input method (`pointer: fine/coarse`, `hover: hover/none`) rather than inferring from screen width. Account for safe areas on modern devices (`env(safe-area-inset-*)`).
 >
 > ---
 >
@@ -335,6 +377,25 @@ Present functional pattern recommendations for immediate approval, plus 2-3 name
 > ...
 >
 > I'll generate a visual comparison so you can see these atmosphere directions side-by-side."
+
+**Motion Design Principles (inform atmosphere choice):**
+- **100/300/500 rule:** Instant feedback 100-150ms, state transitions 200-300ms, layout shifts 300-500ms, entrances 500-800ms.
+- **Exit faster than enter:** Exit animations at ~75% of entrance duration.
+- **Exponential easing only:** Use ease-out-quart/quint/expo for natural motion. Never linear (mechanical), never bounce/elastic (dated) unless tonal direction demands it.
+- **Only animate `transform` and `opacity`** — everything else triggers layout recalculation and jank.
+- **Reduced motion is not optional:** 35% of adults 40+ affected. Use `prefers-reduced-motion` to preserve functional animations while removing decorative spatial movement.
+- **Stagger cap:** Cap total stagger time regardless of item count (~400ms max).
+
+See `references/motion-design-guide.md` for perceived performance techniques, grid-template-rows height animation, and the 80ms perception threshold.
+
+**Interaction Design Principles (apply across all patterns):**
+- **Eight interactive states:** Every interactive element must define: default, hover, focus, active, disabled, loading, error, success. Undefined states get improvised during implementation.
+- **Focus via `:focus-visible`** — show focus rings for keyboard, suppress for mouse. Rings need 3:1 contrast, 2-3px width, offset from element.
+- **Validate on blur, not keystroke** (except password strength meters).
+- **Undo over confirm dialogs** — users click through confirmations without reading. Provide undo for reversible actions instead.
+- **Touch targets 44px minimum** — even if the visual element is smaller, the tap area must be 44px.
+
+See `references/interaction-design-guide.md` for roving tabindex, skip links, native dialog/popover usage, and gesture discoverability.
 
 **Handle Feedback:**
 - User agrees with functional patterns → Document as UXD-001 through UXD-00N, proceed to 7b
@@ -523,5 +584,11 @@ Each decision follows a lightweight format:
 
 - `references/design-system-template.md` - Template for design system document
 - `references/color-examples.md` - Color strategy approaches and reference palettes
-- `references/typography-examples.md` - Example type systems
+- `references/color-and-contrast-guide.md` - OKLCH, tinted neutrals, dark mode strategy, dangerous color combinations
+- `references/typography-examples.md` - Example type systems and font pairings
+- `references/typography-guide.md` - Vertical rhythm, fluid type, font loading, OpenType features
 - `references/pattern-examples.md` - Example UX patterns
+- `references/interaction-design-guide.md` - Eight states, focus management, touch targets, native elements
+- `references/motion-design-guide.md` - Timing rules, easing, perceived performance, reduced motion
+- `references/spatial-design-guide.md` - 4pt grid, semantic tokens, container queries, optical adjustments
+- `references/ux-writing-guide.md` - Button labels, error formulas, empty states, terminology, text expansion

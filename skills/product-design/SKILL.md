@@ -212,6 +212,8 @@ Ask: "Does this capture your requirements? Any changes before I update the PRD?"
 
 ## Step 4: Commit to PRD
 
+**If in plan mode:** The plan should describe only the file edits in this step — which file to edit, where to insert, and what content to write. Do not plan architecture, code, or technical implementation of the feature.
+
 **PRD Location:** The PRD may be stored as:
 - Single file: `{{specs_dir}}/product_specs.md`
 - Directory: `{{specs_dir}}/product_specs/` (with content split across files)

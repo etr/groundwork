@@ -417,7 +417,7 @@ These run after task implementation via the `validation-loop` skill:
 | `code-simplifier` | Simplifies code for clarity and maintainability while preserving functionality |
 | `housekeeper` | Verifies housekeeping — task status updates, action items, documentation changes |
 | `performance-reviewer` | Reviews for performance issues — algorithmic complexity, memory, I/O |
-| `design-consistency-checker` | Verifies design system compliance — tokens, accessibility, pattern consistency |
+| `design-consistency-checker` | Verifies design system compliance — tokens, accessibility, interaction quality, UX writing, pattern consistency |
 
 #### Task Validation (3 agents)
 
@@ -487,6 +487,12 @@ This plugin has sourced learnings and code from multiple sources:
 ### Official Claude Plugins
 - **[claude-plugins-official](https://github.com/anthropics/claude-plugins-official)** by Anthropic
   - claude-md-management plugin
+
+### Impeccable
+- **[impeccable](https://github.com/pbakaus/impeccable)** by Paul Bakaus ([impeccable.style](https://impeccable.style))
+  - License: Apache 2.0 (itself based on Anthropic's [frontend-design skill](https://github.com/anthropics/skills/tree/main/skills/frontend-design))
+  - The design system skill's reference guides for color & contrast, interaction design, motion design, spatial design, typography, and UX writing are adapted from Impeccable's domain-specific reference files
+  - The design consistency checker agent's interaction quality, UX writing quality, and expanded accessibility checks are derived from these references
 
 ### Research Methodology
 - **[get-shit-done](https://github.com/glittercowboy/get-shit-done)** by glittercowboy

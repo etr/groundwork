@@ -91,17 +91,51 @@ Use this template when creating `{{specs_dir}}/design_system.md`.
 
 [Color tokens and palette]
 
+#### Color Space & Neutrals
+**Color Space:** [OKLCH | HSL | hex-only]
+**Neutral Tinting:** [Brand hue applied to neutral scale — hue angle and chroma value]
+**Pure Black/White:** Prohibited — use tinted near-black/near-white from neutral scale
+
+#### Dark Mode Strategy
+**Approach:** [Semantic token layer swap | Full palette variant | Not applicable]
+**Key Adjustments:**
+- [e.g., Lighter surfaces for depth instead of shadows]
+- [e.g., Desaturated accent colors]
+- [e.g., Reduced font weight or increased line-height]
+
 ### 2.2 Typography
 
 [Font families, type scale]
+
+#### Fluid Type Strategy
+| Context | Approach | Rationale |
+|---------|----------|-----------|
+| Display/hero text | [e.g., `clamp(2rem, 5vw + 1rem, 4rem)`] | Scales with viewport |
+| App UI / controls | [e.g., Fixed `rem` scale] | Predictable sizing |
+
+#### Font Loading
+**Strategy:** [e.g., `font-display: swap` with metric-matched fallbacks]
+**Fallback Stack:** [e.g., `'CustomFont', 'CustomFont-Fallback', sans-serif`]
+**Minimum Body Text:** 16px (1rem)
 
 ### 2.3 Logo Usage
 
 [Logo guidelines if applicable]
 
-### 2.4 Brand Voice
+### 2.4 Brand Voice & Writing Style
 
-[Tone and writing principles]
+**Voice:** [constant personality — e.g., confident but warm, precise but human]
+**Tone adapts to moment:** [e.g., celebratory for success, empathetic for errors, encouraging for empty states]
+
+**Writing Patterns:**
+| Pattern | Standard | Example |
+|---------|----------|---------|
+| Button labels | Verb + Object | "Save changes", not "OK" |
+| Error messages | What + Why + How to fix | "File too large (max 10MB). Compress or choose a smaller file." |
+| Empty states | Acknowledge + Value + Action | "No projects yet. Create your first one." |
+| Destructive actions | Name the destruction | "Delete project", not "Yes" |
+
+**Terminology Glossary:** [list of standardized terms — one term per concept]
 
 ### 2.5 Visual Atmosphere
 
@@ -152,6 +186,10 @@ Use this template when creating `{{specs_dir}}/design_system.md`.
 
 [Form validation and interaction]
 
+**Validation Timing:** [On blur | On submit | Hybrid — e.g., blur for format, submit for required]
+**Labels:** Visible `<label>` elements required (never placeholder-only)
+**Error Placement:** Below field, connected via `aria-describedby`
+
 ### 3.6 Responsive Behavior
 
 [Breakpoints and adaptation]
@@ -159,7 +197,23 @@ Use this template when creating `{{specs_dir}}/design_system.md`.
 ### 3.7 Motion & Interaction Character
 
 **Timing Tokens:**
-[Animation timing and usage]
+| Category | Duration | Examples |
+|----------|----------|----------|
+| Instant feedback | [100-150ms] | Button press, toggle |
+| State changes | [200-300ms] | Menu, tooltip, hover |
+| Layout changes | [300-500ms] | Accordion, modal, drawer |
+| Entrances | [500-800ms] | Page load, hero reveals |
+
+**Easing Functions:**
+| Context | Easing | CSS Value |
+|---------|--------|-----------|
+| Enter/appear | [e.g., ease-out-quart] | `cubic-bezier(0.25, 1, 0.5, 1)` |
+| Exit/dismiss | [e.g., ease-in-quart] | `cubic-bezier(0.5, 0, 0.75, 0)` |
+| State change | [e.g., ease-in-out] | `cubic-bezier(0.65, 0, 0.35, 1)` |
+
+**Animatable Properties:** `transform` and `opacity` only (no layout properties)
+**Exit Duration:** ~75% of entrance duration
+**Reduced Motion:** `prefers-reduced-motion` removes decorative motion; preserves functional (progress, loading, focus)
 
 **Entrance Patterns:**
 | Element | Entrance | Duration | Notes |
@@ -191,6 +245,34 @@ Use this template when creating `{{specs_dir}}/design_system.md`.
 **Alignment style, density, hero treatments, and content rhythm that define the product's layout personality.**
 
 [Reference §2.5 for defined spatial character. This section documents how spatial decisions apply across page types and breakpoints.]
+
+### 3.10 Interaction States
+
+| State | Visual Treatment | Notes |
+|-------|-----------------|-------|
+| Default | [base appearance] | |
+| Hover | [e.g., subtle lift, color shift] | Pointer only, not touch |
+| Focus | [focus ring: width, color, offset] | `:focus-visible` only |
+| Active/Pressed | [e.g., pressed in, darker] | |
+| Disabled | [e.g., 40% opacity, no pointer events] | |
+| Loading | [e.g., spinner replacing label, skeleton] | |
+| Error | [e.g., red border, error icon] | |
+| Success | [e.g., green check, temporary confirmation] | |
+
+### 3.11 Writing Style
+
+[Reference §2.4 for voice, tone, and writing patterns. This section documents how writing decisions apply across specific UI contexts.]
+
+**Error Message Examples:**
+| Context | Message |
+|---------|---------|
+| [e.g., File upload] | [e.g., "This file is too large (max 10MB). Compress it or choose a smaller file."] |
+| [e.g., Network] | [e.g., "Couldn't reach the server. Check your connection and try again."] |
+
+**Empty State Examples:**
+| Context | Message | Action |
+|---------|---------|--------|
+| [e.g., First project] | [e.g., "No projects yet. Projects help you organize related tasks."] | [e.g., "Create your first project"] |
 
 ---
 
