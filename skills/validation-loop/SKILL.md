@@ -225,8 +225,8 @@ Otherwise, persist them to `{{specs_dir}}/minor_todos.md (f {{specs_dir}} does n
 
    ## Run: YYYY-MM-DD | TASK-NNN: Title
 
-   - [ ] `minor` **agent-name** | `file:line` | category: finding -- recommendation
-   - [ ] `major` **agent-name** | `file:line` | category: finding -- recommendation
+   1. [ ] `minor` **agent-name** | `file:line` | category: finding -- recommendation
+   2. [ ] `major` **agent-name** | `file:line` | category: finding -- recommendation
    ```
 
 5. **Prepend** the new run block after the file header (newest runs first).
