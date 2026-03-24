@@ -150,12 +150,30 @@ If you can't reproduce it, you can't prove you fixed it. Observation before theo
 - [ ] Minimal reproduction — removed everything not needed to trigger it
 - [ ] Exact error output recorded
 
+### Phase 2 Gate — MANDATORY
+
+Before proceeding to Phase 3, your debug journal MUST contain:
+- The exact command/steps you **executed** (not theorized about)
+- The exact error output you **observed** (not inferred from code)
+- Confirmation this matches the user-reported symptoms
+
+**Static code reading is NOT reproduction.** If you have only read source files and formed theories about what might happen, you are still in Phase 1.
+
+**Simulation is NOT reproduction.** Writing scripts that mimic what the code *would* do (e.g., Node.js scripts simulating CoffeeScript logic, Python scripts simulating import resolution) is theorizing, not reproducing. Run the actual code path instead.
+
 **Can't reproduce?**
 - Check environment differences
 - Check timing/race conditions
 - Check data-dependent paths
 - Add logging and wait for it to recur
 - Don't guess. If you can't reproduce it, you can't fix it.
+
+**Can't execute directly?** (GUI app, external service, no local environment)
+1. Add temporary logging/instrumentation to the actual code FIRST
+2. Ask the user to trigger the bug with your instrumentation in place
+3. Read the instrumented output — this is your reproduction evidence
+4. Do NOT proceed to Phase 3 based on code reading alone
+5. If instrumentation isn't possible either, document WHY in the journal and escalate to your human partner for reproduction assistance
 
 ## Phase 3: ISOLATE
 
@@ -178,6 +196,15 @@ Form hypotheses. Make them falsifiable. Test them. Eliminate possibilities syste
 | **Minimal reproduction** | Complex system, many variables | Strip away components until the simplest case that still fails. |
 | **Working backwards** | Clear error, unclear cause | Start at the error. Trace backwards through the call chain. |
 | **Rubber duck** | Stuck, circular thinking | Explain the bug out loud, step by step. The gap in your explanation is the gap in your understanding. |
+
+### Spawning Investigation Subagents
+
+When dispatching subagents for parallel investigation:
+1. **Pass context forward** — Include files already read and findings so far in the subagent prompt, not just "investigate X"
+2. **Specify concrete actions** — "Run `pip install --target /tmp/test` and return the error output" not "explore the dependency setup"
+3. **Require reproduction** — Subagents must execute the failing operation, not just read code
+4. **Reference the debug journal** — Tell the subagent to read `.debug/{slug}.md` first so it doesn't repeat prior work
+5. **Validate findings** — If a subagent returns without direct evidence (only file reads, no command output), run the reproduction yourself before accepting its conclusions
 
 **One thing at a time:**
 - Change one variable per test
@@ -313,9 +340,17 @@ Maintain a persistent debug file at `.debug/{slug}.md`. This survives context co
 - [When it started / what changed]
 
 ## Reproduction
-[Minimal steps to trigger the bug]
-[Command to run]
-[Expected vs. actual output]
+### Command Executed
+[The exact command you ran — NOT theoretical steps, NOT code you read]
+
+### Actual Output
+[Paste the exact error/output you observed when you ran it]
+
+### Expected Output
+[What should have happened instead]
+
+### Matches User Report?
+[Yes/No — does this reproduce the same symptoms the user described?]
 
 ## Hypotheses
 
@@ -375,6 +410,8 @@ Root cause claims require a confidence level. This prevents false confidence and
 | "Let me add a retry / increase the timeout" | That's masking, not fixing. Find why it fails. |
 | "It works on my machine" | Then your machine isn't the one with the bug. Reproduce there. |
 | "I've been debugging this for hours, let me just ship it" | Sunk cost. Escalate instead of shipping a guess. |
+| "I'll simulate the logic to understand it" | Run the actual code. Simulation scripts are theories, not evidence. |
+| "The subagent explored the codebase thoroughly" | Did it run the failing operation? Reading files is Phase 1, not Phase 3. |
 
 ## Signals From Your Human Partner
 
@@ -405,6 +442,9 @@ During interactive debugging, your human partner's reactions are a signal channe
 - No reproduction case
 - No failing test
 - Skipping the debug journal
+- Forming hypotheses based only on code reading without running anything
+- Writing simulation scripts instead of running the actual failing code
+- Spawning investigation subagents without specifying what to execute
 
 **All of these mean: Stop. Go back to Phase 1. Understand the system.**
 
