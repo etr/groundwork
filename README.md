@@ -196,6 +196,7 @@ Execute tasks and build features.
 | `/work-on` | `[task-number]` | Execute a specific task with worktree isolation and TDD | Want to work on a specific task by number |
 | `/work-on-next-task` | — | Execute the next unblocked task automatically | Working through tasks sequentially |
 | `/just-do-it` | — | Execute all remaining tasks in dependency order | Want batch execution of all remaining work |
+| `/just-do-it-swarming` | `[--parallel]` | Execute all tasks using agent teams for context isolation | Large batches where context accumulation is a concern |
 | `/build-unplanned` | `[description]` | Build feature from description — no task definitions needed | Quick feature without formal planning |
 | `/select-project` | `[project-name]` | Switch to a different project in a monorepo | Working across multiple projects |
 
@@ -286,6 +287,43 @@ Systematic 5-phase investigation:
 
 Phases: Observe → Hypothesize → Predict → Test → Conclude. No fix is applied until the root cause is confirmed.
 
+### Batch Execution
+
+Execute all remaining tasks in dependency order:
+
+```
+/just-do-it
+```
+
+All task phases (Plan, Implement, Validate, Fix, Merge) run inline in the main conversation. This works well for small batches but accumulates context over many tasks.
+
+#### Swarming Mode (Claude Code only)
+
+For large batches (>5 tasks), use swarming mode to run each task in its own isolated session:
+
+```
+/just-do-it-swarming
+```
+
+Each task is assigned to an agent team teammate — a full Claude Code session with its own context window that can spawn subagents (Plan, task-executor, 9 validation agents). This prevents context accumulation in the lead's conversation.
+
+For independent tasks, enable parallel execution:
+
+```
+/just-do-it-swarming --parallel
+```
+
+Parallel mode groups tasks by dependency level and runs independent tasks simultaneously (max 5 concurrent). Requires `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` to be enabled:
+
+```json
+// settings.json
+{
+  "env": {
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
+  }
+}
+```
+
 #### Swarm Debugging (Claude Code only)
 
 When a bug has multiple plausible root causes, spawn an agent team to investigate hypotheses in parallel:
@@ -370,6 +408,7 @@ Skills are internal workflow definitions invoked automatically by the model when
 | `use-git-worktree` | Create isolated git worktrees for feature work |
 | `test-driven-development` | Red-Green-Refactor with coverage targets |
 | `execute-all-tasks` | Execute all remaining tasks in batch mode with dependency ordering |
+| `execute-all-tasks-swarming` | Execute all tasks using agent teams — each task in its own session (requires `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS`) |
 | `repo-setup` | Configure repo structure for single-project or monorepo |
 | `project-selector` | Switch between projects in a monorepo |
 
