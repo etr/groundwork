@@ -72,7 +72,7 @@ You will receive:
 
 1. **Analyze changed files** - Understand what work was actually done
 2. **Map work to action items** - Identify which action items have implementations
-3. **Check task/action item status** - Verify implemented items are marked complete
+3. **Check task/action item status** - Verify implemented items are marked complete in the task-dedicated file and that the task is marked complete overall
 4. **Identify behavior changes** - Determine if changes affect user-facing behavior or architecture
 5. **Check spec freshness** - Verify specs reflect the implementation
 6. **Check documentation** - Verify docs are updated for relevant changes
