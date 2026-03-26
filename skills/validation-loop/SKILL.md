@@ -130,21 +130,43 @@ Each returns JSON:
    Fixing [X] issues...
    ```
 
-2. **Fix Each Finding** - Apply each non-minor recommendation
-   - **Behavioral fixes** (new logic, async changes, control flow, debouncing): write or update a failing test first, then apply the fix, then verify green — follow TDD
-   - **Cosmetic fixes** (class names, constants, formatting): apply directly, verify tests still pass
-   - **How to tell:** if the fix requires new/changed test assertions, it's behavioral
-   - Track what was changed
-   - Note which finding each fix addresses
+2. **Spawn Fix Agent** — Delegate all fix work to a separate agent to keep the orchestrator context clean.
 
-3. **Re-run Self-Validation**
-   - Verify action items still complete
-   - Run tests - must pass
-   - Confirm acceptance criteria
+   Collect all non-minor findings from agents that returned `request-changes`. Spawn:
+
+   ```
+   Task(
+     subagent_type="general-purpose",
+     description="Fix validation findings (iteration N)",
+     prompt="Fix the following validation findings in [working directory].
+
+   FINDINGS TO FIX:
+   [Numbered list of non-minor findings, each with: agent, severity, file, line, finding, recommendation]
+
+   FIX GUIDELINES:
+   - Behavioral fixes (new logic, control flow, state): write/update a failing test FIRST, then fix, then verify green (TDD).
+   - Cosmetic fixes (names, constants, formatting): apply directly, verify tests still pass.
+   - How to tell: if the fix needs new/changed test assertions, it is behavioral.
+
+   AFTER FIXING:
+   - Run the project's test suite. All tests must pass.
+
+   OUTPUT FORMAT (must be your last line):
+   RESULT: FIXED | files_touched: [comma-separated paths] | findings_fixed: [comma-separated numbers]
+   OR:
+   RESULT: FAILURE | [one-line reason]
+   "
+   )
+   ```
+
+3. **Parse Fix Agent Result**
+   - `RESULT: FIXED | files_touched: [...] | findings_fixed: [...]` → parse both lists, proceed to step 4.4
+   - `RESULT: FAILURE | [reason]` → log the failure reason, escalate to user via `AskUserQuestion`
+   - No parseable result → treat as failure, escalate to user
 
 4. **Re-run Agent Validation** — Always re-launch the code-simplifier and quality-reviewer. For the other agents, re-launch ONLY agents that returned `request-changes` in the previous iteration.
 
-   **Domain spillover**: If a fix modified code relevant to an agent that previously approved, re-run that agent too:
+   **Domain spillover**: Use `files_touched` from the fix agent result to determine if a fix modified code relevant to an agent that previously approved. If so, re-run that agent too:
 
    | Fix touches... | Also re-run |
    |---|---|
@@ -166,7 +188,7 @@ Each returns JSON:
 
 5. **Check Results**
    - ALL approve → **PASS**, return success
-   - Any request-changes → Return to step 1
+   - Any request-changes → Return to step 4.1
 
 ### 5. Stuck Detection
 
@@ -200,7 +222,7 @@ Also escalate when:
 
 ### 5.5. Persist Unexecuted Findings
 
-After all agents approve, collect **all findings from every iteration** across all agents. Exclude findings that were fixed during the fix-and-retry loop (Step 4 tracks which finding each fix addresses). The remainder are **unexecuted findings**.
+After all agents approve, collect **all findings from every iteration** across all agents. Exclude findings listed in the `findings_fixed` results returned by fix agents across iterations. The remainder are **unexecuted findings**.
 
 If zero unexecuted findings → skip this step entirely.
 

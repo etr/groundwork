@@ -118,6 +118,15 @@ Before creating the team, verify agent teams are available by checking if the te
 
 Stop here if not enabled.
 
+### Step 2.7: Load Execute-Task Workflow
+
+Before spawning any teammates, load the execute-task skill content so it can be embedded in each teammate's prompt:
+
+1. **Find the skill file:** Use Glob to find `**/execute-task/SKILL.md` within the groundwork plugin directory.
+2. **Read the file:** Use the Read tool to read the entire file.
+3. **Extract the body:** Skip the YAML frontmatter (the `---` delimited block at the top of the file) and keep everything after it. This is the execute-task workflow content.
+4. **Store as `EXECUTE_TASK_WORKFLOW`:** Hold this content for use in the teammate spawn prompts below.
+
 ### Step 3: Create Team and Execute
 
 Determine execution mode from the user's argument or request:
@@ -150,10 +159,15 @@ Create an agent team. Then for each remaining task in dependency order:
    TASK DEFINITION:
    [Full task section from tasks file: goal, action items, acceptance criteria, dependencies]
 
-   INSTRUCTIONS:
-   1. Follow the Skill(skill="groundwork:execute-task") skill workflow:
+   EXECUTE-TASK WORKFLOW:
+   [EXECUTE_TASK_WORKFLOW loaded in Step 2.7]
 
-   2. When complete, report your result clearly:
+   INSTRUCTIONS:
+   1. Follow the EXECUTE-TASK WORKFLOW above starting from Step 1 (Parse Task Identifier).
+      - Skip Step 0 (context already resolved by the lead).
+      - TASK IDENTIFIER and TASK DEFINITION are provided above — use them directly.
+      - GROUNDWORK_BATCH_MODE is true — auto-proceed all confirmations.
+   2. When complete, report:
       - Success: "TASK-NNN: SUCCESS — [one-line summary]"
       - Failure: "TASK-NNN: FAILURE — [one-line reason]"
    ```
