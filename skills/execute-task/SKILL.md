@@ -50,7 +50,8 @@ user-invocable: false
 ### Step 0: Resolve Context
 
 1. **Check skip flag:** If session context contains `GROUNDWORK_EXECUTE_SKIP_TO_STEP_SEVEN=true`, skip directly to Step 7.
-2. **Check `.groundwork.yml`:** If monorepo config exists at repo root, check if `GROUNDWORK_PROJECT` is set. If not, list projects and ask user to select one.
+2. **Check workflow restoration:** If a `<workflow-restoration>` block is present in your context (injected by the session-start hook after compaction), extract the `resumeStep`, worktree path, branch, base branch, task ID, and any other fields from `additionalContext`. Skip directly to the indicated step using those values — do not re-run earlier steps.
+3. **Check `.groundwork.yml`:** If monorepo config exists at repo root, check if `GROUNDWORK_PROJECT` is set. If not, list projects and ask user to select one.
 3. **CWD mismatch check (monorepo only):**
    - Skip if not in monorepo mode or if the project was just selected in item 2 above.
    - If CWD is the repo root → fine, proceed.
@@ -262,6 +263,22 @@ Present summary to the user:
 - `RESULT: IMPLEMENTED | <path> | <branch> | <base-branch>` — Save these values, proceed to Step 7.5
 - `RESULT: FAILURE | ...` — Report failure; in batch mode output `RESULT: FAILURE | [TASK-NNN] ...` and stop
 - No parseable RESULT line — Report: "Implementation subagent did not return a structured result. Check worktree status manually."
+
+### Step 7+: Checkpoint and Compact
+
+After successfully parsing the implementation result (RESULT: IMPLEMENTED), save the workflow state for compaction recovery before running validation. This clears the context accumulated during planning and implementation.
+
+The following values from the implementation result MUST be in your conversation context for the checkpoint skill to capture them:
+- **Worktree path:** `<worktree_path from RESULT>`
+- **Branch:** `<branch from RESULT>`
+- **Base branch:** `<base_branch from RESULT>`
+- **Batch mode:** true/false based on `GROUNDWORK_BATCH_MODE`
+
+**You MUST call the Skill tool now:** `Skill(skill="groundwork:checkpoint-and-compact", args="execute-task 7.5 TASK-NNN")`
+
+(Replace `TASK-NNN` with the actual task identifier.)
+
+After compaction and restoration, you will resume at Step 7.5 with the saved state.
 
 ### Step 7.5: Validation (Direct Skill Call)
 

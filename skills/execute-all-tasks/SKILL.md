@@ -1,7 +1,7 @@
 ---
 name: execute-all-tasks
 description: This skill should be used when executing all remaining tasks in batch mode - orchestrates worktree isolation, TDD, validation, and merge for each task in dependency order
-requires: execute-task, validation-loop
+requires: validation-loop
 user-invocable: false
 ---
 
@@ -86,6 +86,8 @@ If user declines, stop and suggest alternatives:
 
 Each task is executed through 5 phases orchestrated directly from this conversation. This avoids nested sub-tasks (sub-tasks cannot spawn other sub-tasks). The main loop holds only: task list + per-task plan summary, IMPLEMENTED result, validation verdicts, and merge result.
 
+**Workflow restoration check:** If a `<workflow-restoration>` block is present in your context, a compaction occurred mid-execution. Extract the task ID, resume step, and subagent result values (worktree path, branch, base branch) from the restoration context. Skip ahead in the task loop to the indicated task (tasks already marked Complete in the tasks file were finished before the checkpoint), then resume at the indicated phase (e.g., `3.C` = Phase C for validation). The current task's status will be "In Progress".
+
 For each remaining task in dependency order:
 
 1. **Read the task section** from `{{specs_dir}}/tasks.md` (or aggregated from `{{specs_dir}}/tasks/`) to extract the full task definition (goal, action items, acceptance criteria, dependencies).
@@ -164,6 +166,22 @@ Parse the result:
 - `RESULT: IMPLEMENTED | <path> | <branch> | <base_branch>` → Save these values, proceed to Phase C
 - `RESULT: FAILURE | ...` → STOP immediately, report failure
 - No parseable RESULT line → Treat as failure
+
+#### Phase B+: Checkpoint and Compact
+
+After successfully parsing the implementation result (RESULT: IMPLEMENTED), save the workflow state before running validation. This clears context accumulated during planning and implementation.
+
+The following values from the implementation result MUST be in your conversation context:
+- **Worktree path:** `<worktree_path from RESULT>`
+- **Branch:** `<branch from RESULT>`
+- **Base branch:** `<base_branch from RESULT>`
+- **Current task:** TASK-NNN being processed
+
+**You MUST call the Skill tool now:** `Skill(skill="groundwork:checkpoint-and-compact", args="execute-all-tasks 3.C TASK-NNN")`
+
+(Replace `TASK-NNN` with the actual task identifier.)
+
+After compaction and restoration, you will resume at Phase C (Validate) for the current task.
 
 #### Phase C: Validate
 
@@ -263,6 +281,14 @@ If merge conflicts occur, report them and preserve the worktree for investigatio
 5. **Log result:** "Completed TASK-NNN: [Title] — [one-line summary]"
 
 **On Failure at any phase:** Report the failed task, phase, reason, tasks completed this session, and tasks remaining. Note that the failed task's worktree is preserved at `.worktrees/TASK-NNN` for investigation.
+
+#### Phase F: Compact
+
+**You MUST call the Skill tool now:** `Skill(skill="groundwork:checkpoint-and-compact", args="execute-all-tasks 3.F")`
+
+(Replace `TASK-NNN` with the actual task identifier.)
+
+After compaction completes, do NOT take any further action — the session-start hook handles restoration.
 
 ### Step 4: Completion Report
 

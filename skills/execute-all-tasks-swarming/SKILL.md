@@ -152,18 +152,8 @@ Create an agent team. Then for each remaining task in dependency order:
 
    INSTRUCTIONS:
    1. Follow the Skill(skill="groundwork:execute-task") skill workflow:
-      a. Plan — spawn a Plan subagent to create an implementation plan
-      b. Implement — spawn a task-executor subagent (subagent_type="groundwork:task-executor:task-executor") to implement with TDD in a worktree
-      c. Validate — call Skill(skill="groundwork:validation-loop") DIRECTLY in your session. Do NOT manually spawn validation agents or add them as team members. The skill handles launching 9 validation subagents internally.
-      d. Fix — if validation finds issues, fix them and re-validate
-      e. Merge — merge the worktree branch into the base branch
 
-   2. IMPORTANT CONSTRAINTS:
-      - Do NOT update task status in the tasks file (no "In Progress", no "Complete") — the lead agent handles all status updates
-      - Do NOT spawn validation agents manually — use Skill(skill="groundwork:validation-loop") which handles this internally
-      - Validation agents are subagents (subagent_type), NOT team members — never use team_name when spawning them
-
-   3. When complete, report your result clearly:
+   2. When complete, report your result clearly:
       - Success: "TASK-NNN: SUCCESS — [one-line summary]"
       - Failure: "TASK-NNN: FAILURE — [one-line reason]"
    ```

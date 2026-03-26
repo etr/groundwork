@@ -27,17 +27,15 @@ main() {
 
   mkdir -p "$STATE_DIR"
 
-  # Compute TTY-based session ID (same method as session-start)
-  SESSION_TTY=$(ps -o tty= -p $PPID 2>/dev/null | tr -d ' ')
-  if [ -n "$SESSION_TTY" ]; then
-    SESSION_TTY_HASH=$(echo -n "$SESSION_TTY" | md5sum 2>/dev/null | cut -c1-12)
-    if [ -z "$SESSION_TTY_HASH" ]; then
-      SESSION_TTY_HASH=$(echo -n "$SESSION_TTY" | md5 2>/dev/null | cut -c1-12)
-    fi
+  # Read hook input from stdin and extract session_id
+  INPUT_JSON=$(cat 2>/dev/null || echo '{}')
+  SESSION_ID=$(echo "$INPUT_JSON" | jq -r '.session_id // empty' 2>/dev/null)
+  if [ -z "$SESSION_ID" ]; then
+    SESSION_ID=$(echo "$INPUT_JSON" | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
   fi
 
-  # Read hook input from stdin
-  INPUT_JSON=$(cat 2>/dev/null || echo '{}')
+  # Raw TTY is still used by node scripts for project context
+  SESSION_TTY=$(ps -o tty= -p $PPID 2>/dev/null | tr -d ' ')
 
 # Extract any context we should preserve
 # The hook output will be included in the compacted context
@@ -99,8 +97,8 @@ if [ ${#CONTEXT_ITEMS[@]} -gt 0 ]; then
   CONTEXT_STR="${CONTEXT_STR%%; }"
 
   # Persist state to file for session-start restoration (session-specific)
-  if [ -n "$SESSION_TTY_HASH" ]; then
-    PRESERVED_STATE_FILE="${STATE_DIR}/preserved-context-${SESSION_TTY_HASH}.txt"
+  if [ -n "$SESSION_ID" ]; then
+    PRESERVED_STATE_FILE="${STATE_DIR}/preserved-context-${SESSION_ID}.txt"
   else
     PRESERVED_STATE_FILE="${STATE_DIR}/preserved-context.txt"
   fi

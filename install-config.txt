@@ -25,6 +25,7 @@ project-selector = groundwork-select-project command
 repo-setup = groundwork-setup-repo command
 
 # Skills without command entry points (internal, auto-loaded by description match)
+checkpoint-and-compact = groundwork-checkpoint-and-compact
 implement-feature = groundwork-implement-feature
 test-driven-development = groundwork-test-driven-development
 use-git-worktree = groundwork-use-git-worktree
