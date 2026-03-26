@@ -34,9 +34,6 @@ main() {
     SESSION_ID=$(echo "$INPUT_JSON" | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
   fi
 
-  # Raw TTY is still used by node scripts for project context
-  SESSION_TTY=$(ps -o tty= -p $PPID 2>/dev/null | tr -d ' ')
-
 # Extract any context we should preserve
 # The hook output will be included in the compacted context
 
@@ -71,8 +68,8 @@ if [ -f "$SKILL_CONTEXT_FILE" ]; then
 fi
 
 # Check for active project context from session file
-if [ -n "$SESSION_TTY" ] && [ -f "${PLUGIN_ROOT}/lib/project-context.js" ]; then
-  PROJECT_JSON=$(GROUNDWORK_SESSION_TTY="$SESSION_TTY" node -e "
+if [ -n "$SESSION_ID" ] && [ -f "${PLUGIN_ROOT}/lib/project-context.js" ]; then
+  PROJECT_JSON=$(GROUNDWORK_SESSION_ID="$SESSION_ID" node -e "
     try {
       const pc = require('${PLUGIN_ROOT}/lib/project-context');
       const s = pc.restoreSelection(pc.getSessionId());

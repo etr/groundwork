@@ -35,9 +35,6 @@ if [ -n "$SESSION_ID" ]; then
   echo "$SESSION_ID" > "${STATE_DIR}/current-session-id" 2>/dev/null || true
 fi
 
-# Raw TTY is still used by node scripts for project context
-SESSION_TTY=$(ps -o tty= -p $PPID 2>/dev/null | tr -d ' ')
-
 # Loaded announcement
 loaded_message="**Groundwork loaded.** "
 
@@ -159,7 +156,7 @@ specs_notice=""
 project_context=""
 
 if [ -f "${PLUGIN_ROOT}/lib/detect-project-state.js" ]; then
-  project_state=$(GROUNDWORK_SESSION_TTY="$SESSION_TTY" timeout 3 node "${PLUGIN_ROOT}/lib/detect-project-state.js" 2>/dev/null || echo '{}')
+  project_state=$(GROUNDWORK_SESSION_ID="$SESSION_ID" timeout 3 node "${PLUGIN_ROOT}/lib/detect-project-state.js" 2>/dev/null || echo '{}')
 
   # Parse project state JSON
   is_monorepo=$(echo "$project_state" | grep -o '"isMonorepo":true' | head -1)
@@ -229,13 +226,13 @@ specs_notice="${specs_notice}${gh_warning}${update_notice}${restored_state}"
 specs_content=""
 if $has_prd || $has_arch; then
   if [ -f "${PLUGIN_ROOT}/lib/inject-specs.js" ]; then
-    specs_content=$(GROUNDWORK_SESSION_TTY="$SESSION_TTY" timeout 3 node "${PLUGIN_ROOT}/lib/inject-specs.js" 2>/dev/null || echo '')
+    specs_content=$(GROUNDWORK_SESSION_ID="$SESSION_ID" timeout 3 node "${PLUGIN_ROOT}/lib/inject-specs.js" 2>/dev/null || echo '')
   fi
 fi
 
 # Clean up stale session files (best-effort, non-blocking)
-if [ -n "$SESSION_TTY" ] && [ -f "${PLUGIN_ROOT}/lib/project-context.js" ]; then
-  GROUNDWORK_SESSION_TTY="$SESSION_TTY" node -e "try{require('${PLUGIN_ROOT}/lib/project-context').cleanupStaleSessions()}catch(e){}" 2>/dev/null || true
+if [ -f "${PLUGIN_ROOT}/lib/project-context.js" ]; then
+  GROUNDWORK_SESSION_ID="$SESSION_ID" node -e "try{require('${PLUGIN_ROOT}/lib/project-context').cleanupStaleSessions()}catch(e){}" 2>/dev/null || true
 fi
 
 # Escape outputs for JSON - use jq if available, fallback to bash
