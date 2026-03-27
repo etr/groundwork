@@ -2,6 +2,7 @@
 name: understanding-feature-requests
 description: This skill should be used when clarifying feature requests, gathering requirements, or checking for contradictions in proposed changes
 user-invocable: false
+effort: high
 ---
 
 # Understanding Feature Requests

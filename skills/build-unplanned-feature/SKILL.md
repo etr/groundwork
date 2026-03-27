@@ -1,8 +1,9 @@
 ---
 name: build-unplanned-feature
 description: This skill should be used when building a feature from a description without existing task definitions - combines requirement gathering, TDD implementation, and validation
-requires: understanding-feature-requests, implement-feature, validation-loop
+requires: understanding-feature-requests, validation-loop
 user-invocable: false
+effort: high
 ---
 
 # Build Unplanned Feature
@@ -123,7 +124,7 @@ Then use `AskUserQuestion` to ask:
 
 ### Step 6: Implementation (task-executor Agent)
 
-Implementation is dispatched to the **task-executor agent** with a fresh context window. This agent has `implement-feature`, `use-git-worktree`, and `test-driven-development` skills preloaded — it does not need to call `Skill()` or spawn subagents.
+Implementation is dispatched to the **task-executor agent** with a fresh context window. This agent has `use-git-worktree` and `test-driven-development` skills preloaded — it does not need to call `Skill()` or spawn subagents.
 
 **Build the Task prompt with ALL gathered context from Steps 1-5 (specs from Step 2, requirements from Step 3, feature definition from Steps 4-5).** You MUST include actual values, not placeholders:
 

@@ -2,6 +2,7 @@
 name: test-driven-development
 description: This skill should be used when implementing any feature or bugfix, before writing implementation code
 user-invocable: false
+effort: high
 ---
 
 # Test-Driven Development (TDD)

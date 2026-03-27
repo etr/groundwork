@@ -2,6 +2,7 @@
 name: validation-loop
 description: This skill should be used when implementation is complete to run multi-agent verification with autonomous fix-and-retry until all agents approve
 user-invocable: false
+effort: high
 ---
 
 # Validation Loop Skill

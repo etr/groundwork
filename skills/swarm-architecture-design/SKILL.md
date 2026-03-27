@@ -3,6 +3,7 @@ name: swarm-architecture-design
 description: This skill should be used when designing architecture with parallel advocate agents - spawns multiple researchers to build adversarial cases for competing technology options, producing balanced trade-off analysis backed by evidence
 user-invocable: false
 requires: architecture
+effort: high
 ---
 
 # Swarm Architecture Design

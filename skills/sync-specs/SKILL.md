@@ -2,6 +2,7 @@
 name: sync-specs
 description: This skill should be used at session end when product requirements, features, or scope changed during the session
 user-invocable: false
+effort: high
 ---
 
 # Sync Product Specs Skill

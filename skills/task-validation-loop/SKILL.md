@@ -2,6 +2,7 @@
 name: task-validation-loop
 description: This skill should be used when the task list is complete to run multi-agent verification ensuring tasks cover PRD, follow architecture, and respect design system
 user-invocable: false
+effort: high
 ---
 
 # Task Validation Loop Skill

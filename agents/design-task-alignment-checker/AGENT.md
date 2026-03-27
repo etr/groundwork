@@ -2,8 +2,9 @@
 name: design-task-alignment-checker
 description: Validates UI/frontend tasks follow design system guidelines. Ensures tasks include design tokens, accessibility, and UX patterns.
 model: sonnet
-maxTurns: 30
+maxTurns: 50
 color: magenta
+effort: high
 ---
 
 # Design Task Alignment Checker Agent

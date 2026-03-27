@@ -2,6 +2,7 @@
 name: design-system
 description: This skill should be used when establishing a design system - foundations, brand identity, and UX patterns in one workflow
 user-invocable: false
+effort: high
 ---
 
 # Design System Skill

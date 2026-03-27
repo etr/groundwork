@@ -103,53 +103,6 @@ if [ -f "$PRESERVED_STATE_FILE" ]; then
 fi
 
 # ============================================
-# Workflow State Restoration (checkpoint-and-compact)
-# ============================================
-workflow_restoration=""
-
-if [ -n "$SESSION_ID" ]; then
-  WORKFLOW_STATE_FILE="${STATE_DIR}/workflow-state-${SESSION_ID}.json"
-  if [ -f "$WORKFLOW_STATE_FILE" ]; then
-    # Read workflow state fields using jq, with sed fallback
-    if command -v jq &> /dev/null; then
-      wf_skill=$(jq -r '.skill // empty' "$WORKFLOW_STATE_FILE" 2>/dev/null)
-      wf_step=$(jq -r '.resumeStep // empty' "$WORKFLOW_STATE_FILE" 2>/dev/null)
-      wf_task=$(jq -r '.taskId // empty' "$WORKFLOW_STATE_FILE" 2>/dev/null)
-      wf_worktree=$(jq -r '.additionalContext.worktreePath // empty' "$WORKFLOW_STATE_FILE" 2>/dev/null)
-      wf_branch=$(jq -r '.additionalContext.branch // empty' "$WORKFLOW_STATE_FILE" 2>/dev/null)
-      wf_base_branch=$(jq -r '.additionalContext.baseBranch // empty' "$WORKFLOW_STATE_FILE" 2>/dev/null)
-      wf_batch_mode=$(jq -r '.additionalContext.batchMode // "false" | tostring' "$WORKFLOW_STATE_FILE" 2>/dev/null)
-      wf_cwd=$(jq -r '.additionalContext.cwd // empty' "$WORKFLOW_STATE_FILE" 2>/dev/null)
-      wf_additional=$(jq -r '.additionalContext | to_entries | map("  - **\(.key):** \(.value)") | join("\\n")' "$WORKFLOW_STATE_FILE" 2>/dev/null)
-    else
-      # sed fallback for basic field extraction
-      wf_skill=$(sed -n 's/.*"skill"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$WORKFLOW_STATE_FILE" | head -1)
-      wf_step=$(sed -n 's/.*"resumeStep"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$WORKFLOW_STATE_FILE" | head -1)
-      wf_task=$(sed -n 's/.*"taskId"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$WORKFLOW_STATE_FILE" | head -1)
-      wf_worktree=$(sed -n 's/.*"worktreePath"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$WORKFLOW_STATE_FILE" | head -1)
-      wf_branch=$(sed -n 's/.*"branch"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$WORKFLOW_STATE_FILE" | head -1)
-      wf_base_branch=$(sed -n 's/.*"baseBranch"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$WORKFLOW_STATE_FILE" | head -1)
-      wf_batch_mode=$(sed -n 's/.*"batchMode"[[:space:]]*:[[:space:]]*\(true\|false\).*/\1/p' "$WORKFLOW_STATE_FILE" | head -1)
-      wf_cwd=$(sed -n 's/.*"cwd"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$WORKFLOW_STATE_FILE" | head -1)
-      wf_additional=""
-    fi
-
-    # Delete state file immediately to prevent infinite restore loops
-    rm -f "$WORKFLOW_STATE_FILE" 2>/dev/null || true
-
-    if [ -n "$wf_skill" ] && [ -n "$wf_step" ]; then
-      # Build task args for the skill call
-      wf_task_args=""
-      if [ -n "$wf_task" ]; then
-        wf_task_args="${wf_task}"
-      fi
-
-      workflow_restoration="\\n\\n<workflow-restoration>\\nRESUME WORKFLOW NOW — IN YOUR FIRST REPLY you MUST resume the interrupted workflow.\\n\\n**Skill:** ${wf_skill}\\n**Resume at step:** ${wf_step}\\n**Task ID:** ${wf_task:-none}\\n\\n**Saved context:**\\n- **worktreePath:** ${wf_worktree}\\n- **branch:** ${wf_branch}\\n- **baseBranch:** ${wf_base_branch}\\n- **batchMode:** ${wf_batch_mode}\\n- **cwd:** ${wf_cwd}\\n\\n**Action:** Call \`Skill(skill=\\\"groundwork:${wf_skill}\\\", args=\\\"${wf_task_args}\\\")\` and skip directly to step ${wf_step} using the saved context above. Do NOT re-run earlier steps.\\n</workflow-restoration>"
-    fi
-  fi
-fi
-
-# ============================================
 # Project State Detection (via Node for monorepo support)
 # ============================================
 specs_notice=""
@@ -265,8 +218,6 @@ escape_for_json() {
 warning_escaped=$(escape_for_json "$warning_message")
 specs_notice_escaped=$(escape_for_json "$specs_notice")
 specs_content_escaped=$(escape_for_json "$specs_content")
-workflow_restoration_escaped=$(escape_for_json "$workflow_restoration")
-
 # Build product context section if we have spec content
 product_context=""
 if [ -n "$specs_content" ]; then
@@ -278,7 +229,7 @@ cat <<EOF
 {
   "hookSpecificOutput": {
     "hookEventName": "SessionStart",
-    "additionalContext": "<groundwork-context>\n${loaded_message}${warning_escaped}${specs_notice_escaped}${product_context}\n</groundwork-context>${workflow_restoration_escaped}"
+    "additionalContext": "<groundwork-context>\n${loaded_message}${warning_escaped}${specs_notice_escaped}${product_context}\n</groundwork-context>"
   }
 }
 EOF

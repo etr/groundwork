@@ -403,7 +403,6 @@ Skills are internal workflow definitions invoked automatically by the model when
 |-------|-------------|
 | `execute-task` | Execute a specific task with worktree isolation, TDD, and validation |
 | `next-task` | Find and execute the next unblocked task |
-| `implement-feature` | TDD workflow with multi-agent verification and worktree lifecycle |
 | `build-unplanned-feature` | Build a feature from description — requirement gathering, TDD, and validation |
 | `use-git-worktree` | Create isolated git worktrees for feature work |
 | `test-driven-development` | Red-Green-Refactor with coverage targets |

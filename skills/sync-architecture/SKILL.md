@@ -2,6 +2,7 @@
 name: sync-architecture
 description: This skill should be used at session end when architectural decisions were made, new tech choices were added, or implementation deviated from documented architecture
 user-invocable: false
+effort: high
 ---
 
 # Sync Architecture Skill

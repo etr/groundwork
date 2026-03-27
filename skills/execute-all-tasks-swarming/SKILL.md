@@ -3,6 +3,7 @@ name: execute-all-tasks-swarming
 description: This skill should be used when executing all remaining tasks using agent teams for context isolation - each task runs in a separate teammate session that can spawn its own subagents
 requires:
 user-invocable: false
+effort: high
 ---
 
 # Swarming Batch Task Execution

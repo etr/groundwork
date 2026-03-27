@@ -2,6 +2,7 @@
 name: debugging
 description: This skill should be used when investigating bugs, unexpected behavior, test failures, or any code that does not work as expected - enforces systematic root cause analysis before any fix
 user-invocable: false
+effort: high
 ---
 
 # Debugging

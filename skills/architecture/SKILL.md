@@ -2,6 +2,7 @@
 name: architecture
 description: This skill should be used when the user asks to design system architecture, make architectural decisions, or translate PRD into technical design
 user-invocable: false
+effort: high
 ---
 
 # Architecture Design Skill

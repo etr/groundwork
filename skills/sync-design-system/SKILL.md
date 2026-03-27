@@ -2,6 +2,7 @@
 name: sync-design-system
 description: This skill should be used at session end when design tokens, colors, typography, or UX patterns changed during the session
 user-invocable: false
+effort: high
 ---
 
 # Sync Design System Skill

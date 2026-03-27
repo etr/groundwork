@@ -3,6 +3,7 @@ name: swarm-debugging
 description: This skill should be used when investigating bugs using parallel hypothesis testing with agent teams - spawns multiple teammates to investigate competing theories adversarially, converging on root cause faster than sequential debugging
 user-invocable: false
 requires: debugging
+effort: high
 ---
 
 # Swarm Debugging

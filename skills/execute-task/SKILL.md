@@ -1,8 +1,9 @@
 ---
 name: execute-task
 description: This skill should be used when the user asks to "execute a task", "work on task N", or "implement TASK-NNN" - orchestrates worktree isolation, TDD implementation, validation, and merge.
-requires: implement-feature, validation-loop
+requires: validation-loop
 user-invocable: false
+effort: high
 ---
 
 # Execute Task Skill
@@ -212,7 +213,7 @@ Present summary to the user:
 
 1. **Update status** - Change task file to `**Status:** In Progress` and update the status table in `{{specs_dir}}/tasks/_index.md` or `{{specs_dir}}/tasks.md` (change the task's row to `In Progress`)
 
-2. **Dispatch to the task-executor agent** with a fresh context window. This agent has `implement-feature`, `use-git-worktree`, and `test-driven-development` skills preloaded — it does not need to call `Skill()` or spawn subagents.
+2. **Dispatch to the task-executor agent** with a fresh context window. This agent has `use-git-worktree` and `test-driven-development` skills preloaded — it does not need to call `Skill()` or spawn subagents.
 
 **Build the Task prompt with ALL gathered context.** You MUST include actual values, not placeholders:
 
@@ -357,7 +358,7 @@ RESULT: FAILURE | [TASK-NNN] [reason for failure]
 ## Completed: [TASK-NNN] [Task Title]
 
 **What was done:**
-- [Summary from implement-feature]
+- [Summary from task-executor]
 
 **Acceptance criteria verified:**
 - [x] [Criterion] - [How verified]

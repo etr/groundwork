@@ -3,6 +3,7 @@ name: product-design
 description: This skill should be used when the user asks to add features, modify requirements, update the PRD, write EARS requirements, or iterate on product specifications
 requires: understanding-feature-requests
 user-invocable: false
+effort: high
 ---
 
 # Product Design Skill

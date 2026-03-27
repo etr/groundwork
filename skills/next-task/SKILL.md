@@ -3,6 +3,7 @@ name: next-task
 description: This skill should be used when the user asks to work on the next task, continue with tasks, or wants to know what to do next
 requires: execute-task
 user-invocable: false
+effort: high
 ---
 
 # Next Task Skill
