@@ -153,6 +153,8 @@ Before spawning any teammates, load the execute-task skill content so it can be 
 3. **Extract the body:** Skip the YAML frontmatter (the `---` delimited block at the top of the file) and keep everything after it. This is the execute-task workflow content.
 4. **Store as `EXECUTE_TASK_WORKFLOW`:** Hold this content for use in the teammate spawn prompts below.
 
+**CRITICAL: Embed the workflow VERBATIM.** Do not summarize, condense, rewrite, or adapt the workflow text. The teammate needs the full, unmodified workflow to follow it step-by-step. Summarization loses gate conditions (e.g. mandatory validation before merge) that prevent broken tasks from being merged.
+
 ### Step 3: Create Team and Execute
 
 Determine execution mode from the user's argument or request:
@@ -193,8 +195,11 @@ Create an agent team. Then for each remaining task in dependency order:
       - Skip Step 0 (context already resolved by the lead).
       - TASK IDENTIFIER and TASK DEFINITION are provided above — use them directly.
       - GROUNDWORK_BATCH_MODE is true — auto-proceed all confirmations.
-   2. When complete, report:
+   2. When all the steps of the workflow are complete, report:
       - Success: "TASK-NNN: SUCCESS — [one-line summary]"
+        Include validation results per agent:
+        VALIDATION: code-quality=[N] test-quality=[N] security=[N] spec-alignment=[N] architecture=[N] simplification=[N] housekeeping=[N] performance=[N] design-consistency=[N]
+        (where [N] is the number of iterations each agent required to pass)
       - Failure: "TASK-NNN: FAILURE — [one-line reason]"
    ```
 
@@ -202,13 +207,22 @@ Create an agent team. Then for each remaining task in dependency order:
 
 6. **Collect result** from the teammate's completion message.
 
-7. **Update task status:**
+7. **Verify workflow compliance:** Parse the teammate's completion message for validation evidence.
+   - Look for the `VALIDATION:` line with per-agent iteration counts (e.g., `code-quality=2 test-quality=1 ...`).
+   - If the validation line is **present**: proceed to step 8.
+   - If the validation line is **missing**: send the teammate a correction via `SendMessage`:
+     > "Your completion report is missing the VALIDATION line with per-agent iteration counts. Run the validation loop (Step 7.5 of the execute-task workflow) and report back with:
+     > VALIDATION: code-quality=[N] test-quality=[N] security=[N] spec-alignment=[N] architecture=[N] simplification=[N] housekeeping=[N] performance=[N] design-consistency=[N]"
+   - Wait for the teammate to respond and re-collect the result.
+   - If the teammate's second response still lacks the validation line: mark the task as failed with reason "Teammate did not complete validation".
+
+8. **Update task status:**
    - Success → `**Status:** Complete` in the tasks file
    - Failure → STOP immediately (see failure handling below)
 
-8. **Shut down the teammate** before spawning the next one. This ensures each task gets a completely clean context.
+9. **Shut down the teammate** before spawning the next one. This ensures each task gets a completely clean context.
 
-9. **Log result:** "Completed TASK-NNN: [Title] — [one-line summary]"
+10. **Log result:** "Completed TASK-NNN: [Title] — [one-line summary]"
 
 **On Failure:** Report the failed task, reason, tasks completed this session, and tasks remaining. Note that the failed task's worktree is preserved at `.worktrees/TASK-NNN` for investigation. Clean up the team.
 
@@ -226,9 +240,18 @@ Create an agent team. Then for each remaining task in dependency order:
 
    c. **Spawn teammates** for each task in the level, each with `model: "opus"` and the same spawn prompt as sequential mode.
 
-   d. **Wait for all teammates in this level to complete.** As teammates finish, collect results and update statuses. If any task fails, stop spawning new teammates but let running teammates finish.
+   d. **Wait for all teammates in this level to complete.** As teammates finish, collect results. If any task fails, stop spawning new teammates but let running teammates finish.
 
-   e. **Shut down all teammates** in this level before proceeding to the next.
+   e. **Verify workflow compliance** for each teammate before shutting it down:
+      - Parse the teammate's completion message for the `VALIDATION:` line with per-agent iteration counts.
+      - If **present**: update task status to Complete.
+      - If **missing**: send the teammate a correction via `SendMessage`:
+        > "Your completion report is missing the VALIDATION line with per-agent iteration counts. Run the validation loop (Step 7.5 of the execute-task workflow) and report back with:
+        > VALIDATION: code-quality=[N] test-quality=[N] security=[N] spec-alignment=[N] architecture=[N] simplification=[N] housekeeping=[N] performance=[N] design-consistency=[N]"
+      - Wait for the teammate to respond and re-check.
+      - If the teammate's second response still lacks the validation line: mark the task as failed with reason "Teammate did not complete validation".
+
+   f. **Shut down all teammates** in this level before proceeding to the next.
 
 3. **Continue to next dependency level** only after all tasks in the current level are complete.
 
