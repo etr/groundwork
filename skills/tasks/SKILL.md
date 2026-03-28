@@ -3,12 +3,37 @@ name: tasks
 description: This skill should be used when the user asks to create a task list, plan implementation, break down work, or generate tickets from product specs and architecture
 user-invocable: false
 requires: task-validation-loop
-effort: high
 ---
 
 # Task Generation Skill
 
 Translates product specs and architecture into actionable implementation tasks.
+
+## Pre-flight: Model Recommendation
+
+**Your current effort level is `{{effort_level}}`.**
+
+Skip this step silently if effort is `high` or higher AND you are Opus (1M context).
+If effort is below `high`, you MUST show the recommendation prompt — regardless of model.
+If you are not Opus (1M context), you MUST show the recommendation prompt - regardless of effort level.
+
+Otherwise → use `AskUserQuestion`:
+
+```json
+{
+  "questions": [{
+    "question": "Do you want to switch? Task granularity judgment and vertical slicing decisions determine execution success.\n\nTo switch: cancel, run `/model opus[1m]` and `/effort high`, then re-invoke this skill.",
+    "header": "Recommended: Opus (1M context) at high effort",
+    "options": [
+      { "label": "Continue" },
+      { "label": "Cancel — I'll switch first" }
+    ],
+    "multiSelect": false
+  }]
+}
+```
+
+If the user selects "Cancel — I'll switch first": output the switching commands above and stop. Do not proceed with the skill.
 
 ## Step 0: Resolve Project Context
 

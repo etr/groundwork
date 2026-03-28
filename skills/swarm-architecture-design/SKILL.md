@@ -3,7 +3,6 @@ name: swarm-architecture-design
 description: This skill should be used when designing architecture with parallel advocate agents - spawns multiple researchers to build adversarial cases for competing technology options, producing balanced trade-off analysis backed by evidence
 user-invocable: false
 requires: architecture
-effort: high
 ---
 
 # Swarm Architecture Design
@@ -15,6 +14,32 @@ Parallel adversarial research. Multiple advocate agents each build the strongest
 **Core principle:** One researcher anchors on whichever technology they explore first. Advocates who must challenge each other cannot.
 
 This skill extends the `groundwork:architecture` workflow. Steps 1-2 and 5-6 follow that skill exactly. **Step 3 (Research) is replaced** by the swarm research phase. Step 4 (Iterate Decisions) is enhanced with aggregated adversarial findings.
+
+## Pre-flight: Model Recommendation
+
+**Your current effort level is `{{effort_level}}`.**
+
+Skip this step silently if effort is `high` or higher AND you are Opus (1M context).
+If effort is below `high`, you MUST show the recommendation prompt — regardless of model.
+If you are not Opus (1M context), you MUST show the recommendation prompt - regardless of effort level.
+
+Otherwise → use `AskUserQuestion`:
+
+```json
+{
+  "questions": [{
+    "question": "Do you want to switch? Adversarial prompt design and cross-decision conflict synthesis benefit from deeper reasoning.\n\nTo switch: cancel, run `/model opus[1m]` and `/effort high`, then re-invoke this skill.",
+    "header": "Recommended: Opus (1M context) at high effort",
+    "options": [
+      { "label": "Continue" },
+      { "label": "Cancel — I'll switch first" }
+    ],
+    "multiSelect": false
+  }]
+}
+```
+
+If the user selects "Cancel — I'll switch first": output the switching commands above and stop. Do not proceed with the skill.
 
 ## When to Use
 

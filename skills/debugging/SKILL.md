@@ -2,7 +2,6 @@
 name: debugging
 description: This skill should be used when investigating bugs, unexpected behavior, test failures, or any code that does not work as expected - enforces systematic root cause analysis before any fix
 user-invocable: false
-effort: high
 ---
 
 # Debugging
@@ -14,6 +13,32 @@ Find the root cause. Prove it. Then fix it.
 **Core principle:** If you can't explain why the bug happens, you don't know if your fix is correct.
 
 **Violating the letter of the rules is violating the spirit of the rules.**
+
+## Pre-flight: Model Recommendation
+
+**Your current effort level is `{{effort_level}}`.**
+
+Skip this step silently if effort is `high` or higher AND you are Opus (1M context).
+If effort is below `high`, you MUST show the recommendation prompt — regardless of model.
+If you are not Opus (1M context), you MUST show the recommendation prompt - regardless of effort level.
+
+Otherwise → use `AskUserQuestion`:
+
+```json
+{
+  "questions": [{
+    "question": "Do you want to switch? Falsifiable hypothesis formation and resisting the temptation to jump to fixes benefit from deeper reasoning.\n\nTo switch: cancel, run `/model opus[1m]` and `/effort high`, then re-invoke this skill.",
+    "header": "Recommended: Opus (1M context) at high effort",
+    "options": [
+      { "label": "Continue" },
+      { "label": "Cancel — I'll switch first" }
+    ],
+    "multiSelect": false
+  }]
+}
+```
+
+If the user selects "Cancel — I'll switch first": output the switching commands above and stop. Do not proceed with the skill.
 
 ## When to Use
 

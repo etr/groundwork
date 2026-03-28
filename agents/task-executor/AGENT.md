@@ -5,6 +5,7 @@ model: inherit
 maxTurns: 150
 color: blue
 memory: project
+model: opus[1m]
 effort: high
 skills:
   - groundwork:use-git-worktree

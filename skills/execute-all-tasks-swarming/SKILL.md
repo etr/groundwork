@@ -3,7 +3,6 @@ name: execute-all-tasks-swarming
 description: This skill should be used when executing all remaining tasks using agent teams for context isolation - each task runs in a separate teammate session that can spawn its own subagents
 requires:
 user-invocable: false
-effort: high
 ---
 
 # Swarming Batch Task Execution
@@ -17,6 +16,32 @@ Executes all remaining tasks using **agent teams** for context isolation. Each t
 **Requirement:** Agent teams must be enabled (`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1"` in settings.json `env` section).
 
 **Model:** Teammates spawn with `model: "opus"` for extended context.
+
+## Pre-flight: Model Recommendation
+
+**Your current effort level is `{{effort_level}}`.**
+
+Skip this step silently if effort is `high` or higher AND you are Sonnet or Opus.
+If effort is below `high`, you MUST show the recommendation prompt — regardless of model.
+If you are not Sonnet or Opus, you MUST show the recommendation prompt - regardless of effort level.
+
+Otherwise → use `AskUserQuestion`:
+
+```json
+{
+  "questions": [{
+    "question": "Do you want to switch? Team orchestration with worktree coordination across agents benefits from consistent reasoning.\n\nTo switch: cancel, run `/effort high` (and `/model sonnet` if on Haiku), then re-invoke this skill.",
+    "header": "Recommended: Sonnet or Opus at high effort",
+    "options": [
+      { "label": "Continue" },
+      { "label": "Cancel — I'll switch first" }
+    ],
+    "multiSelect": false
+  }]
+}
+```
+
+If the user selects "Cancel — I'll switch first": output the switching commands above and stop. Do not proceed with the skill.
 
 ## Workflow
 

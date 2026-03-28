@@ -218,6 +218,14 @@ Validate code quality and spec alignment.
 | `/validate` | — | Re-run 9-agent verification on current changes | Verify code quality after manual changes |
 | `/check-specs-alignment` | `[context]` | Audit code alignment with PRD and architecture | Periodic drift detection |
 
+### Review Commands
+
+Review pull requests with multi-agent analysis. Requires `gh` (GitHub CLI).
+
+| Command | Args | Description | When to Use |
+|---------|------|-------------|-------------|
+| `/review-pr` | `[PR# or URL] [--no-interactive]` | Multi-agent PR review with inline GitHub comments | Reviewing PRs before merge |
+
 ### Synchronization Commands
 
 Keep specs in sync with what was actually built. Run these at the end of a session when implementation diverged from the original plan.
@@ -238,6 +246,16 @@ Plugin management and reference.
 | `/skills` | — | List all available Groundwork skills | Discovering available capabilities |
 | `/groundwork-check` | — | Validate plugin installation | Troubleshooting issues |
 | `/groundwork-help` | — | Show all commands and skills | Quick reference |
+
+## Model Recommendations
+
+Skills vary in complexity. The table below lists the minimum model tier recommended for each command. Running a command below its recommended tier may produce lower-quality results or hit context limits.
+
+| Tier | Minimum Model | Commands |
+|------|---------------|----------|
+| **Opus (1M)** | Opus at high effort | `/design-product`, `/design-architecture`, `/ux-design`, `/create-tasks`, `/debug`, `/swarm-debug`, `/swarm-design-architecture` |
+| **Sonnet+** | Sonnet or Opus at high effort | `/work-on`, `/work-on-next-task`, `/just-do-it`, `/just-do-it-swarming`, `/build-unplanned`, `/validate`, `/check-specs-alignment`, `/review-pr`, `/source-product-specs-from-code`, `/source-architecture-from-code`, `/source-ux-design-from-code` |
+| **Any** | No requirement | `/split-spec`, `/setup-repo`, `/select-project`, `/skills`, `/groundwork-help`, `/groundwork-check` |
 
 ## Workflows
 
@@ -343,6 +361,22 @@ Check quality and alignment at any point:
 /check-specs-alignment       # Audit drift between code and specs
 ```
 
+### PR Review
+
+Review a pull request with 6-8 specialized agents:
+
+```
+/review-pr 42
+```
+
+Agents (code quality, test quality, security, performance, simplifier, housekeeper — plus architecture and design consistency when specs exist) run in parallel. Findings are deduplicated and posted as a single atomic review to GitHub with inline comments. Supports incremental reviews when previous Groundwork reviews exist.
+
+For CI or batch pipelines:
+
+```
+/review-pr 42 --no-interactive
+```
+
 ## Monorepo Support
 
 Groundwork supports monorepos — repositories containing multiple projects, each with their own specs and tasks.
@@ -425,6 +459,12 @@ Skills are internal workflow definitions invoked automatically by the model when
 | `validation-loop` | Multi-agent verification with autonomous fix-and-retry |
 | `check-alignment` | Verify code matches specs and architecture, detect drift |
 
+### Review
+
+| Skill | Description |
+|-------|-------------|
+| `pr-reviewing` | Multi-agent PR review — runs 6-8 agents in parallel, deduplicates findings, posts inline GitHub comments |
+
 ### Synchronization
 
 | Skill | Description |
@@ -439,7 +479,7 @@ For contributors and curious users — how the plugin works under the hood.
 
 ### Agents
 
-Agents are specialized sub-processes that run verification and validation tasks. They are invoked automatically by skills like `validation-loop` and `task-validation-loop`.
+Agents are specialized sub-processes that run verification and validation tasks. They are invoked automatically by skills like `validation-loop`, `task-validation-loop`, and `pr-reviewing`.
 
 #### Implementation Verification (9 agents)
 

@@ -2,12 +2,37 @@
 name: design-system
 description: This skill should be used when establishing a design system - foundations, brand identity, and UX patterns in one workflow
 user-invocable: false
-effort: high
 ---
 
 # Design System Skill
 
 Establishes a complete design system through guided collaboration: foundations, brand identity, and UX patterns.
+
+## Pre-flight: Model Recommendation
+
+**Your current effort level is `{{effort_level}}`.**
+
+Skip this step silently if effort is `high` or higher AND you are Opus (1M context).
+If effort is below `high`, you MUST show the recommendation prompt — regardless of model.
+If you are not Opus (1M context), you MUST show the recommendation prompt - regardless of effort level.
+
+Otherwise → use `AskUserQuestion`:
+
+```json
+{
+  "questions": [{
+    "question": "Do you want to switch? Creative and analytical synthesis — resisting generic defaults requires active judgment.\n\nTo switch: cancel, run `/model opus[1m]` and `/effort high`, then re-invoke this skill.",
+    "header": "Recommended: Opus (1M context) at high effort",
+    "options": [
+      { "label": "Continue" },
+      { "label": "Cancel — I'll switch first" }
+    ],
+    "multiSelect": false
+  }]
+}
+```
+
+If the user selects "Cancel — I'll switch first": output the switching commands above and stop. Do not proceed with the skill.
 
 ## Collaboration Approach
 

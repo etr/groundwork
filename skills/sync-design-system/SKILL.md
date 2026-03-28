@@ -2,12 +2,37 @@
 name: sync-design-system
 description: This skill should be used at session end when design tokens, colors, typography, or UX patterns changed during the session
 user-invocable: false
-effort: high
 ---
 
 # Sync Design System Skill
 
 Keeps `{{specs_dir}}/design_system.md` synchronized with design implementation decisions made during sessions.
+
+## Pre-flight: Model Recommendation
+
+**Your current effort level is `{{effort_level}}`.**
+
+Skip this step silently if effort is `high` or higher AND you are Sonnet or Opus.
+If effort is below `high`, you MUST show the recommendation prompt — regardless of model.
+If you are not Sonnet or Opus, you MUST show the recommendation prompt - regardless of effort level.
+
+Otherwise → use `AskUserQuestion`:
+
+```json
+{
+  "questions": [{
+    "question": "Do you want to switch? Design token and pattern change categorization benefits from consistent reasoning.\n\nTo switch: cancel, run `/effort high` (and `/model sonnet` if on Haiku), then re-invoke this skill.",
+    "header": "Recommended: Sonnet or Opus at high effort",
+    "options": [
+      { "label": "Continue" },
+      { "label": "Cancel — I'll switch first" }
+    ],
+    "multiSelect": false
+  }]
+}
+```
+
+If the user selects "Cancel — I'll switch first": output the switching commands above and stop. Do not proceed with the skill.
 
 ## Step 0: Resolve Project Context
 

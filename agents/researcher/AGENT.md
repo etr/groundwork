@@ -1,10 +1,10 @@
 ---
 name: researcher
 description: Researches technologies, frameworks, and patterns BEFORE architecture decisions or task planning. Gathers official docs, ecosystem recommendations, and common pitfalls.
-model: opus
 maxTurns: 50
 color: blue
-effort: high
+model: opus[1m]
+effort: max
 ---
 
 # Researcher Agent

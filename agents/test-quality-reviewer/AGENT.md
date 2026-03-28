@@ -1,9 +1,9 @@
 ---
 name: test-quality-reviewer
 description: Reviews test quality for structural correctness, coverage completeness, redundancy, and testing best practices. Use after task implementation.
-model: sonnet
 maxTurns: 50
 color: green
+model: sonnet
 effort: high
 ---
 

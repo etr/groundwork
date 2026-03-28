@@ -183,6 +183,25 @@ if $has_prd || $has_arch; then
   fi
 fi
 
+# ============================================
+# Template Variable Resolution
+# ============================================
+template_vars=""
+template_vars=$(GROUNDWORK_SESSION_ID="$SESSION_ID" timeout 2 node -e "
+  const path = require('path');
+  const {getEffortLevel} = require('${PLUGIN_ROOT}/lib/skills-core');
+  const {getSpecsDir, getProjectRoot, getProjectName, getRepoRoot} = require('${PLUGIN_ROOT}/lib/project-context');
+  const rl = getRepoRoot() || process.cwd();
+  const pr = getProjectRoot();
+  const rpr = pr === rl ? '.' : path.relative(rl, pr);
+  console.log([
+    '- {{effort_level}} = ' + getEffortLevel(),
+    '- {{specs_dir}} = ' + getSpecsDir(),
+    '- {{project_root}} = ' + rpr,
+    '- {{project_name}} = ' + getProjectName()
+  ].join('\n'));
+" 2>/dev/null || echo '')
+
 # Clean up stale session files (best-effort, non-blocking)
 if [ -f "${PLUGIN_ROOT}/lib/project-context.js" ]; then
   GROUNDWORK_SESSION_ID="$SESSION_ID" node -e "try{require('${PLUGIN_ROOT}/lib/project-context').cleanupStaleSessions()}catch(e){}" 2>/dev/null || true
@@ -224,12 +243,19 @@ if [ -n "$specs_content" ]; then
   product_context="\\n\\n<product-context>\\n${specs_content_escaped}\\n</product-context>"
 fi
 
+# Build template vars block if resolved
+template_vars_block=""
+if [ -n "$template_vars" ]; then
+  template_vars_escaped=$(escape_for_json "$template_vars")
+  template_vars_block="\\n\\n<template-vars>\\nIMPORTANT: Skill instructions use {{variable}} placeholders. Wherever you see these, substitute the resolved value:\\n${template_vars_escaped}\\nExample: \\\"Read {{specs_dir}}/tasks.md\\\" means \\\"Read specs/tasks.md\\\"\\n</template-vars>"
+fi
+
 # Output context injection as JSON
 cat <<EOF
 {
   "hookSpecificOutput": {
     "hookEventName": "SessionStart",
-    "additionalContext": "<groundwork-context>\n${loaded_message}${warning_escaped}${specs_notice_escaped}${product_context}\n</groundwork-context>"
+    "additionalContext": "<groundwork-context>\n${loaded_message}${warning_escaped}${specs_notice_escaped}${product_context}${template_vars_block}\n</groundwork-context>"
   }
 }
 EOF

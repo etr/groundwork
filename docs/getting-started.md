@@ -85,6 +85,7 @@ Identifies and works on the next unblocked task.
 2. Use `/groundwork:check-specs-alignment` to audit code vs specs
 3. Use `/groundwork:debug` for systematic debugging
 4. Use `/groundwork:build-unplanned` to implement ad-hoc features from a description
+5. Use `/groundwork:review-pr` for multi-agent PR reviews with inline GitHub comments
 
 ## Tips
 
@@ -92,6 +93,7 @@ Identifies and works on the next unblocked task.
 - **Follow skills exactly** - They encode proven workflows
 - **Use process skills first** - Planning before implementation
 - **Review regularly** - Use `/groundwork:validate` to re-run multi-agent verification after each major change
+- **Review PRs with agents** - Use `/groundwork:review-pr` to run multi-agent analysis and post inline comments to GitHub
 
 ## Getting Help
 

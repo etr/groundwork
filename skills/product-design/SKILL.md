@@ -3,7 +3,6 @@ name: product-design
 description: This skill should be used when the user asks to add features, modify requirements, update the PRD, write EARS requirements, or iterate on product specifications
 requires: understanding-feature-requests
 user-invocable: false
-effort: high
 ---
 
 # Product Design Skill
@@ -17,6 +16,32 @@ Interactive workflow for iteratively designing and documenting product requireme
 3. **Approve** - Present draft for user approval
 4. **Commit** - Edit the PRD document when requirements are approved
 5. **Next Step** - Ask user what to do next (architecture, UX, or another feature)
+
+## Pre-flight: Model Recommendation
+
+**Your current effort level is `{{effort_level}}`.**
+
+Skip this step silently if effort is `high` or higher AND you are Opus (1M context).
+If effort is below `high`, you MUST show the recommendation prompt — regardless of model.
+If you are not Opus (1M context), you MUST show the recommendation prompt - regardless of model.
+
+Otherwise → use `AskUserQuestion`:
+
+```json
+{
+  "questions": [{
+    "question": "Do you want to switch? Cross-spec contradiction detection across PRD, architecture, and design system benefits from deeper reasoning.\n\nTo switch: cancel, run `/model opus[1m]` and `/effort high`, then re-invoke this skill.",
+    "header": "Recommended: Opus (1M context) at high effort",
+    "options": [
+      { "label": "Continue" },
+      { "label": "Cancel — I'll switch first" }
+    ],
+    "multiSelect": false
+  }]
+}
+```
+
+If the user selects "Cancel — I'll switch first": output the switching commands above and stop. Do not proceed with the skill.
 
 ## Step 0: Resolve Project Context
 

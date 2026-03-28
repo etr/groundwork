@@ -1,9 +1,9 @@
 ---
 name: performance-reviewer
 description: Reviews code changes for performance issues including algorithmic complexity, memory management, I/O inefficiencies, and resource management. Use after task implementation.
-model: sonnet
 maxTurns: 50
 color: yellow
+model: sonnet
 effort: high
 ---
 

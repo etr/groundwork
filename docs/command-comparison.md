@@ -92,6 +92,7 @@ This guide explains when to use similar commands that serve related purposes.
 | Re-run multi-agent verification | `/groundwork:validate` |
 | Systematic debugging | `/groundwork:debug` |
 | Build ad-hoc feature from description | `/groundwork:build-unplanned` |
+| Review a pull request | `/groundwork:review-pr` |
 
 ---
 
@@ -116,3 +117,29 @@ This guide explains when to use similar commands that serve related purposes.
 - Feature is already defined in the task list
 - Working within an established project plan
 - Need traceability back to specs and architecture
+
+---
+
+## PR Review vs Local Validation
+
+### `/groundwork:review-pr` vs `/groundwork:validate`
+
+| Aspect | `/groundwork:review-pr` | `/groundwork:validate` |
+|--------|-------------------------|------------------------|
+| **Primary Use** | Review a pull request on GitHub | Verify uncommitted local changes |
+| **Input** | PR number or URL | Current working tree diff |
+| **Output** | Inline comments posted to GitHub | Local agent reports, auto-fix loop |
+| **Agents** | 6-8 (code quality, test quality, security, performance, simplifier, housekeeper, plus architecture and design when specs exist) | 9 implementation verification agents |
+| **Scope** | PR diff only | All staged/unstaged changes |
+| **Requires** | `gh` CLI, GitHub remote | Nothing beyond local repo |
+| **Mode** | Read-only analysis + GitHub comments | Read-write (can auto-fix issues) |
+
+**When to use `/groundwork:review-pr`:**
+- Reviewing someone else's PR before merge
+- Getting automated feedback on your own PR
+- CI/batch pipelines with `--no-interactive`
+
+**When to use `/groundwork:validate`:**
+- After completing a task, before committing
+- Re-checking quality after manual edits
+- Want autonomous fix-and-retry loop

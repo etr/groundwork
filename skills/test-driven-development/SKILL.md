@@ -2,7 +2,6 @@
 name: test-driven-development
 description: This skill should be used when implementing any feature or bugfix, before writing implementation code
 user-invocable: false
-effort: high
 ---
 
 # Test-Driven Development (TDD)
@@ -14,6 +13,32 @@ Write the test first. Watch it fail. Write minimal code to pass.
 **Core principle:** If you didn't watch the test fail, you don't know if it tests the right thing.
 
 **Violating the letter of the rules is violating the spirit of the rules.**
+
+## Pre-flight: Model Recommendation
+
+**Your current effort level is `{{effort_level}}`.**
+
+Skip this step silently if effort is `high` or higher AND you are Sonnet or Opus.
+If effort is below `high`, you MUST show the recommendation prompt — regardless of model.
+If you are not Sonnet or Opus, you MUST show the recommendation prompt - regardless of effort level.
+
+Otherwise → use `AskUserQuestion`:
+
+```json
+{
+  "questions": [{
+    "question": "Do you want to switch? TDD discipline enforcement requires consistent reasoning to resist rationalizations for skipping steps.\n\nTo switch: cancel, run `/effort high` (and `/model sonnet` if on Haiku), then re-invoke this skill.",
+    "header": "Recommended: Sonnet or Opus at high effort",
+    "options": [
+      { "label": "Continue" },
+      { "label": "Cancel — I'll switch first" }
+    ],
+    "multiSelect": false
+  }]
+}
+```
+
+If the user selects "Cancel — I'll switch first": output the switching commands above and stop. Do not proceed with the skill.
 
 ## When to Use
 

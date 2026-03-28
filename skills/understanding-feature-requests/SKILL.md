@@ -2,12 +2,37 @@
 name: understanding-feature-requests
 description: This skill should be used when clarifying feature requests, gathering requirements, or checking for contradictions in proposed changes
 user-invocable: false
-effort: high
 ---
 
 # Understanding Feature Requests
 
 Interactive workflow for clarifying feature requests and ensuring they don't conflict with existing requirements.
+
+## Pre-flight: Model Recommendation
+
+**Your current effort level is `{{effort_level}}`.**
+
+Skip this step silently if effort is `high` or higher AND you are Sonnet or Opus.
+If effort is below `high`, you MUST show the recommendation prompt — regardless of model.
+If you are not Sonnet or Opus, you MUST show the recommendation prompt - regardless of effort level.
+
+Otherwise → use `AskUserQuestion`:
+
+```json
+{
+  "questions": [{
+    "question": "Do you want to switch? Contradiction detection in feature requirements benefits from consistent reasoning.\n\nTo switch: cancel, run `/effort high` (and `/model sonnet` if on Haiku), then re-invoke this skill.",
+    "header": "Recommended: Sonnet or Opus at high effort",
+    "options": [
+      { "label": "Continue" },
+      { "label": "Cancel — I'll switch first" }
+    ],
+    "multiSelect": false
+  }]
+}
+```
+
+If the user selects "Cancel — I'll switch first": output the switching commands above and stop. Do not proceed with the skill.
 
 ## Step 1: Clarify the Request
 

@@ -2,7 +2,6 @@
 name: architecture
 description: This skill should be used when the user asks to design system architecture, make architectural decisions, or translate PRD into technical design
 user-invocable: false
-effort: high
 ---
 
 # Architecture Design Skill
@@ -20,6 +19,32 @@ Interactive workflow for translating product requirements into architecture thro
 2. **Identify Decisions** - List architectural decisions to make
 3. **Iterate Decisions** - For each decision: present options → discuss → decide
 4. **Document** - Write architecture with full decision records
+
+## Pre-flight: Model Recommendation
+
+**Your current effort level is `{{effort_level}}`.**
+
+Skip this step silently if effort is `high` or higher AND you are Opus (1M context).
+If effort is below `high`, you MUST show the recommendation prompt — regardless of model.
+If you are not Opus (1M context), you MUST show the recommendation prompt - regardless of effort level.
+
+Otherwise → use `AskUserQuestion`:
+
+```json
+{
+  "questions": [{
+    "question": "Do you want to switch? Cross-decision conflict detection and trade-off synthesis across NFRs benefit from deeper reasoning.\n\nTo switch: cancel, run `/model opus[1m]` and `/effort high`, then re-invoke this skill.",
+    "header": "Recommended: Opus (1M context) at high effort",
+    "options": [
+      { "label": "Continue" },
+      { "label": "Cancel — I'll switch first" }
+    ],
+    "multiSelect": false
+  }]
+}
+```
+
+If the user selects "Cancel — I'll switch first": output the switching commands above and stop. Do not proceed with the skill.
 
 ## Step 0: Resolve Project Context
 

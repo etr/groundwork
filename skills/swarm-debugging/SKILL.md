@@ -3,7 +3,6 @@ name: swarm-debugging
 description: This skill should be used when investigating bugs using parallel hypothesis testing with agent teams - spawns multiple teammates to investigate competing theories adversarially, converging on root cause faster than sequential debugging
 user-invocable: false
 requires: debugging
-effort: high
 ---
 
 # Swarm Debugging
@@ -15,6 +14,32 @@ Parallel adversarial investigation. Multiple teammates test competing hypotheses
 **Core principle:** One investigator anchors on their first theory. A team of investigators who must disprove each other cannot.
 
 This skill extends the `groundwork:debugging` workflow. Phases 1-2 and 4-5 follow that skill exactly. Phase 3 (ISOLATE) is replaced by parallel swarm investigation using Claude Code agent teams.
+
+## Pre-flight: Model Recommendation
+
+**Your current effort level is `{{effort_level}}`.**
+
+Skip this step silently if effort is `high` or higher AND you are Opus (1M context).
+If effort is below `high`, you MUST show the recommendation prompt — regardless of model.
+If you are not Opus (1M context), you MUST show the recommendation prompt - regardless of effort level.
+
+Otherwise → use `AskUserQuestion`:
+
+```json
+{
+  "questions": [{
+    "question": "Do you want to switch? Hypothesis generation quality determines whether the entire swarm investigates the right space.\n\nTo switch: cancel, run `/model opus[1m]` and `/effort high`, then re-invoke this skill.",
+    "header": "Recommended: Opus (1M context) at high effort",
+    "options": [
+      { "label": "Continue" },
+      { "label": "Cancel — I'll switch first" }
+    ],
+    "multiSelect": false
+  }]
+}
+```
+
+If the user selects "Cancel — I'll switch first": output the switching commands above and stop. Do not proceed with the skill.
 
 ## Prerequisites
 

@@ -13,7 +13,6 @@
         "description": "Load skill context on session start"
       }
     ],
-    "PreToolUse": [],
     "PostToolUse": [
       {
         "matcher": "Bash",
@@ -24,6 +23,16 @@
           }
         ],
         "description": "Verify commits align with specs/tasks.md after git commit"
+      },
+      {
+        "matcher": "Skill",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/lib/resolve-template-vars.js"
+          }
+        ],
+        "description": "Inject resolved template variable values after skill loads"
       }
     ],
     "SubagentStop": [

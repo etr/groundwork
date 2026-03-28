@@ -3,12 +3,37 @@ name: execute-all-tasks
 description: This skill should be used when executing all remaining tasks in batch mode - orchestrates worktree isolation, TDD, validation, and merge for each task in dependency order
 requires: validation-loop
 user-invocable: false
-effort: high
 ---
 
 # Just Do It - Batch Task Execution
 
 Executes all remaining tasks in sequence until completion, stopping on first failure.
+
+## Pre-flight: Model Recommendation
+
+**Your current effort level is `{{effort_level}}`.**
+
+Skip this step silently if effort is `high` or higher AND you are Sonnet or Opus.
+If effort is below `high`, you MUST show the recommendation prompt — regardless of model.
+If you are not Sonnet or Opus, you MUST show the recommendation prompt - regardless of effort level.
+
+Otherwise → use `AskUserQuestion`:
+
+```json
+{
+  "questions": [{
+    "question": "Do you want to switch? Batch orchestration with dependency ordering and failure handling benefits from consistent reasoning.\n\nTo switch: cancel, run `/effort high` (and `/model sonnet` if on Haiku), then re-invoke this skill.",
+    "header": "Recommended: Sonnet or Opus at high effort",
+    "options": [
+      { "label": "Continue" },
+      { "label": "Cancel — I'll switch first" }
+    ],
+    "multiSelect": false
+  }]
+}
+```
+
+If the user selects "Cancel — I'll switch first": output the switching commands above and stop. Do not proceed with the skill.
 
 ## Workflow
 

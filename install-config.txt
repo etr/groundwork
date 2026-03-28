@@ -17,6 +17,7 @@ sync-specs = groundwork-source-product-specs-from-code command
 sync-design-system = groundwork-source-ux-design-from-code command
 design-system = groundwork-ux-design command
 validation-loop = groundwork-validate command
+pr-reviewing = groundwork-review-pr command
 next-task = groundwork-work-on-next-task command
 execute-task = groundwork-work-on command
 execute-all-tasks = groundwork-just-do-it command
