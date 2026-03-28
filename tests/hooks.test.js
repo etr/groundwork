@@ -53,12 +53,12 @@ describe('hooks.json', () => {
     assert.ok(Array.isArray(parsed.hooks.SessionStart), 'SessionStart should be array');
   });
 
-  test('has PreToolUse hooks', () => {
+  test('has PostToolUse hooks', () => {
     const hooksJsonPath = path.join(HOOKS_DIR, 'hooks.json');
     const parsed = JSON.parse(fs.readFileSync(hooksJsonPath, 'utf8'));
 
-    assert.ok(parsed.hooks.PreToolUse, 'Should have PreToolUse hooks');
-    assert.ok(Array.isArray(parsed.hooks.PreToolUse), 'PreToolUse should be array');
+    assert.ok(parsed.hooks.PostToolUse, 'Should have PostToolUse hooks');
+    assert.ok(Array.isArray(parsed.hooks.PostToolUse), 'PostToolUse should be array');
   });
 
   test('all hook commands reference existing files', () => {
