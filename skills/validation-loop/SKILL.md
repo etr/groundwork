@@ -97,7 +97,7 @@ Record skipped agents in the aggregation table with verdict `skipped` and a note
 
 ### 2. Launch Verification Agents
 
-Use Task tool to launch all 9 agents in parallel:
+Use Agent tool to launch all 9 agents in parallel:
 
 | Agent (`subagent_type`) | Context to Provide |
 |-------------------------|-------------------|
@@ -161,7 +161,7 @@ Each returns JSON:
    Collect all non-minor findings from agents that returned `request-changes`. Spawn:
 
    ```
-   Task(
+   Agent(
      subagent_type="general-purpose",
      description="Fix validation findings (iteration N)",
      prompt="Fix the following validation findings in [working directory].

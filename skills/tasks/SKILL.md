@@ -172,7 +172,7 @@ For major technologies in the architecture, gather implementation guidance befor
 
 1. Invoke the researcher agent:
    ```
-   Task(
+   Agent(
      subagent_type="groundwork:researcher:researcher",
      prompt="Research Topic: [technology from architecture]
      Research Questions:

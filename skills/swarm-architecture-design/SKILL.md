@@ -104,7 +104,7 @@ This is where swarm architecture diverges from the base skill. Instead of a sing
 
 ### 3.1 — Detect Agent Availability
 
-At the start of Step 3, check whether the Task tool is available by attempting to use it. If Task is unavailable, fall back gracefully (see Graceful Fallback section).
+At the start of Step 3, check whether the Agent tool is available by attempting to use it. If Agent is unavailable, fall back gracefully (see Graceful Fallback section).
 
 Also check for agent teams availability. If agent teams is not available:
 > "Agent teams not enabled — running parallel research without debate round. Enable with `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=true` for adversarial debate between advocates."
@@ -123,7 +123,7 @@ Present the triage to the user:
 
 ### 3.3 — Spawn Advocate Agents
 
-For each swarm-worthy decision area, spawn one advocate per technology option (2-4 advocates per decision area). Each advocate is a Task using the `groundwork:researcher:researcher` agent with an advocate prompt overlay.
+For each swarm-worthy decision area, spawn one advocate per technology option (2-4 advocates per decision area). Each advocate is an Agent call using the `groundwork:researcher:researcher` agent with an advocate prompt overlay.
 
 **Launch all advocates for a decision area in parallel.** Cap at 3 decision areas swarmed simultaneously (max ~12 agents total). If more than 3 decision areas qualify, batch them.
 
@@ -382,7 +382,7 @@ Follow the `groundwork:architecture` skill's Step 6 exactly.
 
 ## Graceful Fallback
 
-If Task tool is unavailable or parallel spawning fails:
+If Agent tool is unavailable or parallel spawning fails:
 
 1. Detect the failure at the start of Step 3
 2. Notify the user: "Parallel advocate research unavailable. Falling back to standard architecture skill with single researcher."

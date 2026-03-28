@@ -123,7 +123,7 @@ For each remaining task in dependency order:
 #### Phase A: Plan
 
 ```
-Task(
+Agent(
   subagent_type="Plan",
   description="Plan TASK-NNN",
   prompt="Create implementation plan for TASK-NNN: [task title]
@@ -150,7 +150,7 @@ Save the plan summary. If the plan does not mention worktree or TDD, reject it a
 #### Phase B: Implement
 
 ```
-Task(
+Agent(
   subagent_type="groundwork:task-executor:task-executor",
   description="Implement TASK-NNN",
   prompt="You are implementing a task as part of an automated batch run.
@@ -200,18 +200,18 @@ git diff --name-only HEAD~1    # changed file paths
 git diff --stat HEAD~1          # diff stat summary
 ```
 
-Then launch all 9 validation agents **in parallel** using the Task tool:
+Then launch all 9 validation agents **in parallel** using the Agent tool:
 
 ```
-Task(subagent_type="groundwork:code-quality-reviewer:code-quality-reviewer", description="Review TASK-NNN quality", prompt="...")
-Task(subagent_type="groundwork:security-reviewer:security-reviewer", description="Review TASK-NNN security", prompt="...")
-Task(subagent_type="groundwork:spec-alignment-checker:spec-alignment-checker", description="Check TASK-NNN spec alignment", prompt="...")
-Task(subagent_type="groundwork:architecture-alignment-checker:architecture-alignment-checker", description="Check TASK-NNN arch alignment", prompt="...")
-Task(subagent_type="groundwork:code-simplifier:code-simplifier", description="Simplify TASK-NNN code", prompt="...")
-Task(subagent_type="groundwork:housekeeper:housekeeper", description="Check TASK-NNN housekeeping", prompt="...")
-Task(subagent_type="groundwork:performance-reviewer:performance-reviewer", description="Review TASK-NNN performance", prompt="...")
-Task(subagent_type="groundwork:test-quality-reviewer:test-quality-reviewer", description="Review TASK-NNN test quality", prompt="...")
-Task(subagent_type="groundwork:design-consistency-checker:design-consistency-checker", description="Check TASK-NNN design", prompt="...")
+Agent(subagent_type="groundwork:code-quality-reviewer:code-quality-reviewer", description="Review TASK-NNN quality", prompt="...")
+Agent(subagent_type="groundwork:security-reviewer:security-reviewer", description="Review TASK-NNN security", prompt="...")
+Agent(subagent_type="groundwork:spec-alignment-checker:spec-alignment-checker", description="Check TASK-NNN spec alignment", prompt="...")
+Agent(subagent_type="groundwork:architecture-alignment-checker:architecture-alignment-checker", description="Check TASK-NNN arch alignment", prompt="...")
+Agent(subagent_type="groundwork:code-simplifier:code-simplifier", description="Simplify TASK-NNN code", prompt="...")
+Agent(subagent_type="groundwork:housekeeper:housekeeper", description="Check TASK-NNN housekeeping", prompt="...")
+Agent(subagent_type="groundwork:performance-reviewer:performance-reviewer", description="Review TASK-NNN performance", prompt="...")
+Agent(subagent_type="groundwork:test-quality-reviewer:test-quality-reviewer", description="Review TASK-NNN test quality", prompt="...")
+Agent(subagent_type="groundwork:design-consistency-checker:design-consistency-checker", description="Check TASK-NNN design", prompt="...")
 ```
 
 Each agent receives: changed file paths, diff stat, task definition, and relevant spec/architecture/design paths. Include in each prompt: "Use the Read tool to examine these files. Do NOT expect file contents in this prompt — read them yourself."
@@ -225,7 +225,7 @@ If any agent returns `request-changes`:
 1. Collect all findings with severity `critical` or `major`
 2. Spawn a general-purpose agent to fix the issues:
    ```
-   Task(
+   Agent(
      subagent_type="general-purpose",
      description="Fix TASK-NNN issues",
      prompt="Fix the following issues in <worktree_path>:

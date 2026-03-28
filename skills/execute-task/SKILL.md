@@ -157,7 +157,7 @@ Read from the worktree:
 Launch the Plan agent:
 
 ```
-Task(
+Agent(
   subagent_type="Plan",
   prompt="Create implementation plan for TASK-NNN: [task title]
 
@@ -240,9 +240,9 @@ Present summary to the user:
 
 2. **Dispatch to the task-executor agent** with a fresh context window. This agent has `use-git-worktree` and `test-driven-development` skills preloaded — it does not need to call `Skill()` or spawn subagents.
 
-**Build the Task prompt with ALL gathered context.** You MUST include actual values, not placeholders:
+**Build the Agent prompt with ALL gathered context.** You MUST include actual values, not placeholders:
 
-    Task(
+    Agent(
       subagent_type="groundwork:task-executor:task-executor",
       description="Execute TASK-NNN",
       prompt="You are implementing a task that has already been fully planned.

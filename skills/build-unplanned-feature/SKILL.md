@@ -151,9 +151,9 @@ Then use `AskUserQuestion` to ask:
 
 Implementation is dispatched to the **task-executor agent** with a fresh context window. This agent has `use-git-worktree` and `test-driven-development` skills preloaded — it does not need to call `Skill()` or spawn subagents.
 
-**Build the Task prompt with ALL gathered context from Steps 1-5 (specs from Step 2, requirements from Step 3, feature definition from Steps 4-5).** You MUST include actual values, not placeholders:
+**Build the Agent prompt with ALL gathered context from Steps 1-5 (specs from Step 2, requirements from Step 3, feature definition from Steps 4-5).** You MUST include actual values, not placeholders:
 
-    Task(
+    Agent(
       subagent_type="groundwork:task-executor:task-executor",
       description="Implement <identifier>",
       prompt="You are implementing a feature that has already been fully specified.

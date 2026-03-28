@@ -115,7 +115,7 @@ Before presenting decision options, gather research on relevant technologies.
 1. Identify the primary technologies/frameworks being considered
 2. Invoke the researcher agent:
    ```
-   Task(
+   Agent(
      subagent_type="groundwork:researcher:researcher",
      prompt="Research Topic: [technology]
      Research Questions:
@@ -238,7 +238,7 @@ Before writing the architecture document, validate it against the PRD:
 
 1. Invoke the prd-architecture-checker agent with draft architecture content and PRD content:
    ```
-   Task(
+   Agent(
      subagent_type="groundwork:prd-architecture-checker:prd-architecture-checker",
      prompt="Validate architecture against PRD
 

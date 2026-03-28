@@ -88,7 +88,7 @@ Record skipped agents with verdict `skipped`.
 
 ### 2. Launch Validation Agents
 
-Use Task tool to launch all 3 agents in parallel:
+Use Agent tool to launch all 3 agents in parallel:
 
 | Agent (`subagent_type`) | Context to Provide |
 |-------------------------|-------------------|
