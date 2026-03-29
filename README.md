@@ -103,9 +103,9 @@ You can install to multiple targets at once:
 ### Verify Installation
 
 Restart Claude Code or start a new session. You should see:
-- Start typing `/groundwork`. It should show groundwork commands available
+- Start typing `/groundwork:`. It should show groundwork commands available
 
-Run `/groundwork-check` to validate the plugin installation.
+Run `/groundwork:groundwork-check` to validate the plugin installation.
 
 ## Dependencies
 
@@ -137,11 +137,11 @@ The plugin's shell scripts (`.sh` files) use bash and won't work directly in Pow
 Full planning-to-implementation workflow:
 
 ```
-/design-product           # Define requirements (PRD with EARS format)
-/design-architecture      # Design technical approach and decisions
-/ux-design                # Establish design system (for UI projects)
-/create-tasks             # Generate implementation tasks
-/work-on-next-task        # Start executing tasks with TDD
+/groundwork:design-product           # Define requirements (PRD with EARS format)
+/groundwork:design-architecture      # Design technical approach and decisions
+/groundwork:ux-design                # Establish design system (for UI projects)
+/groundwork:create-tasks             # Generate implementation tasks
+/groundwork:work-on-next-task        # Start executing tasks with TDD
 ```
 
 ### Quick Feature
@@ -149,7 +149,7 @@ Full planning-to-implementation workflow:
 Skip formal planning and go straight to building:
 
 ```
-/build-unplanned Add user avatar upload with image resizing
+/groundwork:build-unplanned Add user avatar upload with image resizing
 ```
 
 ### Monorepo Project
@@ -157,9 +157,9 @@ Skip formal planning and go straight to building:
 Set up a monorepo and start planning for a specific project:
 
 ```
-/setup-repo               # Detect monorepo, create .groundwork.yml
-/select-project           # Choose which project to work on
-/design-product           # Define requirements for selected project
+/groundwork:setup-repo               # Detect monorepo, create .groundwork.yml
+/groundwork:select-project           # Choose which project to work on
+/groundwork:design-product           # Define requirements for selected project
 ```
 
 ### Existing Codebase
@@ -167,7 +167,7 @@ Set up a monorepo and start planning for a specific project:
 Analyze existing code to generate initial specifications:
 
 ```
-/design-product           # Analyzes codebase to propose PRD
+/groundwork:design-product           # Analyzes codebase to propose PRD
 ```
 
 ## Commands
@@ -180,12 +180,12 @@ Define what to build and how to build it.
 
 | Command | Args | Description | When to Use |
 |---------|------|-------------|-------------|
-| `/design-product` | `[product-name]` | Create or update PRD with EARS requirements | Starting a new project or adding features |
-| `/design-architecture` | `[feature-name]` | Design technical architecture with decision records | After PRD exists, need technical design |
-| `/ux-design` | `[product-name]` | Establish design system — foundations, brand, UX patterns | Need visual/UX consistency for UI projects |
-| `/create-tasks` | `[filter]` | Generate implementation tasks from PRD + architecture | After specs exist, ready to plan implementation |
-| `/setup-repo` | — | Configure repo — detect single-project or monorepo | First time using Groundwork in a repo |
-| `/swarm-design-architecture` | `[feature-name]` | Parallel adversarial architecture design with agent teams | Multiple viable tech options, need balanced comparison |
+| `/groundwork:design-product` | `[product-name]` | Create or update PRD with EARS requirements | Starting a new project or adding features |
+| `/groundwork:design-architecture` | `[feature-name]` | Design technical architecture with decision records | After PRD exists, need technical design |
+| `/groundwork:swarm-design-architecture` | `[feature-name]` | Parallel adversarial architecture design with agent teams | Multiple viable tech options, need balanced comparison |
+| `/groundwork:ux-design` | `[product-name]` | Establish design system — foundations, brand, UX patterns | Need visual/UX consistency for UI projects |
+| `/groundwork:create-tasks` | `[filter]` | Generate implementation tasks from PRD + architecture | After specs exist, ready to plan implementation |
+| `/groundwork:setup-repo` | — | Configure repo — detect single-project or monorepo | First time using Groundwork in a repo |
 
 ### Implementation Commands
 
@@ -193,12 +193,12 @@ Execute tasks and build features.
 
 | Command | Args | Description | When to Use |
 |---------|------|-------------|-------------|
-| `/work-on` | `[task-number]` | Execute a specific task with worktree isolation and TDD | Want to work on a specific task by number |
-| `/work-on-next-task` | — | Execute the next unblocked task automatically | Working through tasks sequentially |
-| `/just-do-it` | — | Execute all remaining tasks in dependency order | Want batch execution of all remaining work |
-| `/just-do-it-swarming` | `[--parallel]` | Execute all tasks using agent teams for context isolation | Large batches where context accumulation is a concern |
-| `/build-unplanned` | `[description]` | Build feature from description — no task definitions needed | Quick feature without formal planning |
-| `/select-project` | `[project-name]` | Switch to a different project in a monorepo | Working across multiple projects |
+| `/groundwork:work-on` | `[task-number]` | Execute a specific task with worktree isolation and TDD | Want to work on a specific task by number |
+| `/groundwork:work-on-next-task` | — | Execute the next unblocked task automatically | Working through tasks sequentially |
+| `/groundwork:just-do-it` | — | Execute all remaining tasks in dependency order | Want batch execution of all remaining work |
+| `/groundwork:just-do-it-swarming` | `[--parallel]` | Execute all tasks using agent teams for context isolation | Large batches where context accumulation is a concern |
+| `/groundwork:build-unplanned` | `[description]` | Build feature from description — no task definitions needed | Quick feature without formal planning |
+| `/groundwork:select-project` | `[project-name]` | Switch to a different project in a monorepo | Working across multiple projects |
 
 ### Debugging Commands
 
@@ -206,8 +206,8 @@ Investigate and resolve issues systematically.
 
 | Command | Args | Description | When to Use |
 |---------|------|-------------|-------------|
-| `/debug` | `[bug description]` | Systematic 5-phase debugging workflow | Investigating bugs or test failures |
-| `/swarm-debug` | `[bug description]` | Parallel hypothesis investigation with agent teams | Multiple plausible root causes, needs adversarial testing |
+| `/groundwork:debug` | `[bug description]` | Systematic 5-phase debugging workflow | Investigating bugs or test failures |
+| `/groundwork:swarm-debug` | `[bug description]` | Parallel hypothesis investigation with agent teams | Multiple plausible root causes, needs adversarial testing |
 
 ### Verification Commands
 
@@ -215,8 +215,8 @@ Validate code quality and spec alignment.
 
 | Command | Args | Description | When to Use |
 |---------|------|-------------|-------------|
-| `/validate` | — | Re-run 9-agent verification on current changes | Verify code quality after manual changes |
-| `/check-specs-alignment` | `[context]` | Audit code alignment with PRD and architecture | Periodic drift detection |
+| `/groundwork:validate` | — | Re-run 9-agent verification on current changes | Verify code quality after manual changes |
+| `/groundwork:check-specs-alignment` | `[context]` | Audit code alignment with PRD and architecture | Periodic drift detection |
 
 ### Review Commands
 
@@ -224,7 +224,7 @@ Review pull requests with multi-agent analysis. Requires `gh` (GitHub CLI).
 
 | Command | Args | Description | When to Use |
 |---------|------|-------------|-------------|
-| `/review-pr` | `[PR# or URL] [--no-interactive]` | Multi-agent PR review with inline GitHub comments | Reviewing PRs before merge |
+| `/groundwork:review-pr` | `[PR# or URL] [--no-interactive]` | Multi-agent PR review with inline GitHub comments | Reviewing PRs before merge |
 
 ### Synchronization Commands
 
@@ -232,9 +232,9 @@ Keep specs in sync with what was actually built. Run these at the end of a sessi
 
 | Command | Args | Description | When to Use |
 |---------|------|-------------|-------------|
-| `/source-product-specs-from-code` | `[files...]` | Update PRD to reflect implementation changes | After product decisions during implementation |
-| `/source-architecture-from-code` | `[files...]` | Update architecture docs with new decisions | After architectural changes during implementation |
-| `/source-ux-design-from-code` | `[files...]` | Update design system with token/pattern changes | After design changes during implementation |
+| `/groundwork:source-product-specs-from-code` | `[files...]` | Update PRD to reflect implementation changes | After product decisions during implementation |
+| `/groundwork:source-architecture-from-code` | `[files...]` | Update architecture docs with new decisions | After architectural changes during implementation |
+| `/groundwork:source-ux-design-from-code` | `[files...]` | Update design system with token/pattern changes | After design changes during implementation |
 
 ### Utility Commands
 
@@ -242,10 +242,10 @@ Plugin management and reference.
 
 | Command | Args | Description | When to Use |
 |---------|------|-------------|-------------|
-| `/split-spec` | `[spec-type]` | Convert single-file spec to directory structure | Specs getting too large for one file |
-| `/skills` | — | List all available Groundwork skills | Discovering available capabilities |
-| `/groundwork-check` | — | Validate plugin installation | Troubleshooting issues |
-| `/groundwork-help` | — | Show all commands and skills | Quick reference |
+| `/groundwork:split-spec` | `[spec-type]` | Convert single-file spec to directory structure | Specs getting too large for one file |
+| `/groundwork:skills` | — | List all available Groundwork skills | Discovering available capabilities |
+| `/groundwork:groundwork-check` | — | Validate plugin installation | Troubleshooting issues |
+| `/groundwork:groundwork-help` | — | Show all commands and skills | Quick reference |
 
 ## Model Recommendations
 
@@ -253,9 +253,9 @@ Skills vary in complexity. The table below lists the minimum model tier recommen
 
 | Tier | Minimum Model | Commands |
 |------|---------------|----------|
-| **Opus (1M)** | Opus at high effort | `/design-product`, `/design-architecture`, `/ux-design`, `/create-tasks`, `/debug`, `/swarm-debug`, `/swarm-design-architecture` |
-| **Sonnet+** | Sonnet or Opus at high effort | `/work-on`, `/work-on-next-task`, `/just-do-it`, `/just-do-it-swarming`, `/build-unplanned`, `/validate`, `/check-specs-alignment`, `/review-pr`, `/source-product-specs-from-code`, `/source-architecture-from-code`, `/source-ux-design-from-code` |
-| **Any** | No requirement | `/split-spec`, `/setup-repo`, `/select-project`, `/skills`, `/groundwork-help`, `/groundwork-check` |
+| **Opus (1M)** | Opus at high effort | `/groundwork:design-product`, `/groundwork:design-architecture`, `/groundwork:ux-design`, `/groundwork:create-tasks`, `/groundwork:debug`, `/groundwork:swarm-debug`, `/groundwork:swarm-design-architecture` |
+| **Sonnet+** | Sonnet or Opus at high effort | `/groundwork:work-on`, `/groundwork:work-on-next-task`, `/groundwork:just-do-it`, `/groundwork:just-do-it-swarming`, `/groundwork:build-unplanned`, `/groundwork:validate`, `/groundwork:check-specs-alignment`, `/groundwork:review-pr`, `/groundwork:source-product-specs-from-code`, `/groundwork:source-architecture-from-code`, `/groundwork:source-ux-design-from-code` |
+| **Any** | No requirement | `/groundwork:split-spec`, `/groundwork:setup-repo`, `/groundwork:select-project`, `/groundwork:skills`, `/groundwork:groundwork-help`, `/groundwork:groundwork-check` |
 
 ## Workflows
 
@@ -264,13 +264,13 @@ Skills vary in complexity. The table below lists the minimum model tier recommen
 Full planning through implementation with continuous synchronization:
 
 ```
-/design-product              # 1. Define requirements
-/design-architecture         # 2. Design technical approach
-/ux-design                   # 3. Establish design system (UI projects)
-/create-tasks                # 4. Generate task list
-/work-on-next-task           # 5. Execute tasks one by one (repeat)
-/source-product-specs-from-code   # 6. Sync specs if implementation diverged
-/source-architecture-from-code    # 7. Sync architecture if decisions changed
+/groundwork:design-product              # 1. Define requirements
+/groundwork:design-architecture         # 2. Design technical approach
+/groundwork:ux-design                   # 3. Establish design system (UI projects)
+/groundwork:create-tasks                # 4. Generate task list
+/groundwork:work-on-next-task           # 5. Execute tasks one by one (repeat)
+/groundwork:source-product-specs-from-code   # 6. Sync specs if implementation diverged
+/groundwork:source-architecture-from-code    # 7. Sync architecture if decisions changed
 ```
 
 ### Adding Features to an Existing Project
@@ -278,11 +278,11 @@ Full planning through implementation with continuous synchronization:
 Incrementally update specs, implement, then sync:
 
 ```
-/design-product              # Update PRD with new feature requirements
-/design-architecture         # Update architecture for new components
-/create-tasks                # Generate tasks for the new feature
-/work-on-next-task           # Execute tasks
-/source-product-specs-from-code   # Sync any implementation-time decisions
+/groundwork:design-product              # Update PRD with new feature requirements
+/groundwork:design-architecture         # Update architecture for new components
+/groundwork:create-tasks                # Generate tasks for the new feature
+/groundwork:work-on-next-task           # Execute tasks
+/groundwork:source-product-specs-from-code   # Sync any implementation-time decisions
 ```
 
 ### Quick Unplanned Feature
@@ -290,7 +290,7 @@ Incrementally update specs, implement, then sync:
 Skip planning entirely — go straight to TDD:
 
 ```
-/build-unplanned Add password strength indicator to signup form
+/groundwork:build-unplanned Add password strength indicator to signup form
 ```
 
 This gathers requirements inline, implements with TDD in a worktree, runs verification agents, and merges back.
@@ -300,7 +300,7 @@ This gathers requirements inline, implements with TDD in a worktree, runs verifi
 Systematic 5-phase investigation:
 
 ```
-/debug Login fails silently when session cookie is expired
+/groundwork:debug Login fails silently when session cookie is expired
 ```
 
 Phases: Observe → Hypothesize → Predict → Test → Conclude. No fix is applied until the root cause is confirmed.
@@ -310,7 +310,7 @@ Phases: Observe → Hypothesize → Predict → Test → Conclude. No fix is app
 Execute all remaining tasks in dependency order:
 
 ```
-/just-do-it
+/groundwork:just-do-it
 ```
 
 All task phases (Plan, Implement, Validate, Fix, Merge) run inline in the main conversation. This works well for small batches but accumulates context over many tasks.
@@ -320,7 +320,7 @@ All task phases (Plan, Implement, Validate, Fix, Merge) run inline in the main c
 For large batches (>5 tasks), use swarming mode to run each task in its own isolated session:
 
 ```
-/just-do-it-swarming
+/groundwork:just-do-it-swarming
 ```
 
 Each task is assigned to an agent team teammate — a full Claude Code session with its own context window that can spawn subagents (Plan, task-executor, 9 validation agents). This prevents context accumulation in the lead's conversation.
@@ -328,7 +328,7 @@ Each task is assigned to an agent team teammate — a full Claude Code session w
 For independent tasks, enable parallel execution:
 
 ```
-/just-do-it-swarming --parallel
+/groundwork:just-do-it-swarming --parallel
 ```
 
 Parallel mode groups tasks by dependency level and runs independent tasks simultaneously (max 5 concurrent). Requires `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` to be enabled:
@@ -347,7 +347,7 @@ Parallel mode groups tasks by dependency level and runs independent tasks simult
 When a bug has multiple plausible root causes, spawn an agent team to investigate hypotheses in parallel:
 
 ```
-/swarm-debug Login fails silently when session cookie is expired
+/groundwork:swarm-debug Login fails silently when session cookie is expired
 ```
 
 Each teammate investigates a different hypothesis and actively tries to disprove the others. Requires `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` to be enabled — falls back to standard debugging otherwise.
@@ -357,8 +357,8 @@ Each teammate investigates a different hypothesis and actively tries to disprove
 Check quality and alignment at any point:
 
 ```
-/validate                    # Run all 9 verification agents
-/check-specs-alignment       # Audit drift between code and specs
+/groundwork:validate                    # Run all 9 verification agents
+/groundwork:check-specs-alignment       # Audit drift between code and specs
 ```
 
 ### PR Review
@@ -366,7 +366,7 @@ Check quality and alignment at any point:
 Review a pull request with 6-8 specialized agents:
 
 ```
-/review-pr 42
+/groundwork:review-pr 42
 ```
 
 Agents (code quality, test quality, security, performance, simplifier, housekeeper — plus architecture and design consistency when specs exist) run in parallel. Findings are deduplicated and posted as a single atomic review to GitHub with inline comments. Supports incremental reviews when previous Groundwork reviews exist.
@@ -374,7 +374,7 @@ Agents (code quality, test quality, security, performance, simplifier, housekeep
 For CI or batch pipelines:
 
 ```
-/review-pr 42 --no-interactive
+/groundwork:review-pr 42 --no-interactive
 ```
 
 ## Monorepo Support
@@ -383,7 +383,7 @@ Groundwork supports monorepos — repositories containing multiple projects, eac
 
 ### Setup
 
-Run `/setup-repo` to configure your repository. Groundwork detects common monorepo patterns (workspace configs, `apps/`, `packages/`, `services/` directories) and asks you to confirm the structure. For monorepos, it creates a `.groundwork.yml` configuration file at the repo root.
+Run `/groundwork:setup-repo` to configure your repository. Groundwork detects common monorepo patterns (workspace configs, `apps/`, `packages/`, `services/` directories) and asks you to confirm the structure. For monorepos, it creates a `.groundwork.yml` configuration file at the repo root.
 
 ### Configuration File
 
@@ -400,9 +400,9 @@ projects:
 
 ### Switching Projects
 
-Use `/select-project` to switch between projects. This sets the active project context so all planning, implementation, and sync commands operate on the correct project. Selection persists across sessions.
+Use `/groundwork:select-project` to switch between projects. This sets the active project context so all planning, implementation, and sync commands operate on the correct project. Selection persists across sessions.
 
-You can also pass a project name directly: `/select-project api-server`
+You can also pass a project name directly: `/groundwork:select-project api-server`
 
 ### How It Works
 
@@ -410,68 +410,6 @@ You can also pass a project name directly: `/select-project api-server`
 - All planning, implementation, and sync commands are monorepo-aware
 - Project selection persists across sessions via `.groundwork.local` at the repo root (gitignored)
 - Environment variables: `GROUNDWORK_PROJECT` (project name), `GROUNDWORK_PROJECT_ROOT` (absolute path)
-
-## Skills
-
-Skills are internal workflow definitions invoked automatically by the model when you run commands. You don't need to call skills directly (they are, in fact, hidden) — commands handle this for you.
-
-### Planning & Design
-
-| Skill | Description |
-|-------|-------------|
-| `understanding-feature-requests` | Clarify feature requests, gather requirements, check for contradictions |
-| `product-design` | Create and iterate on product requirements documents (PRDs) |
-| `architecture` | Design system architecture and make technical decisions |
-| `design-system` | Establish design system — foundations, brand identity, UX patterns |
-| `tasks` | Generate implementation tasks from product specs and architecture |
-| `task-validation-loop` | Multi-agent verification that tasks cover PRD, follow architecture, and respect design |
-| `using-groundwork` | Introduction to finding and using Groundwork skills |
-| `swarm-architecture-design` | Parallel adversarial architecture design with advocate agents |
-| `skills-of-groundwork` | Dynamically discover and list all available skills |
-| `help-with-groundwork` | List all available commands, skills, and agents |
-| `check-groundwork` | Validate the Groundwork plugin for common issues |
-
-### Implementation
-
-| Skill | Description |
-|-------|-------------|
-| `execute-task` | Execute a specific task with worktree isolation, TDD, and validation |
-| `next-task` | Find and execute the next unblocked task |
-| `build-unplanned-feature` | Build a feature from description — requirement gathering, TDD, and validation |
-| `use-git-worktree` | Create isolated git worktrees for feature work |
-| `test-driven-development` | Red-Green-Refactor with coverage targets |
-| `execute-all-tasks` | Execute all remaining tasks in batch mode with dependency ordering |
-| `execute-all-tasks-swarming` | Execute all tasks using agent teams — each task in its own session (requires `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS`) |
-| `repo-setup` | Configure repo structure for single-project or monorepo |
-| `project-selector` | Switch between projects in a monorepo |
-
-### Debugging
-
-| Skill | Description |
-|-------|-------------|
-| `debugging` | Systematic root cause analysis before any fix is applied |
-| `swarm-debugging` | Parallel hypothesis investigation using agent teams (Claude Code only, requires `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS`) |
-
-### Verification
-
-| Skill | Description |
-|-------|-------------|
-| `validation-loop` | Multi-agent verification with autonomous fix-and-retry |
-| `check-alignment` | Verify code matches specs and architecture, detect drift |
-
-### Review
-
-| Skill | Description |
-|-------|-------------|
-| `pr-reviewing` | Multi-agent PR review — runs 6-8 agents in parallel, deduplicates findings, posts inline GitHub comments |
-
-### Synchronization
-
-| Skill | Description |
-|-------|-------------|
-| `sync-specs` | Synchronize PRD with codebase changes |
-| `sync-architecture` | Synchronize architecture docs with codebase changes |
-| `sync-design-system` | Synchronize design system with token/pattern changes |
 
 ## Internals
 
