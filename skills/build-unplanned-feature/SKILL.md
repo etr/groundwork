@@ -39,8 +39,11 @@ If the user selects "Cancel — I'll switch first": output the switching command
 
 **Before loading specs, ensure project context is resolved:**
 
-1. **Check `.groundwork.yml`:** Does a monorepo config file exist at the repo root?
-   - If yes → Check if `GROUNDWORK_PROJECT` is set. If not, list projects and ask the user to select one.
+1. **Monorepo check:** Does `.groundwork.yml` exist at the repo root?
+   - If yes → Is `{{project_name}}` non-empty?
+     - If empty → Invoke `Skill(skill="groundwork:project-selector")` to select a project, then restart this skill.
+     - If set → Project is `{{project_name}}`, specs at `{{specs_dir}}/`.
+   - If no → Continue (single-project repo).
 2. **CWD mismatch check (monorepo only):**
    - Skip if not in monorepo mode or if the project was just selected in item 1 above.
    - If CWD is the repo root → fine, proceed.

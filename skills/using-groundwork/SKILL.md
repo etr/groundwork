@@ -88,7 +88,7 @@ The skill itself tells you which type it is.
 
 When working in a monorepo (`.groundwork.yml` exists):
 - **Always check project context** before reading/writing specs
-- If `GROUNDWORK_PROJECT` is not set, prompt the user to select a project
+- If `{{project_name}}` is empty, prompt the user to select a project
 - All `{{specs_dir}}/` paths resolve to the selected project's specs directory
 - Use `/groundwork:select-project` to switch between projects
 - Use `/groundwork:setup-repo` to configure the repo structure
