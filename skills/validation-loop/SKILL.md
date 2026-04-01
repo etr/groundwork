@@ -161,35 +161,22 @@ Each returns JSON:
 
 2. **Spawn Fix Agent** — Delegate all fix work to a separate agent to keep the orchestrator context clean.
 
-   Collect all non-minor findings from agents that returned `request-changes`. Spawn:
+   Collect all non-minor findings from agents that returned `request-changes`. Format as a numbered list. Spawn:
 
    ```
    Agent(
-     subagent_type="general-purpose",
+     subagent_type="groundwork:validation-fixer:validation-fixer",
      description="Fix validation findings (iteration N)",
-     prompt="Fix the following validation findings in [working directory].
+     prompt="Working directory: [path]
 
    FINDINGS TO FIX:
-   [Numbered list of non-minor findings, each with: agent, severity, file, line, finding, recommendation]
-
-   FIX GUIDELINES:
-   - Behavioral fixes (new logic, control flow, state): write/update a failing test FIRST, then fix, then verify green (TDD).
-   - Cosmetic fixes (names, constants, formatting): apply directly, verify tests still pass.
-   - How to tell: if the fix needs new/changed test assertions, it is behavioral.
-
-   AFTER FIXING:
-   - Run the project's test suite. All tests must pass.
-
-   OUTPUT FORMAT (must be your last line):
-   RESULT: FIXED | files_touched: [comma-separated paths] | findings_fixed: [comma-separated numbers]
-   OR:
-   RESULT: FAILURE | [one-line reason]
-   "
+   [Numbered list, each entry: number. [agent] | [severity] | [file]:[line] | [finding] -- [recommendation]]"
    )
    ```
 
 3. **Parse Fix Agent Result**
    - `RESULT: FIXED | files_touched: [...] | findings_fixed: [...]` → parse both lists, proceed to step 4.4
+   - `RESULT: PARTIAL | files_touched: [...] | findings_fixed: [...] | findings_skipped: [...]` → parse all lists, log skipped findings, proceed to step 4.4 with the fixed subset
    - `RESULT: FAILURE | [reason]` → log the failure reason, escalate to user via `AskUserQuestion`
    - No parseable result → treat as failure, escalate to user
 

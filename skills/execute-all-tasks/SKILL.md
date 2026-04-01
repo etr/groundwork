@@ -1,7 +1,6 @@
 ---
 name: execute-all-tasks
 description: This skill should be used when executing all remaining tasks in batch mode - orchestrates worktree isolation, TDD, validation, and merge for each task in dependency order
-requires: validation-loop
 user-invocable: false
 ---
 
@@ -225,25 +224,29 @@ Each returns JSON with `verdict: "approve" | "request-changes"`.
 
 If any agent returns `request-changes`:
 
-1. Collect all findings with severity `critical` or `major`
-2. Spawn a general-purpose agent to fix the issues:
+1. Collect all findings with severity `critical` or `major`. Format as a numbered list.
+2. Spawn the validation-fixer agent:
    ```
    Agent(
-     subagent_type="general-purpose",
-     description="Fix TASK-NNN issues",
-     prompt="Fix the following issues in <worktree_path>:
-   [List of findings with file, line, recommendation]
-   Run tests after fixing to ensure nothing breaks.
-   Output: RESULT: FIXED | [summary of fixes]"
+     subagent_type="groundwork:validation-fixer:validation-fixer",
+     description="Fix TASK-NNN validation findings",
+     prompt="Working directory: <worktree_path>
+
+   FINDINGS TO FIX:
+   [Numbered list, each entry: number. [agent] | [severity] | [file]:[line] | [finding] -- [recommendation]]"
    )
    ```
-3. Re-run all 9 validation agents (same as Phase C)
-4. Repeat until all agents approve
-5. **Stuck detection:** If the same finding persists after 3 iterations, report it and continue (do not block indefinitely)
+3. Parse the fix agent result:
+   - `RESULT: FIXED | files_touched: [...] | findings_fixed: [...]` → all findings addressed, proceed to re-validation
+   - `RESULT: PARTIAL | files_touched: [...] | findings_fixed: [...] | findings_skipped: [...]` → log skipped findings, proceed to re-validation with fixed subset; skipped findings feed stuck detection
+   - `RESULT: FAILURE | [reason]` → log failure, report and continue
+4. Re-run all 9 validation agents (same as Phase C)
+5. Repeat until all agents approve
+6. **Stuck detection:** If the same finding persists after 3 iterations (including findings repeatedly skipped by the fix agent), report it and continue (do not block indefinitely)
 
 #### Phase D.5: Persist Unexecuted Findings
 
-After all agents approve, collect **all findings from every Phase C/D iteration** across all agents. Exclude findings that were fixed by the general-purpose fix agent in Phase D. The remainder are **unexecuted findings**.
+After all agents approve, collect **all findings from every Phase C/D iteration** across all agents. Exclude findings whose numbers appear in any `findings_fixed` list returned by the validation-fixer agent across iterations. The remainder are **unexecuted findings**.
 
 If zero unexecuted findings → skip this phase entirely.
 
