@@ -228,7 +228,6 @@ Before recording a decision, check for conflicts with earlier decisions:
 When all major decisions are made, create the architecture document using template in `references/architecture-template.md`.
 
 **Output location:** `{{specs_dir}}/architecture.md` (single file by default)
-- For large architectures, user can later run `/split-spec architecture` to convert to directory format
 
 **Critical:** Include ALL decision records with discarded options and reasoning. This is essential for future maintainers to understand *why* choices were made.
 

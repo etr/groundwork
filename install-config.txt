@@ -21,7 +21,6 @@ pr-reviewing = groundwork-review-pr command
 next-task = groundwork-work-on-next-task command
 execute-task = groundwork-work-on command
 execute-all-tasks = groundwork-just-do-it command
-split-specifications = groundwork-split-spec command
 project-selector = groundwork-select-project command
 repo-setup = groundwork-setup-repo command
 

@@ -242,7 +242,6 @@ Plugin management and reference.
 
 | Command | Args | Description | When to Use |
 |---------|------|-------------|-------------|
-| `/groundwork:split-spec` | `[spec-type]` | Convert single-file spec to directory structure | Specs getting too large for one file |
 | `/groundwork:skills` | — | List all available Groundwork skills | Discovering available capabilities |
 | `/groundwork:groundwork-check` | — | Validate plugin installation | Troubleshooting issues |
 | `/groundwork:groundwork-help` | — | Show all commands and skills | Quick reference |
@@ -255,7 +254,7 @@ Skills vary in complexity. The table below lists the minimum model tier recommen
 |------|---------------|----------|
 | **Opus (1M)** | Opus at high effort | `/groundwork:design-product`, `/groundwork:design-architecture`, `/groundwork:ux-design`, `/groundwork:create-tasks`, `/groundwork:debug`, `/groundwork:swarm-debug`, `/groundwork:swarm-design-architecture` |
 | **Sonnet+** | Sonnet or Opus at high effort | `/groundwork:work-on`, `/groundwork:work-on-next-task`, `/groundwork:just-do-it`, `/groundwork:just-do-it-swarming`, `/groundwork:build-unplanned`, `/groundwork:validate`, `/groundwork:check-specs-alignment`, `/groundwork:review-pr`, `/groundwork:source-product-specs-from-code`, `/groundwork:source-architecture-from-code`, `/groundwork:source-ux-design-from-code` |
-| **Any** | No requirement | `/groundwork:split-spec`, `/groundwork:setup-repo`, `/groundwork:select-project`, `/groundwork:skills`, `/groundwork:groundwork-help`, `/groundwork:groundwork-check` |
+| **Any** | No requirement | `/groundwork:setup-repo`, `/groundwork:select-project`, `/groundwork:skills`, `/groundwork:groundwork-help`, `/groundwork:groundwork-check` |
 
 ## Workflows
 
