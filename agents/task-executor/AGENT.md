@@ -1,11 +1,10 @@
 ---
 name: task-executor
 description: Executes task implementation with worktree isolation and TDD. Use when a task needs to be implemented in an isolated worktree following TDD methodology.
-model: inherit
 maxTurns: 150
 color: blue
 memory: project
-model: opus[1m]
+model: inherit
 effort: high
 skills:
   - groundwork:use-git-worktree
