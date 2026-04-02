@@ -257,7 +257,9 @@ When the user approves:
    - **Directory mode:** Route to appropriate file:
      - Features with ID (e.g., PRD-AUTH-*) → `{{specs_dir}}/product_specs/03-features/<feature-code>.md`
      - Open questions → `{{specs_dir}}/product_specs/05-open-questions.md`
-     - If unsure, append to `{{specs_dir}}/product_specs/_index.md`
+     - NFR changes → `{{specs_dir}}/product_specs/02-non-functional.md`
+     - Product context changes → `{{specs_dir}}/product_specs/01-product-context.md`
+     - Traceability updates → `{{specs_dir}}/product_specs/04-traceability.md`
 
 3. **Find insertion point** - New features go in Section 3 (Feature list) after existing features
 4. **Edit the document** - Use `str_replace` to insert the new feature block
@@ -265,6 +267,21 @@ When the user approves:
 6. **Update traceability note** - Mention new requirement IDs if relevant
 
 After editing, confirm: "I've added [feature] to the PRD with requirements PRD-XXX-REQ-001 through PRD-XXX-REQ-NNN."
+
+## Step 4a: Auto-Split Check (single file mode only)
+
+**Skip this step if the PRD is already in directory mode.**
+
+After committing to the single-file PRD, check whether it should be split:
+
+1. Count lines: `wc -l {{specs_dir}}/product_specs.md`
+2. Count features: number of `### \d+\.\d+` headings in the file
+
+If **lines >= 500** OR **features >= 15**:
+- Invoke `Skill(skill="groundwork:split-specifications")` — this runs automatically with no user input needed.
+- After the split completes, note in your confirmation: "The PRD has been split into directory format at `{{specs_dir}}/product_specs/` for easier navigation."
+
+If neither threshold is crossed, continue silently.
 
 ## Step 5: Ask What's Next
 

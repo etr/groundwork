@@ -235,6 +235,7 @@ Keep specs in sync with what was actually built. Run these at the end of a sessi
 | `/groundwork:source-product-specs-from-code` | `[files...]` | Update PRD to reflect implementation changes | After product decisions during implementation |
 | `/groundwork:source-architecture-from-code` | `[files...]` | Update architecture docs with new decisions | After architectural changes during implementation |
 | `/groundwork:source-ux-design-from-code` | `[files...]` | Update design system with token/pattern changes | After design changes during implementation |
+| `/groundwork:split-specs` | — | Convert single-file PRD into directory format | PRD has grown large (auto-triggered at 500+ lines or 15+ features) |
 
 ### Utility Commands
 

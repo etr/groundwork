@@ -106,15 +106,15 @@ Review the current session for:
 
 ## Step 2: Detect Change Categories
 
-| Category | Signal | PRD Section |
-|----------|--------|-------------|
-| New feature | Discussion of new capability | §3 Feature List (new subsection) |
-| New requirement | "System should..." statements | §3.X EARS Requirements |
-| Requirement change | Modifying existing behavior | §3.X EARS Requirements (edit) |
-| NFR change | Performance, security, scale discussion | §2 Non-functional |
-| Scope change | "Out of scope" or "must have for launch" | §3.X In/Out of scope |
-| Open question | Unresolved product decision | §5 Open Questions |
-| Question resolved | Answer to existing OQ | §5 Open Questions (remove) |
+| Category | Signal | Single file section | Directory mode file |
+|----------|--------|---------------------|---------------------|
+| New feature | Discussion of new capability | §3 Feature List (new subsection) | `03-features/<feature-code>.md` (new file) |
+| New requirement | "System should..." statements | §3.X EARS Requirements | `03-features/<feature-code>.md` (existing file) |
+| Requirement change | Modifying existing behavior | §3.X EARS Requirements (edit) | `03-features/<feature-code>.md` (edit) |
+| NFR change | Performance, security, scale discussion | §2 Non-functional | `02-non-functional.md` |
+| Scope change | "Out of scope" or "must have for launch" | §3.X In/Out of scope | `03-features/<feature-code>.md` (edit) |
+| Open question | Unresolved product decision | §5 Open Questions | `05-open-questions.md` |
+| Question resolved | Answer to existing OQ | §5 Open Questions (remove) | `05-open-questions.md` (remove) |
 
 ## Step 3: Propose Updates
 
@@ -191,6 +191,21 @@ On approval:
 - New requirements get the next available ID in their feature's sequence
 - Never reuse deleted requirement IDs (maintain traceability)
 - Preserve EARS format for all requirements
+
+## Step 4a: Auto-Split Check (single file mode only)
+
+**Skip this step if the PRD is already in directory mode.**
+
+After applying changes to the single-file PRD, check whether it should be split:
+
+1. Count lines: `wc -l {{specs_dir}}/product_specs.md`
+2. Count features: number of `### \d+\.\d+` headings in the file
+
+If **lines >= 500** OR **features >= 15**:
+- Invoke `Skill(skill="groundwork:split-specifications")` — this runs automatically with no user input needed.
+- After the split completes, include in the session summary: "The PRD was automatically split into directory format at `{{specs_dir}}/product_specs/`."
+
+If neither threshold is crossed, continue silently.
 
 ## EARS Format Reminder
 

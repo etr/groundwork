@@ -65,9 +65,9 @@ You will receive:
 - `diff_stat`: Summary of changes (lines added/removed per file)
 - `task_definition`: Goal, action items, acceptance criteria
 - `task_status`: Current task completion state from task list
-- `specs_path`: Path to product specs — **read using the Read tool** to check if updates are needed
-- `architecture_path`: Path to architecture doc — **read using the Read tool** to check if updates are needed
-- `design_system_path`: Path to design system doc — **read using the Read tool** to check if updates are needed
+- `specs_path`: Path to product specs — may be a single file or a directory. If a directory, use **Glob** to find all `.md` files inside, then **Read** each (starting with `_index.md`, then numerically-prefixed files, then alphabetically).
+- `architecture_path`: Path to architecture doc — may be a single file or a directory (same reading strategy as `specs_path`).
+- `design_system_path`: Path to design system doc — may be a single file or a directory (same reading strategy as `specs_path`).
 
 ## Review Process
 

@@ -48,6 +48,7 @@ List commands organized by purpose:
 - `/groundwork:source-product-specs-from-code` - Sync specs with code changes
 - `/groundwork:source-architecture-from-code` - Update architecture docs
 - `/groundwork:check-specs-alignment` - Verify spec alignment (full audit)
+- `/groundwork:split-specs` - Convert single-file PRD into directory format
 
 **Plugin Management:**
 - `/groundwork:groundwork-check` - Validate plugin health

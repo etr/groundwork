@@ -104,7 +104,11 @@ The tonal direction is derived from the product's persona, vision, and competiti
 
 ## Prerequisites
 
-Check for PRD first. If `{{specs_dir}}/product_specs.md` doesn't exist, prompt user to run `/product-design` first.
+Check for PRD first. Look for `{{specs_dir}}/product_specs.md` (single file) or `{{specs_dir}}/product_specs/` (directory). If neither exists, prompt user to run `/product-design` first.
+
+When reading the PRD:
+- **Single file:** Read `{{specs_dir}}/product_specs.md`
+- **Directory:** Aggregate all `.md` files from `{{specs_dir}}/product_specs/` with `_index.md` first, then numerically-prefixed files, then alphabetically
 
 Architecture file is optional but helpful for UX pattern decisions.
 
