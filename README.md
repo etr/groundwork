@@ -236,6 +236,7 @@ Keep specs in sync with what was actually built. Run these at the end of a sessi
 | `/groundwork:source-architecture-from-code` | `[files...]` | Update architecture docs with new decisions | After architectural changes during implementation |
 | `/groundwork:source-ux-design-from-code` | `[files...]` | Update design system with token/pattern changes | After design changes during implementation |
 | `/groundwork:split-specs` | — | Convert single-file PRD into directory format | PRD has grown large (auto-triggered at 500+ lines or 15+ features) |
+| `/groundwork:split-architecture` | — | Convert single-file architecture doc into directory format | Architecture doc has grown large (auto-triggered at 500+ lines or 10+ DRs) |
 
 ### Utility Commands
 

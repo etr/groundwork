@@ -218,6 +218,18 @@ After green only:
 
 Keep tests green. Don't add behavior.
 
+**Lint gate (if project has a linter):**
+
+After refactoring, run the project's lint command on changed files only:
+
+```bash
+# Example: ruff check <changed-files>, eslint <changed-files>, cargo clippy
+```
+
+Catch lint violations NOW — before the next action item adds more code on top. The specific command comes from the project's CLAUDE.md. If you don't know it yet, run it once on a file you just edited. If it passes, move on. If it fails, fix before proceeding.
+
+**Do NOT defer lint fixes to "after implementation."** Lint errors compound — a single import-style choice (e.g., `from __future__ import annotations`) can cascade through every subsequent file if not caught immediately.
+
 ### Repeat
 
 Next failing test for next feature.

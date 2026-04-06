@@ -285,7 +285,6 @@ transform_frontmatter() {
 # Apply body text transformations for non-Claude targets
 transform_body() {
     local target="$1" content="$2"
-    local task_repl="Adapt to your agent/automation capabilities."
 
     # Pi-specific tool name transforms (run before shared pipeline)
     if [[ "$target" == "pi" ]]; then
@@ -332,7 +331,9 @@ transform_body() {
         )
     fi
 
-    echo "$content" | sed \
+    echo "$content" | \
+        node "$SOURCE_DIR/lib/transform-agents.js" --target "$target" | \
+        sed \
         -e 's|Skill(skill="\(groundwork:[^"]*\)"[^)]*)|the \1 workflow|g' \
         "${appendix_seds[@]}" \
         -e 's|[Ii]nvoke `\(the [^`]* workflow\)`|Follow \1 steps|g' \
@@ -341,52 +342,7 @@ transform_body() {
         -e 's|context compaction|context management|g' \
         -e 's|subagent|sub-task|g' \
         -e 's|\${CLAUDE_PLUGIN_ROOT}|the plugin directory|g' \
-        -e "${BODY_SED_CMDS:-.}" | \
-    awk -v repl="$task_repl" '
-        # Remove <EXTREMELY-IMPORTANT> blocks
-        /<EXTREMELY-IMPORTANT>/ { in_xml=1; next }
-        /<\/EXTREMELY-IMPORTANT>/ { in_xml=0; next }
-        in_xml { next }
-
-        # Task() blocks inside code fences: suppress and replace
-        in_task && /^[[:space:]]*```/ {
-            in_task = 0; in_fence = 0
-            print "> " repl
-            print ""
-            next
-        }
-        in_task { next }
-
-        /^[[:space:]]*```/ {
-            if (in_fence) {
-                # Closing fence (non-task)
-                in_fence = 0
-                print
-                next
-            }
-            # Opening fence — buffer to check next line
-            buffered = $0
-            in_fence = 1
-            next
-        }
-
-        buffered != "" {
-            if ($0 ~ /^[[:space:]]*Task\(/) {
-                in_task = 1
-                buffered = ""
-                next
-            } else {
-                print buffered
-                buffered = ""
-                print
-                next
-            }
-        }
-
-        { print }
-
-        END { if (buffered != "") print buffered }
-    '
+        -e "${BODY_SED_CMDS:-.}"
 }
 
 # ============================================================

@@ -264,6 +264,21 @@ Before writing the architecture document, validate it against the PRD:
    - Proceed to write `{{specs_dir}}/architecture.md`
    - Note any minor findings as suggestions for documentation improvement
 
+## Step 5a: Auto-Split Check
+
+**Skip this step if the architecture doc is already in directory mode.**
+
+After writing the architecture document, check whether it should be split:
+
+1. Count lines: `wc -l {{specs_dir}}/architecture.md`
+2. Count decision records: number of `### DR-\d+` headings in the file
+
+If **lines >= 500** OR **decision records >= 10**:
+- Invoke `Skill(skill="groundwork:split-architecture-doc")` — this runs automatically with no user input needed.
+- After the split completes, note in your confirmation: "The architecture doc has been split into directory format at `{{specs_dir}}/architecture/` for easier navigation."
+
+If neither threshold is crossed, continue silently.
+
 ## Step 6: Suggest Next Step
 
 After successfully updating the architecture document, ask what should be the next workflow step:

@@ -3,7 +3,7 @@ name: validation-fixer
 description: Fixes validation findings from reviewer agents. Applies TDD for behavioral fixes, direct changes for cosmetic fixes. Reports files touched and findings addressed.
 maxTurns: 100
 color: yellow
-model: inherit
+model: sonnet
 effort: high
 skills:
   - groundwork:test-driven-development

@@ -7,6 +7,15 @@ user-invocable: false
 
 # Execute Task Skill
 
+## Token Discipline
+
+This skill orchestrates long multi-agent workflows. Every turn re-reads the full context window, so unnecessary turns are expensive. Follow these rules:
+
+1. **No narration turns.** Do not output text-only turns like "Let me load the task" or "Now I'll launch the plan agent." Combine text with the tool call in the same turn, or skip the text entirely.
+2. **Batch tool calls.** When multiple tool calls are independent (e.g., reading several files, launching parallel agents), issue them all in one turn.
+3. **No waiting updates.** When agents are running in background, do not output "Waiting for results..." turns. Wait silently until results arrive.
+4. **Keep context lean.** Do not read file contents you won't use directly. Pass file paths to subagents and let them read in their own context.
+
 ## Pre-flight: Model Recommendation
 
 **Your current effort level is `{{effort_level}}`.**
@@ -145,11 +154,15 @@ Search for `### TASK-NNN:` pattern.
 
 ### Step 4: Load Project Context
 
-Read from the worktree:
+**Token discipline: Do NOT read file contents into this orchestrator context.** The Plan agent and task-executor both have Read/Grep/Glob tools and will read files in their own context windows. Loading specs here bloats the context for all remaining turns (validation, merge, cleanup).
+
+Verify paths exist (use Glob, not Read):
 1. **Product specs** - `{{specs_dir}}/product_specs.md` or `{{specs_dir}}/product_specs/`
 2. **Architecture** - `{{specs_dir}}/architecture.md` or `{{specs_dir}}/architecture/`
 3. **Design system** - `{{specs_dir}}/design_system.md` (if exists)
 4. **Tasks** - `{{specs_dir}}/tasks.md` or `{{specs_dir}}/tasks/`
+
+Only read the **task definition** for the specific TASK-NNN (goal, action items, acceptance criteria) — this is small and needed for the Agent prompts. Do NOT read full specs, architecture, or other task files.
 
 **If specs missing:** Report which are missing and suggest commands to create them.
 **If design system missing:** Not an error — proceed without it. Note its absence for the planner.
@@ -158,7 +171,7 @@ Read from the worktree:
 
 **You MUST use the Plan agent. Do NOT create your own plan.**
 
-Launch the Plan agent:
+Launch the Plan agent. Pass file **paths** — the agent has Read/Grep/Glob tools and will read what it needs:
 
 ```
 Agent(
@@ -168,14 +181,11 @@ Agent(
 Task definition:
 [goal, action items, acceptance criteria from task file]
 
-Relevant product specs:
-[extracted requirements]
-
-Relevant architecture:
-[extracted decisions]
-
-Design system:
-[extracted design tokens, color palette, typography, component patterns, UX patterns — or 'No design system defined' if not found]
+Project context — read these files yourself using Read/Grep/Glob:
+- Product specs: [path to product_specs.md or product_specs/ directory]
+- Architecture: [path to architecture.md or architecture/ directory]
+- Design system: [path to design_system.md — or 'No design system defined']
+- Tasks: [path to tasks.md or tasks/ directory]
 
 REQUIREMENTS FOR THE PLAN:
 1. All work happens in worktree .worktrees/TASK-NNN (not main workspace)

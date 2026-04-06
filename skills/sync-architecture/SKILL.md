@@ -102,15 +102,15 @@ Review the current session for:
 
 ## Step 2: Detect Change Categories
 
-| Category | Signal | Architecture Section |
-|----------|--------|---------------------|
-| New component | New service/module created | §4 Component Details |
-| Tech change | Different library/framework used | §3 System Overview, relevant DR |
-| Data change | Schema migration, new store | §5 Data Architecture |
-| Integration | New external service | §6 Integration Architecture |
-| Security | Auth/encryption changes | §7 Security Architecture |
-| Infra | New environment, deployment change | §8 Infrastructure |
-| Decision | Explicit "let's do X" statement | §11 Decision Records |
+| Category | Signal | Single file section | Directory mode file |
+|----------|--------|---------------------|---------------------|
+| New component | New service/module created | §4 Component Details | `04-components/<component-slug>.md` (new file) |
+| Tech change | Different library/framework used | §3 System Overview, relevant DR | `03-system-overview.md` or `11-decisions/DR-NNN.md` |
+| Data change | Schema migration, new store | §5 Data Architecture | `05-data.md` |
+| Integration | New external service | §6 Integration Architecture | `06-integration.md` |
+| Security | Auth/encryption changes | §7 Security Architecture | `07-security.md` |
+| Infra | New environment, deployment change | §8 Infrastructure | `08-infrastructure.md` |
+| Decision | Explicit "let's do X" statement | §11 Decision Records | `11-decisions/DR-NNN.md` (new file) |
 
 ## Step 3: Propose Updates
 
@@ -188,6 +188,21 @@ On approval:
 5. Add entry to change log if present
 
 **Important:** Preserve existing content. Add to sections, don't replace unless explicitly correcting an error.
+
+## Step 4a: Auto-Split Check (single file mode only)
+
+**Skip this step if the architecture doc is already in directory mode.**
+
+After applying changes to the single-file architecture doc, check whether it should be split:
+
+1. Count lines: `wc -l {{specs_dir}}/architecture.md`
+2. Count decision records: number of `### DR-\d+` headings in the file
+
+If **lines >= 500** OR **decision records >= 10**:
+- Invoke `Skill(skill="groundwork:split-architecture-doc")` — this runs automatically with no user input needed.
+- After the split completes, include in the session summary: "The architecture doc was automatically split into directory format at `{{specs_dir}}/architecture/`."
+
+If neither threshold is crossed, continue silently.
 
 ## Change Detection Heuristics
 

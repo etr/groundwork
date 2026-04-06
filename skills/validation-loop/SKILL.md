@@ -100,6 +100,8 @@ Record skipped agents in the aggregation table with verdict `skipped` and a note
 
 ### 2. Launch Verification Agents
 
+**Token discipline:** Launch all agents in a single tool-use turn. Do NOT output text-only turns while waiting for agents to return — each turn re-reads the full context window. Aggregate results silently and output ONE summary after all agents complete. The same applies to re-validation rounds in Step 4.
+
 Use Agent tool to launch all 9 agents in parallel:
 
 | Agent (`subagent_type`) | Context to Provide |

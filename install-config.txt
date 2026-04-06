@@ -24,6 +24,7 @@ execute-all-tasks = groundwork-just-do-it command
 project-selector = groundwork-select-project command
 repo-setup = groundwork-setup-repo command
 split-specifications = groundwork-split-specs command
+split-architecture-doc = groundwork-split-architecture command
 
 # Skills without command entry points (internal, auto-loaded by description match)
 test-driven-development = groundwork-test-driven-development

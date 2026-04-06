@@ -60,7 +60,7 @@ You will receive:
 - `changed_file_paths`: Paths of files to review — **read each using the Read tool**
 - `diff_stat`: Summary of changes (lines added/removed per file)
 - `task_definition`: The task being implemented
-- `architecture_path`: Path to architecture doc — **read using the Read tool** to find relevant decisions
+- `architecture_path`: Path to architecture doc — may be a single file (e.g., `specs/architecture.md`) or a directory (e.g., `specs/architecture/`). If the path is a directory, use **Glob** to find all `.md` files inside it, then **Read** each one. Read `_index.md` first, then numerically-prefixed files, then the rest alphabetically.
 
 ## Review Process
 

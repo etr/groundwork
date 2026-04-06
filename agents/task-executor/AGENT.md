@@ -61,6 +61,7 @@ Before finishing:
 - All action items implemented and tested
 - All acceptance criteria verified
 - All tests pass
+- Lint/static analysis passes on changed files (run the project's lint command from CLAUDE.md — e.g., `ruff check`, `eslint`, `cargo clippy`)
 - Code is clean and well-structured
 
 ### 4. Demand Elegance

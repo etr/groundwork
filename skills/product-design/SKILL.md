@@ -17,6 +17,11 @@ Interactive workflow for iteratively designing and documenting product requireme
 4. **Commit** - Edit the PRD document when requirements are approved
 5. **Next Step** - Ask user what to do next (architecture, UX, or another feature)
 
+If you are in plan mode, you MUST still complete the full workflow (Steps 0–4). Your plan output MUST describe ONLY the PRD file edits from Step 4.
+  - Which file to create or edit
+  - Where to insert the new feature block
+  - The EARS requirements content
+
 ## Pre-flight: Model Recommendation
 
 **Your current effort level is `{{effort_level}}`.**
