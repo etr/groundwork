@@ -211,42 +211,17 @@ After plan is validated, output:
 
 **DO NOT proceed to Step 6 until the plan completed confirmation is output.**
 
-### Step 6: Present Task Summary
+### Step 6: Confirm Start
 
-Present summary to the user:
+**Batch mode (GROUNDWORK_BATCH_MODE=true):** skip to Step 7.
 
-```markdown
-## Task: [TASK-NNN] [Task Title]
+**Interactive mode:** Use `AskUserQuestion`:
 
-**Milestone:** [name]
-**Component:** [from architecture]
-
-### Execution Context
-**Working Directory:** .worktrees/TASK-NNN
-**Branch:** task/TASK-NNN
-**Merge Mode:** [auto-merge (env) | manual]
-
-### Goal
-[from task file]
-
-### Action Items
-- [ ] [item 1]
-- [ ] [item 2]
-
-### Acceptance Criteria
-- [criterion 1]
-- [criterion 2]
-```
-
-**Batch mode (GROUNDWORK_BATCH_MODE=true):** Skip the confirmation — proceed directly to Step 7.
-
-**Interactive mode:** Use `AskUserQuestion` to ask:
-
-> "Ready to begin implementation?"
+> "[TASK-NNN] [Title] — ready to begin?"
 > - Option 1: "Yes, begin"
 > - Option 2: "No, let me review first"
 
-**Wait for user response before proceeding.**
+Wait for response.
 
 ### Step 7: Implementation (task-executor Agent)
 
@@ -391,23 +366,13 @@ If the task failed at any step, output:
 RESULT: FAILURE | [TASK-NNN] [reason for failure]
 ```
 
-**Interactive mode:** Present the completion summary:
+**Interactive mode:** Output exactly one line:
 
-```markdown
-## Completed: [TASK-NNN] [Task Title]
-
-**What was done:**
-- [Summary from task-executor]
-
-**Acceptance criteria verified:**
-- [x] [Criterion] - [How verified]
-
-**Validation:** Passed ([N] iteration(s))
-
-**Worktree status:** [Merged | Pending at .worktrees/TASK-NNN]
-
-Continue with `/groundwork:work-on-next-task` or `/groundwork:work-on N`
 ```
+Done: [TASK-NNN] merged → <base>. Validation passed in N iter(s).
+```
+
+If the merge did not happen, replace `merged → <base>` with `pending at <worktree_path>`.
 
 ---
 
