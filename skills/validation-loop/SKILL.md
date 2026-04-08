@@ -43,9 +43,8 @@ If the user selects "Cancel — I'll switch first": output the switching command
 - Any other path that changes a project file from inside the orchestrator's tool calls
 
 **Narrow exemptions** (these are NOT fixes, they are loop bookkeeping and explicitly allowed):
-- **Reading** findings files written by validation agents under the per-run `findings_dir` (using the `Read` tool). This is required by step 5.5.
 - **Deleting** the per-run `findings_dir` at the end of the loop via `Bash` `rm -rf` (only the temp directory created by `mktemp -d -t groundwork-validation-XXXXXX`, never anything else).
-- **Writing** to `{{specs_dir}}/minor_todos.md` via the `Write` tool in step 5.5 to persist unexecuted findings. This is the **only** project file the orchestrator may write to, and only for that purpose.
+- **Invoking** `lib/persist-unworked-findings.js` via `Bash` in step 5.5. The script writes a single new file under `{{specs_dir}}/unworked_review_issues/`. The orchestrator may NOT call `Write`, `Edit`, or `NotebookEdit` on that file, on any other project file, or on the per-iteration findings JSON files — and may NOT `Read` any of those files either.
 
 The core rule — *no orchestrator edits to source code; all source-code fixes go through validation-fixer* — is unchanged.
 
@@ -58,7 +57,7 @@ This rule has no exceptions for source-code fixes. It applies even when:
 
 ## Findings Storage
 
-Validation agents write their full JSON reviews (summary + score + verdict + findings array) to per-run, per-iteration files inside a temp directory. The orchestrator only sees a compact one-line response from each agent. This keeps finding bodies out of the orchestrator's context window — they are read again only by the validation-fixer subagent (which has its own context) and once at the very end of the loop by step 5.5.
+Validation agents write their full JSON reviews (summary + score + verdict + findings array) to per-run, per-iteration files inside a temp directory. The orchestrator only sees a compact one-line response from each agent. This keeps finding bodies out of the orchestrator's context window — they are read again only by the validation-fixer subagent (which has its own context) and by the `persist-unworked-findings.js` helper invoked from step 5.5 (which runs out-of-process and never feeds anything back into the orchestrator).
 
 **Per-run directory** (created in step 1):
 ```
@@ -70,7 +69,7 @@ findings_dir = $(mktemp -d -t groundwork-validation-XXXXXX)
 {findings_dir}/findings-{agent_name}-iter{N}.json
 ```
 
-A new file per iteration preserves history across the fix-and-retry loop, so step 5.5 can collect unexecuted findings from every iteration.
+A new file per iteration preserves history across the fix-and-retry loop, so the helper script in step 5.5 can collect unexecuted findings from every iteration.
 
 **Full review file format** (written by each agent to its `findings_file`):
 ```json
@@ -87,7 +86,7 @@ A new file per iteration preserves history across the fix-and-retry loop, so ste
 }
 ```
 
-The **stable global ID** of a finding is `{agent_name}-iter{N}-{id}` (e.g. `code-quality-reviewer-iter1-2`). Use these IDs anywhere you need to reference a finding across iterations (fix-agent prompts, stuck detection, minor_todos).
+The **stable global ID** of a finding is `{agent_name}-iter{N}-{id}` (e.g. `code-quality-reviewer-iter1-2`). Use these IDs anywhere you need to reference a finding across iterations (fix-agent prompts, stuck detection, unworked_review_issues).
 
 **Compact agent response** (single JSON line returned by each agent):
 ```json
@@ -225,7 +224,7 @@ The full review (including the `findings[]` array) lives only in the file at `fi
 
 ### 3. Aggregate Results
 
-Parse each agent's compact one-line JSON response. Read **only** these fields: `verdict`, `score`, `summary`, `counts.critical`, `counts.major`, `counts.minor`, and `findings_file`. **Do NOT** read the file at `findings_file` here — those bodies stay out of orchestrator context until step 5.5 (or until handed verbatim to the validation-fixer in step 4.2 as a path, never as content).
+Parse each agent's compact one-line JSON response. Read **only** these fields: `verdict`, `score`, `summary`, `counts.critical`, `counts.major`, `counts.minor`, and `findings_file`. **Do NOT** read the file at `findings_file` here — those bodies stay out of orchestrator context entirely. They are handed verbatim to the validation-fixer in step 4.2 as a path (never as content), and persisted by the helper script in step 5.5 (which also reads them out-of-process).
 
 Build the aggregation table from the compact responses:
 
@@ -262,7 +261,7 @@ Then update your iteration tracking notes (see step 1) with the `findings_file` 
    Fixing [X] issues...
    ```
 
-2. **Spawn Fix Agent (REQUIRED — see Hard Rule at top)** — You MUST delegate ALL fix work to the validation-fixer subagent. Do NOT call `Edit`, `Write`, or `NotebookEdit` on source files. Do NOT use `Bash` with `sed -i`, `awk -i`, `tee`, `>`, `>>`, or any other file-mutating shell construct on source files. Do NOT "just fix the small one" or "batch the obvious renames" — even a one-character cosmetic change goes through the fixer. The only file mutation allowed in this skill is what happens *inside* the validation-fixer subagent's own context (plus the narrow exemptions in the Hard Rule for `minor_todos.md` and the temp directory).
+2. **Spawn Fix Agent (REQUIRED — see Hard Rule at top)** — You MUST delegate ALL fix work to the validation-fixer subagent. Do NOT call `Edit`, `Write`, or `NotebookEdit` on source files. Do NOT use `Bash` with `sed -i`, `awk -i`, `tee`, `>`, `>>`, or any other file-mutating shell construct on source files. Do NOT "just fix the small one" or "batch the obvious renames" — even a one-character cosmetic change goes through the fixer. The only file mutation allowed in this skill is what happens *inside* the validation-fixer subagent's own context (plus the narrow exemptions in the Hard Rule for the `persist-unworked-findings.js` helper and the temp directory).
 
    Build the list of `findings_file` paths from agents whose verdict in this iteration is `request-changes` (look them up in your iteration tracking notes for the current `iteration_number`). **Do NOT inline the contents of those files into the prompt.** Spawn:
 
@@ -354,43 +353,23 @@ Also escalate when:
 
 ### 5.5. Persist Unexecuted Findings
 
-After all agents approve, you need to compute the **unexecuted findings** across every iteration. Up to this point in the loop, finding bodies have stayed out of your context. This step is the **one and only** place you read them, and the read is bounded by `(iterations × agents that ran)` files — typically a handful.
+After all agents approve, persist any unfixed findings via the helper script. You do **not** `Read` any findings file yourself, and you do **not** `Read` the file the script produces. The helper does all of the file I/O outside your context window.
 
-**Compute the unexecuted set:**
-
-1. Build the union `all_fixed_global_ids` = ⋃ `findings_fixed` from every iteration in your tracking notes.
-2. Iterate over every `findings_file` path in your tracking notes (across all iterations, all agents) and **Read** each file using the `Read` tool. (Reading files under `findings_dir` is allowed by the Hard Rule's narrow exemptions.)
-3. For each finding in each file, compute its global ID `{agent}-iter{iteration}-{id}`. Drop the finding if its global ID is in `all_fixed_global_ids`. Keep the rest.
-4. The kept findings are the **unexecuted findings**.
-
-If zero unexecuted findings → skip the rest of this step entirely (proceed to step 6).
-
-Otherwise, persist them to `{{specs_dir}}/minor_todos.md` (if `{{specs_dir}}` does not exist, create it). Writing to `{{specs_dir}}/minor_todos.md` is permitted by the Hard Rule's narrow exemptions. Continue with the steps below:
-
-1. **Determine task identifier**: Extract from the task definition context (e.g., `TASK-NNN: Title`). If no task context is available, use `"manual-validation"`.
-
-2. **Create or update `{{specs_dir}}/minor_todos.md`**:
-   - If the file does not exist, create it with this header:
-     ```markdown
-     # Minor TODOs
-
-     Accumulated unexecuted findings from validation runs. Check items off as addressed.
-     ```
-   - If the file exists, read it for deduplication.
-
-3. **Deduplicate**: For each unexecuted finding, check if an existing **unchecked** entry matches on: agent name + file path + finding text (exclude line numbers from comparison since they shift between runs). Skip duplicates.
-
-4. **Format new entries** as a run block:
-   ```markdown
-   ---
-
-   ## Run: YYYY-MM-DD | TASK-NNN: Title
-
-   1. [ ] `minor` **agent-name** | `file:line` | category: finding -- recommendation
-   2. [ ] `major` **agent-name** | `file:line` | category: finding -- recommendation
+1. Build `fixed_ids_csv` by joining (with commas, no spaces) every global ID in `findings_fixed` across every iteration of your tracking notes. (Free — these IDs are already in your context.) If no findings were fixed, pass an empty string.
+2. Resolve `task_id` from the task definition context (e.g. `TASK-042: Title`). If no task context is available, use `"manual-validation"`.
+3. Run:
+   ```bash
+   node ${CLAUDE_PLUGIN_ROOT}/lib/persist-unworked-findings.js \
+     --findings-dir "<findings_dir>" \
+     --specs-dir   "{{specs_dir}}" \
+     --task-id     "<task_id>" \
+     --fixed-ids   "<fixed_ids_csv>"
    ```
-
-5. **Prepend** the new run block after the file header (newest runs first).
+4. **Do NOT print, echo, `cat`, or `Read` the contents of the file the script produces** — that would re-pollute your context with the very findings the script exists to keep out. The single-line JSON the script writes to stdout is the only thing you look at.
+5. Parse that one-line JSON:
+   - `status: "written"` → in the PASS report, write `Unexecuted findings: <total> persisted to <written>` where `<total>` is `counts.critical + counts.major + counts.minor` and `<written>` is the path the script returned.
+   - `status: "empty"` or `status: "no-findings-files"` → in the PASS report, write `Unexecuted findings: 0`.
+   - **Stop there — do not summarize what's in the file.**
 
 ### 6. Return Result
 
@@ -415,7 +394,7 @@ All 9 agents approved after [N] iteration(s).
 Issues fixed:
 - [Iteration N] Agent: Description
 
-Unexecuted findings: [N] finding(s) persisted to `{{specs_dir}}/minor_todos.md`
+Unexecuted findings: [N] finding(s) persisted to `<written>` (the `written` path returned by `persist-unworked-findings.js`; omit "persisted to ..." if status was `empty` or `no-findings-files`)
 ```
 
 Return control to calling skill.

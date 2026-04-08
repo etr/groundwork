@@ -305,43 +305,23 @@ If any agent returns `request-changes`:
 
 #### Phase D.5: Persist Unexecuted Findings
 
-After all agents approve, compute the **unexecuted findings** across every Phase C/D iteration. Up to this point, finding bodies have stayed out of orchestrator context. This phase is the **one and only** place the orchestrator reads them, and the read is bounded by `(iterations × agents that ran)` files.
+After all agents approve, persist any unfixed findings via the helper script. The orchestrator does **not** `Read` any findings file itself, and does **not** `Read` the file the script produces. The helper does all of the file I/O outside the orchestrator's context window.
 
-**Compute the unexecuted set:**
-
-1. Build the union `all_fixed_global_ids` = ⋃ `findings_fixed` from every iteration in the tracking notes.
-2. Iterate over every `findings_file` path in the tracking notes (across all iterations, all agents) and **Read** each file using the `Read` tool.
-3. For each finding in each file, compute its global ID `{agent}-iter{iteration}-{id}`. Drop the finding if its global ID is in `all_fixed_global_ids`. Keep the rest.
-4. The kept findings are the **unexecuted findings**.
-
-If zero unexecuted findings → skip the rest of this phase entirely (proceed to Phase E after the cleanup step at the end of this section).
-
-Otherwise, persist them to `{{specs_dir}}/minor_todos.md` (if `{{specs_dir}}` does not exist, create it):
-
-1. **Task identifier**: Use the current task's `TASK-NNN: Title`.
-
-2. **Create or update `{{specs_dir}}/minor_todos.md`**:
-   - If the file does not exist, create it with this header:
-     ```markdown
-     # Minor TODOs
-
-     Accumulated unexecuted findings from validation runs. Check items off as addressed.
-     ```
-   - If the file exists, read it for deduplication.
-
-3. **Deduplicate**: For each unexecuted finding, check if an existing **unchecked** entry matches on: agent name + file path + finding text (exclude line numbers from comparison since they shift between runs). Skip duplicates.
-
-4. **Format new entries** as a run block:
-   ```markdown
-   ---
-
-   ## Run: YYYY-MM-DD | TASK-NNN: Title
-
-   - [ ] `minor` **agent-name** | `file:line` | category: finding -- recommendation
-   - [ ] `major` **agent-name** | `file:line` | category: finding -- recommendation
+1. Build `fixed_ids_csv` by joining (with commas, no spaces) every global ID in `findings_fixed` across every iteration of the tracking notes. (Free — these IDs are already in context.) If no findings were fixed, pass an empty string.
+2. Use the current task's identifier (e.g. `TASK-042: Title`) as `task_id`.
+3. Run:
+   ```bash
+   node ${CLAUDE_PLUGIN_ROOT}/lib/persist-unworked-findings.js \
+     --findings-dir "<findings_dir>" \
+     --specs-dir   "{{specs_dir}}" \
+     --task-id     "<task_id>" \
+     --fixed-ids   "<fixed_ids_csv>"
    ```
-
-5. **Prepend** the new run block after the file header (newest runs first).
+4. **Do NOT print, echo, `cat`, or `Read` the contents of the file the script produces** — that would re-pollute the orchestrator's context with the very findings the script exists to keep out. The single-line JSON the script writes to stdout is the only thing to look at.
+5. Parse that one-line JSON:
+   - `status: "written"` → record `Unexecuted findings: <total> persisted to <written>` in the per-task log line, where `<total>` is `counts.critical + counts.major + counts.minor` and `<written>` is the path the script returned.
+   - `status: "empty"` or `status: "no-findings-files"` → record `Unexecuted findings: 0`.
+   - **Stop there — do not summarize what's in the file.**
 
 **Cleanup (run at the very end of Phase D.5, before proceeding to Phase E):** delete the per-task findings directory created at the start of Phase C. Only delete the `findings_dir` path that was returned by `mktemp -d -t groundwork-validation-XXXXXX`:
 
