@@ -147,7 +147,18 @@ REQUIREMENTS FOR THE PLAN:
 )
 ```
 
-Save the plan summary. If the plan does not mention worktree or TDD, reject it and re-invoke the Plan agent.
+If the plan does not mention worktree or TDD, reject it and re-invoke the Plan agent.
+
+After validation, persist the plan to disk in the **same turn** as receiving the Plan agent's output:
+
+1. `plan_file_path = $(mktemp -t groundwork-plan-TASK-NNN-XXXXXX.md)`
+2. Use the `Write` tool to save the Plan agent's full output to `plan_file_path`, formatted as:
+   ```markdown
+   # Implementation Plan: TASK-NNN [Title]
+
+   <verbatim Plan agent output>
+   ```
+3. From this point on, refer only to `plan_file_path`. Do NOT re-quote the plan in subsequent turns.
 
 #### Phase B: Implement
 
@@ -159,26 +170,21 @@ Agent(
 
 PROJECT ROOT: [absolute path to project root]
 
-TASK DEFINITION:
-- Identifier: [TASK-NNN]
-- Title: [Task Title]
+TASK:
+- task_id: [TASK-NNN]
+- tasks_path: [absolute path to {{specs_dir}}/tasks.md or {{specs_dir}}/tasks/]
 
-GOAL:
-[Goal from task file]
+Read the '### TASK-NNN:' section from tasks_path for goal, action items,
+and acceptance criteria. Do not ask the caller for task details.
 
-ACTION ITEMS:
-[Bulleted list from task file]
-
-ACCEPTANCE CRITERIA:
-[Bulleted list from task file]
-
-IMPLEMENTATION PLAN:
-[Summary of validated plan from Phase A]
+PLAN FILE: [plan_file_path]
+Read this file first with the Read tool — it contains the validated implementation plan.
 
 INSTRUCTIONS:
 1. Follow your preloaded skills to create a worktree, implement with TDD, and commit.
-2. Do NOT use AskUserQuestion — proceed automatically.
-3. When complete, output your final line in EXACTLY this format:
+2. Read the task section from tasks_path and the plan from PLAN FILE — they provide all session context.
+3. Do NOT use AskUserQuestion — proceed automatically.
+4. When complete, output your final line in EXACTLY this format:
    RESULT: IMPLEMENTED | <worktree_path> | <branch> | <base_branch>
    OR:
    RESULT: FAILURE | [one-line reason]

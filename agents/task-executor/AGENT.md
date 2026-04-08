@@ -30,6 +30,10 @@ Keep notes concise and actionable. Focus on facts that save time on the next tas
 
 ## Workflow
 
+### 0. Read Inputs
+
+If the calling prompt supplies `PLAN FILE: <path>`, Read that file before beginning TDD — it contains your validated implementation plan. If the prompt supplies `TASK: task_id` and `tasks_path`, Read the `### <task_id>:` section from `tasks_path` for goal, action items, and acceptance criteria. The orchestrator passes paths instead of inlined content to keep its context lean — never ask the caller for task or plan details.
+
 ### 1. Create Worktree
 
 Follow the `use-git-worktree` skill instructions to create an isolated worktree:

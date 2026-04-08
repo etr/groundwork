@@ -60,22 +60,14 @@ If the user selects "Cancel — I'll switch first": output the switching command
    **Branch:** task/TASK-NNN
    **Merge Mode:** [auto-merge (env) | manual]
 
-   ### Goal
-   [from task file]
-
-   ## Execution Workflow
-   1. **Worktree** — Create `.worktrees/TASK-NNN` branch `task/TASK-NNN`
-   2. **TDD** — For each action item: write failing test → implement → verify
-   3. **Validation** — Run 9 parallel validation agents using the `groundwork:validation-loop` skill (code quality, test quality, security, spec alignment, architecture, simplification, housekeeping, performance, design consistency)
-   4. **Merge** — Merge branch into base, clean up worktree
-
    ## Implementation Plan
-   **IMPORTANT: DO NOT just execute the plan below. ** You MUST invoke the skill `groundwork:execute-task` skipping directly to Step 7 and using the plan below as context.    
+   **IMPORTANT: DO NOT just execute the plan below.** You MUST invoke the skill `groundwork:execute-task` skipping directly to Step 7 and using the plan below as context. Set both:
 
-   set `GROUNDWORK_EXECUTE_SKIP_TO_STEP_SEVEN=true`.
+   - `GROUNDWORK_EXECUTE_SKIP_TO_STEP_SEVEN=true`
+   - `GROUNDWORK_EXECUTE_PLAN_FILE=<absolute path to this plan-mode plan file>`
 
    ### Plan to be used for Step 7 of `groundwork:execute-task`
-   [Plan agent output from Step 5]
+   [Plan agent output from Step 5 — verbatim]
    ```
 
 3. Call `ExitPlanMode()`
@@ -84,7 +76,7 @@ If the user selects "Cancel — I'll switch first": output the switching command
 
 ### Step 0: Resolve Context
 
-1. **Check skip flag:** If session context contains `GROUNDWORK_EXECUTE_SKIP_TO_STEP_SEVEN=true`, skip directly to Step 7.
+1. **Check skip flag:** If session context contains `GROUNDWORK_EXECUTE_SKIP_TO_STEP_SEVEN=true`, set `plan_file_path = $GROUNDWORK_EXECUTE_PLAN_FILE` (the plan-mode plan file path) and skip directly to Step 7. Do NOT read the plan file's contents into your context — pass the path through to the task-executor.
 2. **Monorepo check:** Does `.groundwork.yml` exist at the repo root?
    - If yes → Is `{{project_name}}` non-empty?
      - If empty → Invoke `Skill(skill="groundwork:project-selector")` to select a project, then restart this skill.
@@ -203,13 +195,27 @@ REQUIREMENTS FOR THE PLAN:
 
 **If ANY unchecked:** Reject plan, state what's missing, re-invoke Plan agent.
 
-After plan is validated, output:
+After plan is validated, persist it to disk in the **same turn** as receiving the Plan agent's output:
 
-```
-✓ Plan agent completed, plan validated
-```
+1. Generate a collision-resistant path:
+   ```bash
+   mktemp -t groundwork-plan-TASK-NNN-XXXXXX.md
+   ```
+   Capture the printed path as `plan_file_path`.
+2. Use the `Write` tool to save the Plan agent's full output to `plan_file_path`. Format the file as plain markdown:
+   ```markdown
+   # Implementation Plan: TASK-NNN [Title]
 
-**DO NOT proceed to Step 6 until the plan completed confirmation is output.**
+   <verbatim Plan agent output>
+   ```
+   This is the **only** turn where the plan content appears in orchestrator context.
+3. Output exactly:
+   ```
+   ✓ Plan validated → <plan_file_path>
+   ```
+4. Do NOT restate, summarize, or re-quote the plan in any subsequent turn. Refer to `plan_file_path` only.
+
+**DO NOT proceed to Step 6 until the validation line above is output.**
 
 ### Step 6: Confirm Start
 
@@ -229,7 +235,7 @@ Wait for response.
 
 2. **Dispatch to the task-executor agent** with a fresh context window. This agent has `use-git-worktree` and `test-driven-development` skills preloaded — it does not need to call `Skill()` or spawn subagents.
 
-**Build the Agent prompt with ALL gathered context.** You MUST include actual values, not placeholders:
+**Build the Agent prompt — pass paths, not content.** Substitute actual values for the bracketed fields:
 
     Agent(
       subagent_type="groundwork:task-executor:task-executor",
@@ -242,25 +248,19 @@ Wait for response.
 
     PROJECT ROOT: [absolute path to project root]
 
-    TASK DEFINITION:
-    - Identifier: [TASK-NNN]
-    - Title: [Task Title]
+    TASK:
+    - task_id: [TASK-NNN]
+    - tasks_path: [absolute path to {{specs_dir}}/tasks.md or {{specs_dir}}/tasks/]
 
-    GOAL:
-    [Goal from task file]
+    Read the '### TASK-NNN:' section from tasks_path for goal, action items,
+    and acceptance criteria. Do not ask the caller for task details.
 
-    ACTION ITEMS:
-    [Bulleted list from task file]
-
-    ACCEPTANCE CRITERIA:
-    [Bulleted list from task file]
-
-    IMPLEMENTATION PLAN:
-    [Summary of validated plan from Step 5]
+    PLAN FILE: [plan_file_path]
+    Read this file first with the Read tool — it contains the validated implementation plan.
 
     INSTRUCTIONS:
     1. Follow your preloaded skills to create a worktree, implement with TDD, and commit.
-    2. The task definition above provides all session context — do NOT re-ask the user for requirements.
+    2. Read the task section from tasks_path and the plan from PLAN FILE — they provide all session context. Do NOT re-ask the user for requirements.
     3. When complete, output your final line in EXACTLY this format:
        RESULT: IMPLEMENTED | <worktree_path> | <branch> | <base_branch>
        OR:
