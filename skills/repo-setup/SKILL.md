@@ -33,6 +33,7 @@ If monorepo indicators were found, mention them:
 
 **If single project:**
 - No config file needed
+- Ensure `.groundwork-plans/` is in `.gitignore` (add it if missing) — execute-task writes per-task plan files there.
 - Confirm: "Single-project mode. Specs will be stored in `specs/` at the repo root."
 - Proceed — no `.groundwork.yml` created.
 
@@ -50,7 +51,7 @@ projects:
     path: <relative/path>
 ```
 
-4. Ensure `.groundwork.local` is in `.gitignore` (add it if missing).
+4. Ensure `.groundwork.local` and `.groundwork-plans/` are in `.gitignore` (add any missing entries). `.groundwork-plans/` is where execute-task writes per-task plan files.
 5. Ask which project to start with using `AskUserQuestion`.
 6. Set project context: `GROUNDWORK_PROJECT=<name>` and `GROUNDWORK_PROJECT_ROOT=<path>`
 

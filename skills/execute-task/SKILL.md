@@ -197,11 +197,12 @@ REQUIREMENTS FOR THE PLAN:
 
 After plan is validated, persist it to disk in the **same turn** as receiving the Plan agent's output:
 
-1. Generate a collision-resistant path:
+1. Persist plans to `.groundwork-plans/TASK-NNN-plan.md` at the project root:
    ```bash
-   mktemp -t groundwork-plan-TASK-NNN-XXXXXX.md
+   mkdir -p .groundwork-plans
+   grep -qxF '.groundwork-plans/' .gitignore 2>/dev/null || printf '.groundwork-plans/\n' >> .gitignore
    ```
-   Capture the printed path as `plan_file_path`.
+   Set `plan_file_path=.groundwork-plans/TASK-NNN-plan.md` (substitute the actual task ID). One plan per task — re-running execute-task on the same task overwrites the previous plan, which is intentional. The `.gitignore` append is idempotent so it is safe to run on every invocation.
 2. Use the `Write` tool to save the Plan agent's full output to `plan_file_path`. Format the file as plain markdown:
    ```markdown
    # Implementation Plan: TASK-NNN [Title]
@@ -277,6 +278,49 @@ Wait for response.
 - `RESULT: IMPLEMENTED | <path> | <branch> | <base-branch>` — Save these values, proceed to Step 7.5
 - `RESULT: FAILURE | ...` — Report failure; in batch mode output `RESULT: FAILURE | [TASK-NNN] ...` and stop
 - No parseable RESULT line — Report: "Implementation subagent did not return a structured result. Check worktree status manually."
+
+### Step 7.4: Optional Context Clear Pause (Interactive Mode Only)
+
+**Skip this step entirely if `GROUNDWORK_BATCH_MODE=true`** — proceed directly to Step 7.5.
+
+In interactive mode, the orchestrator's context now holds the plan summary and the executor result. Validation runs 9 reviewer agents and may iterate through a fix loop, which compounds context further. Offer the user a chance to stop here so they can clear context before validation begins.
+
+Use `AskUserQuestion` to ask:
+
+> "Implementation complete for [TASK-NNN]. Validation runs 9 reviewer agents next and can compound context. Clear context before validation?"
+> - Option 1: "Continue to validation now"
+> - Option 2: "Stop here — I'll clear and resume manually"
+
+**If "Continue to validation now":** Proceed to Step 7.5.
+
+**If "Stop here":** Print the resume instructions below and STOP. Do NOT call validation-loop. Do NOT proceed to Steps 7.5, 7.7, 8, or 9.
+
+    ## Paused before validation
+
+    Implementation is committed in:
+    - **Worktree:** `<worktree_path>`
+    - **Branch:** `<branch>`
+    - **Base branch:** `<base_branch>`
+
+    To resume validation in a clean context:
+
+    1. Run `/clear` to clear Claude Code context
+    2. `cd <worktree_path>`
+    3. Run `/groundwork:validate`
+
+    After validation passes, merge manually from the project root:
+
+        cd <project_root>
+        git checkout <base_branch>
+        git merge --no-ff <branch>
+        git worktree remove <worktree_path>
+        git branch -d <branch>
+
+    Then mark **TASK-NNN** as `Complete` in the tasks file.
+
+This is a hard stop. The user explicitly chose to take over the rest of the workflow.
+
+Substitute the bracketed placeholders (`<worktree_path>`, `<branch>`, `<base_branch>`, `<project_root>`, `[TASK-NNN]`) with the values captured from the executor's `RESULT: IMPLEMENTED` line and the project context.
 
 ### Step 7.5: Validation (Direct Skill Call)
 
