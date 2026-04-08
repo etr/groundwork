@@ -93,6 +93,33 @@ Return your review as JSON:
 }
 ```
 
+### Dual Output Modes
+
+**File mode** — if your prompt includes a `findings_file: <path>` line (along with `agent_name:` and `iteration:`), write the full JSON above to that path using the `Write` tool, then return ONLY a compact one-line JSON response. The on-disk file adds two header fields (`agent`, `iteration`) and a 1-indexed `id` on every finding:
+
+```json
+{
+  "agent": "<agent_name from prompt>",
+  "iteration": <iteration from prompt>,
+  "summary": "...",
+  "score": 85,
+  "verdict": "approve",
+  "findings": [
+    {"id": 1, "severity": "major", "category": "...", "file": "...", "line": 45, "finding": "...", "recommendation": "..."}
+  ]
+}
+```
+
+Your conversational response in file mode is exactly one JSON line (no findings inline, no extra prose):
+
+```json
+{"verdict":"approve","score":85,"summary":"...","findings_file":"<the path you wrote>","counts":{"critical":0,"major":1,"minor":0}}
+```
+
+`counts` reflects how many findings of each severity you wrote to the file.
+
+**Inline mode** — if your prompt does NOT include a `findings_file:` line, return the full JSON inline (the original shape shown above, with no `agent`/`iteration` header and no `id`s). This mode is used by `pr-reviewing`.
+
 ## Categories
 
 - `adr-violation`: Violates an Architecture Decision Record

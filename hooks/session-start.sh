@@ -30,10 +30,12 @@ if [ -z "$SESSION_ID" ]; then
   SESSION_ID=$(echo "$HOOK_INPUT" | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
 fi
 
-# Persist session ID so skills can read it (they don't receive stdin JSON)
-if [ -n "$SESSION_ID" ]; then
-  echo "$SESSION_ID" > "${STATE_DIR}/current-session-id" 2>/dev/null || true
-fi
+# Legacy cleanup: the global session-id file and per-session state dir caused
+# cross-pane leaks (concurrent sessions clobbered each other). Project state
+# is now keyed by terminal pane identity, so these legacy artifacts are
+# obsolete and can be removed on first run after upgrade.
+rm -f "${STATE_DIR}/current-session-id" 2>/dev/null || true
+rm -rf "${STATE_DIR}/sessions" 2>/dev/null || true
 
 # Loaded announcement
 loaded_message="**Groundwork loaded.** "
@@ -202,9 +204,9 @@ template_vars=$(GROUNDWORK_PROJECT="$project_name" GROUNDWORK_SESSION_ID="$SESSI
   ].join('\n'));
 " 2>/dev/null || echo '')
 
-# Clean up stale session files (best-effort, non-blocking)
+# Clean up stale pane state files (best-effort, non-blocking)
 if [ -f "${PLUGIN_ROOT}/lib/project-context.js" ]; then
-  GROUNDWORK_SESSION_ID="$SESSION_ID" node -e "try{require('${PLUGIN_ROOT}/lib/project-context').cleanupStaleSessions()}catch(e){}" 2>/dev/null || true
+  GROUNDWORK_SESSION_ID="$SESSION_ID" node -e "try{require('${PLUGIN_ROOT}/lib/project-context').cleanupStalePanes()}catch(e){}" 2>/dev/null || true
 fi
 
 # Escape outputs for JSON - use jq if available, fallback to bash

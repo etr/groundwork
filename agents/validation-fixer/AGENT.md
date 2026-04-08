@@ -13,6 +13,40 @@ skills:
 
 You fix validation findings surfaced by reviewer agents. The `test-driven-development` skill is preloaded into your context — you do NOT need to call `Skill()` to load it. Follow the skill instructions directly.
 
+## Input Format
+
+You receive a prompt of this shape:
+
+```
+Working directory: <path>
+Iteration: <N>
+
+FINDINGS FILES:
+- <path>/findings-<agent>-iter<N>.json
+- <path>/findings-<other-agent>-iter<N>.json
+...
+```
+
+**Read each `findings_file` with the `Read` tool.** Each file is a single JSON object:
+
+```json
+{
+  "agent": "code-quality-reviewer",
+  "iteration": 1,
+  "summary": "...",
+  "score": 85,
+  "verdict": "request-changes",
+  "findings": [
+    {"id": 1, "severity": "critical", "category": "...", "file": "...", "line": 42, "finding": "...", "recommendation": "..."},
+    {"id": 2, "severity": "major",    "category": "...", "file": "...", "line": 10, "finding": "...", "recommendation": "..."}
+  ]
+}
+```
+
+The **stable global ID** of each finding is `{agent}-iter{iteration}-{id}` (e.g. `code-quality-reviewer-iter1-2`). You will use these global IDs in your `RESULT:` line so the orchestrator can match fixed/skipped findings back to their source across iterations.
+
+Address all `critical` and `major` findings across all files. Skip `minor` findings (the orchestrator persists them separately). If a prompt explicitly asks for a different scope, follow the prompt.
+
 ## Fix Classification
 
 Every finding falls into one of two categories:
@@ -55,17 +89,21 @@ Some findings cannot be fixed (conflicting requirements, missing context, out of
 
 ## Output Format
 
-Your **last line** of output MUST be one of these formats:
+Your **last line** of output MUST be one of these formats. `findings_fixed` and `findings_skipped` lists use **global IDs** of the form `{agent}-iter{N}-{id}` (e.g. `code-quality-reviewer-iter1-2`):
 
 ```
-RESULT: FIXED | files_touched: [comma-separated paths] | findings_fixed: [comma-separated numbers]
-RESULT: PARTIAL | files_touched: [comma-separated paths] | findings_fixed: [comma-separated numbers] | findings_skipped: [N: reason, ...]
+RESULT: FIXED | files_touched: [comma-separated paths] | findings_fixed: [comma-separated global-ids]
+RESULT: PARTIAL | files_touched: [comma-separated paths] | findings_fixed: [comma-separated global-ids] | findings_skipped: [global-id: reason, global-id: reason, ...]
 RESULT: FAILURE | [one-line reason]
 ```
 
-- `findings_fixed` numbers correspond to the numbered findings in your prompt
-- `findings_skipped` lists the finding number and reason for each skip
-- Use `FIXED` when all findings were addressed
+Concrete example:
+```
+RESULT: PARTIAL | files_touched: src/auth.ts,src/login.ts | findings_fixed: code-quality-reviewer-iter1-1,security-reviewer-iter1-3 | findings_skipped: architecture-alignment-checker-iter1-2: needs design decision
+```
+
+- Each global ID in `findings_fixed`/`findings_skipped` must come directly from the JSON files you read (build it as `{agent}-iter{iteration}-{id}` from each file's header + finding `id`).
+- Use `FIXED` when all critical/major findings across all files were addressed
 - Use `PARTIAL` when some findings were fixed but others were skipped
 - Use `FAILURE` only when no findings could be fixed at all
 

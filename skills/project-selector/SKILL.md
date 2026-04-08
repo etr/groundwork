@@ -40,10 +40,9 @@ Use `AskUserQuestion` to ask which project to work on.
 2. Set `GROUNDWORK_PROJECT_ROOT=<absolute-path>`
 3. Persist selection via the persist script:
    ```bash
-   GROUNDWORK_SESSION_ID=$(cat ~/.claude/groundwork-state/current-session-id) \
-     node ${PLUGIN_ROOT}/lib/persist-project.js <selected-name>
+   node ${PLUGIN_ROOT}/lib/persist-project.js <selected-name>
    ```
-   Where `${PLUGIN_ROOT}` is the groundwork plugin directory (use the plugin root path from the session context).
+   Where `${PLUGIN_ROOT}` is the groundwork plugin directory (use the plugin root path from the session context). The script resolves its own terminal-pane identity internally — no env vars required.
 
 Confirm: "Switched to project **<name>**. Specs at `<path>/specs/`."
 

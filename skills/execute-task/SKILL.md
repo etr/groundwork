@@ -429,6 +429,7 @@ Before marking complete, verify ALL:
 - [ ] TDD was followed
 - [ ] All acceptance criteria verified
 - [ ] validation-loop returned PASS (via direct Skill call)
+- [ ] All validation fixes were applied by the validation-fixer subagent — zero `Edit`/`Write`/`NotebookEdit` calls and zero file-mutating `Bash` calls (`sed -i`, `awk -i`, `tee`, `>`, `>>`, etc.) by this orchestrator during the validation phase. If you fixed anything yourself instead of dispatching to validation-fixer, that is a violation of the validation-loop hard rule and the task is NOT complete.
 - [ ] Merge completed or user acknowledged worktree location
 
 If any unchecked: task is NOT complete.
