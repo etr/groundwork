@@ -34,26 +34,9 @@ Otherwise → use `AskUserQuestion`:
 
 If the user selects "Cancel — I'll switch first": output the switching commands above and stop. Do not proceed with the skill.
 
-## Hard Rule — Fixes Go Through The validation-fixer Agent
+## Hard Rule
 
-**You MUST NOT modify any source file yourself in this skill.** Every fix — behavioral or cosmetic, one line or fifty, "just a rename", "just one sed", "a quick batch of actionable findings" — goes through `Agent(subagent_type="groundwork:validation-fixer:validation-fixer", ...)`. The forbidden channels are:
-
-- `Edit`, `Write`, `NotebookEdit` tools applied to **source code or project files**
-- `Bash` with `sed -i`, `awk -i`, `tee`, `>`, `>>`, heredoc redirects, or any other shell construct that mutates a **source-code or project file**
-- Any other path that changes a project file from inside the orchestrator's tool calls
-
-**Narrow exemptions** (these are NOT fixes, they are loop bookkeeping and explicitly allowed):
-- **Deleting** the per-run `findings_dir` at the end of the loop via `Bash` `rm -rf` (only the temp directory created by `mktemp -d -t groundwork-validation-XXXXXX`, never anything else).
-- **Invoking** `lib/persist-unworked-findings.js` via `Bash` in step 5.5. The script writes a single new file under `{{specs_dir}}/unworked_review_issues/`. The orchestrator may NOT call `Write`, `Edit`, or `NotebookEdit` on that file, on any other project file, or on the per-iteration findings JSON files — and may NOT `Read` any of those files either.
-
-The core rule — *no orchestrator edits to source code; all source-code fixes go through validation-fixer* — is unchanged.
-
-**Why this rule exists:** This skill exists specifically to keep fix work *out* of the orchestrator's context window. If you fix things yourself, you burn the budget you saved by dispatching the 9 reviewers as subagents, and the next iteration's reviewers re-read a context that's already polluted with diff details. If you find yourself reasoning *"these findings are simple enough to fix directly"* or *"I'll just batch these renames inline"*, **stop** — that is the exact failure mode this rule exists to prevent. Dispatch to validation-fixer instead.
-
-This rule has no exceptions for source-code fixes. It applies even when:
-- The findings look trivial (one-character changes still go through the subagent)
-- The fixer subagent previously returned PARTIAL or FAILURE (re-dispatch with clarification, do not fall back to direct edits)
-- You judge dispatching to be "wasteful overhead" for the size of the fix (the cost model that justifies that judgment is wrong — see "Why" above)
+You MUST NOT modify source files yourself during this loop. All fixes go through the `validation-fixer` subagent. Allowed orchestrator writes: only the per-run `findings_dir` (`mktemp -d` + `rm -rf`), and `lib/persist-unworked-findings.js` in step 5.5. Zero `Edit`/`Write`/`NotebookEdit`/`sed -i`/`tee`/redirect calls on anything else. No exceptions — even one-character cosmetic fixes go through the subagent. **Why:** this skill exists to keep fix work out of the orchestrator's context window; direct edits burn the budget saved by dispatching the reviewers and pollute the next iteration's context with diff details.
 
 ## Findings Storage
 
@@ -261,7 +244,7 @@ Then update your iteration tracking notes (see step 1) with the `findings_file` 
    Fixing [X] issues...
    ```
 
-2. **Spawn Fix Agent (REQUIRED — see Hard Rule at top)** — You MUST delegate ALL fix work to the validation-fixer subagent. Do NOT call `Edit`, `Write`, or `NotebookEdit` on source files. Do NOT use `Bash` with `sed -i`, `awk -i`, `tee`, `>`, `>>`, or any other file-mutating shell construct on source files. Do NOT "just fix the small one" or "batch the obvious renames" — even a one-character cosmetic change goes through the fixer. The only file mutation allowed in this skill is what happens *inside* the validation-fixer subagent's own context (plus the narrow exemptions in the Hard Rule for the `persist-unworked-findings.js` helper and the temp directory).
+2. **Spawn Fix Agent** — Reminder: do not Edit/Write source files — dispatch to validation-fixer (see Hard Rule).
 
    Build the list of `findings_file` paths from agents whose verdict in this iteration is `request-changes` (look them up in your iteration tracking notes for the current `iteration_number`). **Do NOT inline the contents of those files into the prompt.** Spawn:
 
