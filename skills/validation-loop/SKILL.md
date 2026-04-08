@@ -209,22 +209,11 @@ The full review (including the `findings[]` array) lives only in the file at `fi
 
 Parse each agent's compact one-line JSON response. Read **only** these fields: `verdict`, `score`, `summary`, `counts.critical`, `counts.major`, `counts.minor`, and `findings_file`. **Do NOT** read the file at `findings_file` here — those bodies stay out of orchestrator context entirely. They are handed verbatim to the validation-fixer in step 4.2 as a path (never as content), and persisted by the helper script in step 5.5 (which also reads them out-of-process).
 
-Build the aggregation table from the compact responses:
+Emit one line summarizing this iteration's active agents (skip carry-forward agents):
 
-```markdown
-## Multi-Agent Verification Report
-
-| Agent | Score | Verdict | Critical | Major | Minor |
-|-------|-------|---------|----------|-------|-------|
-| Code Quality | 85 | approve | 0 | 1 | 2 |
-| Test Quality | 88 | approve | 0 | 1 | 0 |
-| Security | 95 | approve | 0 | 0 | 1 |
-| Spec Alignment | 90 | approve | 0 | 1 | 0 |
-| Architecture | 88 | approve | 0 | 1 | 1 |
-| Code Simplifier | 92 | approve | 0 | 0 | 2 |
-| Housekeeper | 90 | approve | 0 | 1 | 0 |
-| Performance | 82 | approve | 0 | 1 | 1 |
-| Design Consistency | 88 | approve | 0 | 1 | 1 |
+```
+Iter {N}: {active_count} agents — {approve_count} approve / {changes_count} request-changes
+({agent: Xc/Ym} for agents with non-zero critical+major, comma-separated; omit clean agents)
 ```
 
 Then update your iteration tracking notes (see step 1) with the `findings_file` path for each agent in this iteration.
@@ -235,14 +224,7 @@ Then update your iteration tracking notes (see step 1) with the `findings_file` 
 
 **On any `request-changes` verdict:**
 
-1. **Log Iteration**
-   ```markdown
-   ## Verification Iteration [N]
-   | Agent | Verdict | Findings |
-   |-------|---------|----------|
-   | ... | ... | ... |
-   Fixing [X] issues...
-   ```
+1. **Log Iteration** — emit one line: `Iter {N}: fixing {X} issues`
 
 2. **Spawn Fix Agent** — Reminder: do not Edit/Write source files — dispatch to validation-fixer (see Hard Rule).
 
@@ -364,21 +346,13 @@ rm -rf "{findings_dir}"
 
 If `findings_dir` was never created (e.g., the loop bailed out before step 1 finished), skip cleanup.
 
-**On PASS:**
-```markdown
-## Verification PASSED
+**On PASS:** emit one line:
 
-All 9 agents approved after [N] iteration(s).
-
-| Agent | Score | Verdict | Summary |
-|-------|-------|---------|---------|
-| ... | ... | APPROVE | ... |
-
-Issues fixed:
-- [Iteration N] Agent: Description
-
-Unexecuted findings: [N] finding(s) persisted to `<written>` (the `written` path returned by `persist-unworked-findings.js`; omit "persisted to ..." if status was `empty` or `no-findings-files`)
 ```
+Validation PASSED ({N} iter, {M} fixed, {K} unworked → <written>)
+```
+
+Where `<written>` is the path returned by `persist-unworked-findings.js`; omit ` → <written>` if the helper returned status `empty` or `no-findings-files`. Do not echo the per-iteration fix list — findings are accessible via the per-iteration JSON files on disk.
 
 Return control to calling skill.
 
