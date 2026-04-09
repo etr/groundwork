@@ -177,6 +177,8 @@ Parse `changed_file_paths` to determine which conditional agents to enable:
 | `housekeeper` | Always | -- |
 | `architecture-alignment-checker` | Conditional | No architecture docs found at `{{specs_dir}}/` |
 | `design-consistency-checker` | Conditional | No design system docs AND no CSS/styling files in `changed_file_paths` |
+| `cloud-infrastructure-reviewer` | Conditional | No IaC/config files in `changed_file_paths` |
+| `conventions-reviewer` | Conditional | No CLAUDE.md files found in the repo |
 
 **Skip `spec-alignment-checker`** — it performs internal EARS requirement tracing which is not relevant to PR review.
 
@@ -202,6 +204,8 @@ Spawn all active agents **in parallel** using the `Agent` tool with `subagent_ty
 | `groundwork:housekeeper:housekeeper` | `changed_file_paths`, `diff_stat`, `pr_description`, `existing_human_feedback` |
 | `groundwork:architecture-alignment-checker:architecture-alignment-checker` | `changed_file_paths`, `diff_stat`, `pr_description`, `architecture_path`, `existing_human_feedback` |
 | `groundwork:design-consistency-checker:design-consistency-checker` | `changed_file_paths`, `diff_stat`, `pr_description`, `design_system_path`, `existing_human_feedback` |
+| `groundwork:cloud-infrastructure-reviewer:cloud-infrastructure-reviewer` | `changed_file_paths`, `diff_stat`, `pr_description`, `architecture_path`, `existing_human_feedback` |
+| `groundwork:conventions-reviewer:conventions-reviewer` | `changed_file_paths`, `diff_stat`, `pr_description`, `existing_human_feedback` |
 
 **In each agent prompt, include these instructions:**
 
@@ -240,6 +244,7 @@ Each agent returns standard JSON:
 | Housekeeper | 90 | approve | 0 | 1 | 0 |
 | Architecture | -- | skipped | -- | -- | -- |
 | Design | -- | skipped | -- | -- | -- |
+| Conventions | 95 | approve | 0 | 0 | 1 |
 ```
 
 ### 6b: Deduplication Pass (LLM-driven)

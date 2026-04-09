@@ -6,7 +6,7 @@ user-invocable: false
 
 # Validation Loop Skill
 
-Autonomous verification loop that runs 9 specialized agents and fixes issues until all approve.
+Autonomous verification loop that runs specialized agents and fixes issues until all approve.
 
 ## Pre-flight: Model Recommendation
 
@@ -156,6 +156,8 @@ Based on context gathered, skip agents whose primary review subject does not exi
 | `design-consistency-checker` | No `design_system_path` AND no CSS/styling files in `changed_file_paths` |
 | `spec-alignment-checker` | No `specs_path` found |
 | `architecture-alignment-checker` | No `architecture_path` found |
+| `cloud-infrastructure-reviewer` | No IaC/config files in `changed_file_paths` (detected by extension/content sniff: `*.tf`, `*.tfvars`, CloudFormation YAML/JSON, CDK sources, Bicep/ARM, Pulumi, Kubernetes manifests, Dockerfiles, `docker-compose.*`) |
+| `conventions-reviewer` | No CLAUDE.md files found in the repo (`**/CLAUDE.md` via Glob) |
 
 **Always run** regardless of context:
 - `code-quality-reviewer` — always applicable to code changes
@@ -171,7 +173,7 @@ Record skipped agents in the aggregation table with verdict `skipped` and a note
 
 **Token discipline:** Launch all agents in a single tool-use turn. Do NOT output text-only turns while waiting for agents to return — each turn re-reads the full context window. Aggregate results silently and output ONE summary after all agents complete. The same applies to re-validation rounds in Step 4.
 
-Use Agent tool to launch all 9 agents in parallel:
+Use Agent tool to launch all agents in parallel:
 
 | Agent (`subagent_type`) | Context to Provide |
 |-------------------------|-------------------|
@@ -184,6 +186,8 @@ Use Agent tool to launch all 9 agents in parallel:
 | `groundwork:housekeeper:housekeeper` | `changed_file_paths`, `diff_stat`, `task_definition`, `task_status`, `specs_path`, `architecture_path`, `design_system_path` |
 | `groundwork:performance-reviewer:performance-reviewer` | `changed_file_paths`, `diff_stat`, `task_definition` |
 | `groundwork:design-consistency-checker:design-consistency-checker` | `changed_file_paths`, `diff_stat`, `design_system_path` |
+| `groundwork:cloud-infrastructure-reviewer:cloud-infrastructure-reviewer` | `changed_file_paths`, `diff_stat`, `task_definition`, `architecture_path` |
+| `groundwork:conventions-reviewer:conventions-reviewer` | `changed_file_paths`, `diff_stat`, `task_definition` |
 
 **Each agent prompt MUST include both of these lines** (in addition to the agent-specific context above):
 
@@ -274,6 +278,8 @@ Then update your iteration tracking notes (see step 1) with the `findings_file` 
    | Task status, docs, spec files | housekeeper |
    | Hot paths, algorithmic changes | performance-reviewer |
    | Code structure, naming | code-simplifier |
+   | IaC files, cloud config, IAM policies, Kubernetes manifests, Dockerfiles | cloud-infrastructure-reviewer |
+   | CLAUDE.md files, project config | conventions-reviewer |
 
    **When in doubt, re-run.** False passes are worse than extra agent runs.
 

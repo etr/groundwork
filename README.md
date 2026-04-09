@@ -420,7 +420,7 @@ For contributors and curious users — how the plugin works under the hood.
 
 Agents are specialized sub-processes that run verification and validation tasks. They are invoked automatically by skills like `validation-loop`, `task-validation-loop`, and `pr-reviewing`.
 
-#### Implementation Verification (9 agents)
+#### Implementation Verification (10 agents)
 
 These run after task implementation via the `validation-loop` skill:
 
@@ -434,6 +434,7 @@ These run after task implementation via the `validation-loop` skill:
 | `code-simplifier` | Simplifies code for clarity and maintainability while preserving functionality |
 | `housekeeper` | Verifies housekeeping — task status updates, action items, documentation changes |
 | `performance-reviewer` | Reviews for performance issues — algorithmic complexity, memory, I/O |
+| `cloud-infrastructure-reviewer` | Reviews cloud infrastructure-as-code against Well-Architected best practices — IAM, encryption, network segmentation, reliability, cost, provider-specific checks for AWS/Azure/GCP, and IaC anti-patterns |
 | `design-consistency-checker` | Verifies design system compliance — tokens, accessibility, interaction quality, UX writing, pattern consistency |
 
 #### Task Validation (3 agents)

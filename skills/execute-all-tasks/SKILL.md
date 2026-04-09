@@ -225,7 +225,7 @@ iterations:
     findings_skipped: []
 ```
 
-Then launch all 9 validation agents **in parallel** using the Agent tool:
+Then launch all 10 validation agents **in parallel** using the Agent tool:
 
 ```
 Agent(subagent_type="groundwork:code-quality-reviewer:code-quality-reviewer", description="Review TASK-NNN quality", prompt="...")
@@ -237,6 +237,8 @@ Agent(subagent_type="groundwork:housekeeper:housekeeper", description="Check TAS
 Agent(subagent_type="groundwork:performance-reviewer:performance-reviewer", description="Review TASK-NNN performance", prompt="...")
 Agent(subagent_type="groundwork:test-quality-reviewer:test-quality-reviewer", description="Review TASK-NNN test quality", prompt="...")
 Agent(subagent_type="groundwork:design-consistency-checker:design-consistency-checker", description="Check TASK-NNN design", prompt="...")
+Agent(subagent_type="groundwork:cloud-infrastructure-reviewer:cloud-infrastructure-reviewer", description="Check TASK-NNN cloud infra", prompt="...")
+Agent(subagent_type="groundwork:conventions-reviewer:conventions-reviewer", description="Check TASK-NNN cloud infra", prompt="...")
 ```
 
 Each agent receives: changed file paths, diff stat, task definition, and relevant spec/architecture/design paths. **Each prompt MUST also include:**
