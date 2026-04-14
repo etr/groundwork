@@ -1,20 +1,22 @@
 ---
 name: execute-task
-description: This skill should be used when the user asks to "execute a task", "work on task N", or "implement TASK-NNN" - orchestrates worktree isolation, TDD implementation, validation, and merge.
-requires: validation-loop
+description: skill to "execute a task", "work on task N", or "implement TASK-NNN" - orchestrates worktree isolation, TDD implementation, validation, and merge.
+requires: task-planning, task-implementation, validation-loop
 user-invocable: false
 ---
 
 # Execute Task Skill
 
+Thin orchestrator that delegates to `task-planning`, `task-implementation`, and `validation-loop` skills for the three phases of task execution.
+
 ## Token Discipline
 
-This skill orchestrates long multi-agent workflows. Every turn re-reads the full context window, so unnecessary turns are expensive. Follow these rules:
+This skill orchestrates long multi-agent workflows. Every turn re-reads the full context window, so unnecessary turns are expensive.
 
-1. **No narration turns.** Do not output text-only turns like "Let me load the task" or "Now I'll launch the plan agent." Combine text with the tool call in the same turn, or skip the text entirely.
-2. **Batch tool calls.** When multiple tool calls are independent (e.g., reading several files, launching parallel agents), issue them all in one turn.
-3. **No waiting updates.** When agents are running in background, do not output "Waiting for results..." turns. Wait silently until results arrive.
-4. **Keep context lean.** Do not read file contents you won't use directly. Pass file paths to subagents and let them read in their own context.
+1. **No narration turns.** Do not output text-only turns like "Let me load the task" or "Now I'll launch the plan agent." Combine text with a tool call in the same turn, or skip the text entirely.
+2. **Batch tool calls.** When multiple tool calls are independent, issue them all in one turn.
+3. **No waiting updates.** Do not output "Waiting for results..." turns. Wait silently until results arrive.
+4. **Keep context lean.** Do not read file contents you won't use directly. Pass file paths to subagents and let them read in their own context windows.
 
 ## Pre-flight: Model Recommendation
 
@@ -22,17 +24,17 @@ This skill orchestrates long multi-agent workflows. Every turn re-reads the full
 
 Skip this step silently if effort is `high` or higher AND you are Sonnet or Opus.
 If effort is below `high`, you MUST show the recommendation prompt — regardless of model.
-If you are not Sonnet or Opus, you MUST show the recommendation prompt - regardless of effort level.
+If you are not Sonnet or Opus, you MUST show the recommendation prompt — regardless of effort level.
 
 Otherwise → use `AskUserQuestion`:
 
 ```json
 {
   "questions": [{
-    "question": "Do you want to switch? Multi-phase orchestration with plan validation and context gathering benefits from consistent reasoning.\n\nTo switch: cancel, run `/effort high` (and `/model sonnet` if on Haiku), then re-invoke this skill.",
-    "header": "Recommended: Sonnet or Opus at high effort",
+    "question": "Task execution benefits from consistent multi-domain reasoning.\n\nRecommended: Sonnet or Opus at high effort.\n\nTo switch: cancel, run `/effort high` (and `/model sonnet` if on Haiku), then re-invoke.",
+    "header": "Effort check",
     "options": [
-      { "label": "Continue" },
+      { "label": "Continue anyway" },
       { "label": "Cancel — I'll switch first" }
     ],
     "multiSelect": false
@@ -40,50 +42,41 @@ Otherwise → use `AskUserQuestion`:
 }
 ```
 
-If the user selects "Cancel — I'll switch first": output the switching commands above and stop. Do not proceed with the skill.
+If the user selects "Cancel — I'll switch first": output the switching commands and stop. Do not proceed with the skill.
 
 ## Plan Mode Handling
 
-**If you are in plan mode**, follow these instructions instead of plan mode's default phases:
-
-1. Execute Steps 1-5 below as normal (they are read-only)
-2. Write the plan file with the following structure:
+1. Execute Steps 0-2 below as normal (they are read-only — planning produces a plan file).
+2. After Step 2 produces the plan file, write the plan mode output:
 
    ```markdown
-   ## Task: [TASK-NNN] [Task Title]
-
-   **Milestone:** [name]
-   **Component:** [from architecture]
+   ## Task: [TASK-NNN] [Title]
 
    ### Execution Context
    **Working Directory:** .worktrees/TASK-NNN
    **Branch:** task/TASK-NNN
-   **Merge Mode:** [auto-merge (env) | manual]
+   **Base Branch:** [current branch]
 
    ## Implementation Plan
-   **IMPORTANT: DO NOT just execute the plan below.** You MUST invoke the skill `groundwork:execute-task` skipping directly to Step 7 and using the plan below as context. Set both:
-
+   **IMPORTANT: DO NOT just execute the plan below.** Re-invoke `groundwork:execute-task` which will use the saved plan. Set:
    - `GROUNDWORK_EXECUTE_SKIP_TO_STEP_SEVEN=true`
-   - `GROUNDWORK_EXECUTE_PLAN_FILE=<absolute path to this plan-mode plan file>`
-
-   ### Plan to be used for Step 7 of `groundwork:execute-task`
-   [Plan agent output from Step 5 — verbatim]
+   - `GROUNDWORK_EXECUTE_PLAN_FILE=<absolute path to plan file>`
+   Then invoke `groundwork:execute-task` with the same task ID.
    ```
 
 3. Call `ExitPlanMode()`
 
-## WORKFLOW
+## Step 0: Resolve Context
 
-### Step 0: Resolve Context
+1. **Check skip flag:** If session context contains `GROUNDWORK_EXECUTE_SKIP_TO_STEP_SEVEN=true`, set `plan_file_path = $GROUNDWORK_EXECUTE_PLAN_FILE` and skip directly to Step 3 (Implementation). Do NOT read the plan file's contents into this orchestrator's context — the task-implementation skill will pass the path to the executor agent.
 
-1. **Check skip flag:** If session context contains `GROUNDWORK_EXECUTE_SKIP_TO_STEP_SEVEN=true`, set `plan_file_path = $GROUNDWORK_EXECUTE_PLAN_FILE` (the plan-mode plan file path) and skip directly to Step 7. Do NOT read the plan file's contents into your context — pass the path through to the task-executor.
 2. **Monorepo check:** Does `.groundwork.yml` exist at the repo root?
    - If yes → Is `{{project_name}}` non-empty?
      - If empty → Invoke `Skill(skill="groundwork:project-selector")` to select a project, then restart this skill.
      - If set → Project is `{{project_name}}`, specs at `{{specs_dir}}/`.
    - If no → Continue (single-project repo).
 3. **CWD mismatch check (monorepo only):**
-   - Skip if not in monorepo mode or if the project was just selected in item 2 above.
+   - Skip if not in monorepo mode or if the project was just selected above.
    - If CWD is the repo root → fine, proceed.
    - Check which project's path CWD falls inside (compare against all projects in `.groundwork.yml`).
    - If CWD is inside the selected project's path → fine, proceed.
@@ -94,194 +87,58 @@ If the user selects "Cancel — I'll switch first": output the switching command
      If the user switches, invoke `Skill(skill="groundwork:project-selector")`.
    - If CWD doesn't match any project → proceed without warning (shared directory).
 
-### Step 1: Parse Task Identifier
+## Step 1: Parse Task Identifier
 
 Parse the task identifier from the argument:
 
 - **Numeric** (e.g., `4`): Interpret as `TASK-004` (zero-padded to 3 digits)
 - **Full format** (e.g., `TASK-004`): Use as-is
-- **No argument**: Invoke `groundwork:next-task` skill instead and stop here
+- **No argument**: Invoke `groundwork:next-task` skill to determine the next workable task, then use that ID. If next-task returns nothing workable, report and stop.
 
-**Error:** Invalid format → "Please specify a task number, e.g., `/groundwork:work-on 4` or `/groundwork:work-on TASK-004`"
+**Error:** Invalid format → "Please specify a task number, e.g. `/groundwork:work-on 4` or `/groundwork:work-on TASK-004`"
 
 ### Batch Mode Detection
 
 If session context contains `GROUNDWORK_BATCH_MODE=true`, batch mode is active. In batch mode:
-- All `AskUserQuestion` prompts are skipped — proceed with the default/automatic choice
-- On completion or failure, output a structured result line (see Step 9)
+- All `AskUserQuestion` calls are skipped
+- On completion or failure, output a structured result line (Step 7)
 
-### Step 2: Load Task File
+## Step 2: Plan → `task-planning`
 
-Read the tasks file from the worktree:
-- Single file: `{{specs_dir}}/tasks.md`
-- Directory: `{{specs_dir}}/tasks/` (aggregated in sorted order)
+Call `Skill(skill="groundwork:task-planning")` with the task ID from Step 1 in the conversation context.
 
-Search for `### TASK-NNN:` pattern.
+**Parse the output:**
+- `RESULT: PLANNED | plan_file_path=<path> | identifier=<id> | branch_prefix=<prefix>` → Save `plan_file_path`, `identifier`, `branch_prefix`. Proceed.
+- `RESULT: FAILURE | ...` → Report failure. In batch mode output `RESULT: FAILURE | [TASK-NNN] <reason>` and stop. In interactive mode, report the failure and stop.
 
-**Error:** Task not found → "TASK-NNN not found in {{specs_dir}}/tasks/"
+### Step 2.5: Confirm Start (Interactive Only)
 
-### Step 3: Validate Task is Workable
-
-**If already complete:**
-
-- **Batch mode (GROUNDWORK_BATCH_MODE=true):** Output `RESULT: SUCCESS | Already complete` and stop — do not re-execute.
-- **Interactive mode:** Use `AskUserQuestion` to ask:
-
-  > "TASK-NNN is already marked Complete. What would you like to do?"
-  > - Option 1: "Work on it anyway (resets to In Progress)"
-  > - Option 2: "Pick a different task"
-
-  **Wait for user response before proceeding.**
-
-**If blocked:**
-
-- **Batch mode (GROUNDWORK_BATCH_MODE=true):** Output `RESULT: FAILURE | Blocked by [list of blocking task IDs]` and stop.
-- **Interactive mode:** Use `AskUserQuestion` to ask:
-
-  > "TASK-NNN is blocked by: [list]. What would you like to do?"
-  > - Option 1: "Override and work on it anyway"
-  > - Option 2: "Work on a blocking task first: [suggest first blocker]"
-
-  **Wait for user response before proceeding.**
-
-### Step 4: Load Project Context
-
-**Token discipline: Do NOT read file contents into this orchestrator context.** The Plan agent and task-executor both have Read/Grep/Glob tools and will read files in their own context windows. Loading specs here bloats the context for all remaining turns (validation, merge, cleanup).
-
-Verify paths exist (use Glob, not Read):
-1. **Product specs** - `{{specs_dir}}/product_specs.md` or `{{specs_dir}}/product_specs/`
-2. **Architecture** - `{{specs_dir}}/architecture.md` or `{{specs_dir}}/architecture/`
-3. **Design system** - `{{specs_dir}}/design_system.md` (if exists)
-4. **Tasks** - `{{specs_dir}}/tasks.md` or `{{specs_dir}}/tasks/`
-
-Only read the **task definition** for the specific TASK-NNN (goal, action items, acceptance criteria) — this is small and needed for the Agent prompts. Do NOT read full specs, architecture, or other task files.
-
-**If specs missing:** Report which are missing and suggest commands to create them.
-**If design system missing:** Not an error — proceed without it. Note its absence for the planner.
-
-### Step 5: Plan Implementation
-
-**You MUST use the Plan agent. Do NOT create your own plan.**
-
-Launch the Plan agent. Pass file **paths** — the agent has Read/Grep/Glob tools and will read what it needs:
-
-```
-Agent(
-  subagent_type="Plan",
-  prompt="Create implementation plan for TASK-NNN: [task title]
-
-Task definition:
-[goal, action items, acceptance criteria from task file]
-
-Project context — read these files yourself using Read/Grep/Glob:
-- Product specs: [path to product_specs.md or product_specs/ directory]
-- Architecture: [path to architecture.md or architecture/ directory]
-- Design system: [path to design_system.md — or 'No design system defined']
-- Tasks: [path to tasks.md or tasks/ directory]
-
-REQUIREMENTS FOR THE PLAN:
-1. All work happens in worktree .worktrees/TASK-NNN (not main workspace)
-2. Must follow TDD: write test → implement → verify cycle
-3. Plan covers implementation only — validation and merge are handled separately by the caller
-4. If a design system is provided and the task involves UI, the plan must reference specific design tokens, colors, and component patterns from it
-",
-  description="Plan TASK-NNN"
-)
-```
-
-**Validate the plan:**
-- [ ] Plan states work happens in worktree
-- [ ] Plan includes TDD cycle
-
-**If ANY unchecked:** Reject plan, state what's missing, re-invoke Plan agent.
-
-After plan is validated, persist it to disk in the **same turn** as receiving the Plan agent's output:
-
-1. Persist plans to `.groundwork-plans/TASK-NNN-plan.md` at the project root:
-   ```bash
-   mkdir -p .groundwork-plans
-   grep -qxF '.groundwork-plans/' .gitignore 2>/dev/null || printf '.groundwork-plans/\n' >> .gitignore
-   ```
-   Set `plan_file_path=.groundwork-plans/TASK-NNN-plan.md` (substitute the actual task ID). One plan per task — re-running execute-task on the same task overwrites the previous plan, which is intentional. The `.gitignore` append is idempotent so it is safe to run on every invocation.
-2. Use the `Write` tool to save the Plan agent's full output to `plan_file_path`. Format the file as plain markdown:
-   ```markdown
-   # Implementation Plan: TASK-NNN [Title]
-
-   <verbatim Plan agent output>
-   ```
-   This is the **only** turn where the plan content appears in orchestrator context.
-3. Output exactly:
-   ```
-   ✓ Plan validated → <plan_file_path>
-   ```
-4. Do NOT restate, summarize, or re-quote the plan in any subsequent turn. Refer to `plan_file_path` only.
-
-**DO NOT proceed to Step 6 until the validation line above is output.**
-
-### Step 6: Confirm Start
-
-**Batch mode (GROUNDWORK_BATCH_MODE=true):** skip to Step 7.
+**Batch mode (GROUNDWORK_BATCH_MODE=true):** Skip to Step 3.
 
 **Interactive mode:** Use `AskUserQuestion`:
 
-> "[TASK-NNN] [Title] — ready to begin?"
-> - Option 1: "Yes, begin"
-> - Option 2: "No, let me review first"
+> "[TASK-NNN] [Title] — plan ready. Proceed to implementation?"
+> - Option 1: "Yes, begin implementation"
+> - Option 2: "Stop here — I'll review the plan first"
 
-Wait for response.
+**If "Stop here":** Print the plan file path and resume instructions, then STOP:
 
-### Step 7: Implementation (task-executor Agent)
+    Plan saved to: <plan_file_path>
+    
+    To resume implementation later:
+    /groundwork:implement-task <task-number>
 
-1. **Update status** - Change task file to `**Status:** In Progress` and update the status table in `{{specs_dir}}/tasks/_index.md` or `{{specs_dir}}/tasks.md` (change the task's row to `In Progress`)
+## Step 3: Implement → `task-implementation`
 
-2. **Dispatch to the task-executor agent** with a fresh context window. This agent has `use-git-worktree` and `test-driven-development` skills preloaded — it does not need to call `Skill()` or spawn subagents.
+Call `Skill(skill="groundwork:task-implementation")` with `task_id` and `plan_file_path` in the conversation context.
 
-**Build the Agent prompt — pass paths, not content.** Substitute actual values for the bracketed fields:
+**Parse the output:**
+- `RESULT: IMPLEMENTED | worktree_path=<path> | branch=<branch> | base_branch=<bb>` → Save values. Proceed.
+- `RESULT: FAILURE | ...` → Report failure. In batch mode output `RESULT: FAILURE | [TASK-NNN] <reason>` and stop. In interactive mode, report and stop.
 
-    Agent(
-      subagent_type="groundwork:task-executor:task-executor",
-      description="Execute TASK-NNN",
-      prompt="You are implementing a task that has already been fully planned.
+### Step 3.5: Optional Context Clear Pause (Interactive Only)
 
-    [If GROUNDWORK_BATCH_MODE=true in session: include the line below]
-    [If interactive: omit this line]
-    Do NOT use AskUserQuestion — proceed automatically.
-
-    PROJECT ROOT: [absolute path to project root]
-
-    TASK:
-    - task_id: [TASK-NNN]
-    - tasks_path: [absolute path to {{specs_dir}}/tasks.md or {{specs_dir}}/tasks/]
-
-    Read the '### TASK-NNN:' section from tasks_path for goal, action items,
-    and acceptance criteria. Do not ask the caller for task details.
-
-    PLAN FILE: [plan_file_path]
-    Read this file first with the Read tool — it contains the validated implementation plan.
-
-    INSTRUCTIONS:
-    1. Follow your preloaded skills to create a worktree, implement with TDD, and commit.
-    2. Read the task section from tasks_path and the plan from PLAN FILE — they provide all session context. Do NOT re-ask the user for requirements.
-    3. When complete, output your final line in EXACTLY this format:
-       RESULT: IMPLEMENTED | <worktree_path> | <branch> | <base_branch>
-       OR:
-       RESULT: FAILURE | [one-line reason]
-
-    IMPORTANT:
-    - Do NOT run validation-loop or merge — the caller handles those
-    - Do NOT use AskUserQuestion for merge decisions
-    - Your LAST line of output MUST be the RESULT line
-    "
-    )
-
-**After the subagent returns**, parse the result:
-- `RESULT: IMPLEMENTED | <path> | <branch> | <base-branch>` — Save these values, proceed to Step 7.5
-- `RESULT: FAILURE | ...` — Report failure; in batch mode output `RESULT: FAILURE | [TASK-NNN] ...` and stop
-- No parseable RESULT line — Report: "Implementation subagent did not return a structured result. Check worktree status manually."
-
-### Step 7.4: Optional Context Clear Pause (Interactive Mode Only)
-
-**Skip this step entirely if `GROUNDWORK_BATCH_MODE=true`** — proceed directly to Step 7.5.
+**Skip this step entirely if `GROUNDWORK_BATCH_MODE=true`** — proceed directly to Step 4.
 
 In interactive mode, the orchestrator's context now holds the plan summary and the executor result. Validation runs 9 reviewer agents and may iterate through a fix loop, which compounds context further. Offer the user a chance to stop here so they can clear context before validation begins.
 
@@ -291,9 +148,9 @@ Use `AskUserQuestion` to ask:
 > - Option 1: "Continue to validation now"
 > - Option 2: "Stop here — I'll clear and resume manually"
 
-**If "Continue to validation now":** Proceed to Step 7.5.
+**If "Continue to validation now":** Proceed to Step 4.
 
-**If "Stop here":** Print the resume instructions below and STOP. Do NOT call validation-loop. Do NOT proceed to Steps 7.5, 7.7, 8, or 9.
+**If "Stop here":** Print the resume instructions below and STOP. Do NOT call validation-loop. Do NOT proceed to Steps 4, 5, 6, or 7.
 
     ## Paused before validation
 
@@ -320,22 +177,20 @@ Use `AskUserQuestion` to ask:
 
 This is a hard stop. The user explicitly chose to take over the rest of the workflow.
 
-Substitute the bracketed placeholders (`<worktree_path>`, `<branch>`, `<base_branch>`, `<project_root>`, `[TASK-NNN]`) with the values captured from the executor's `RESULT: IMPLEMENTED` line and the project context.
-
-### Step 7.5: Validation (Direct Skill Call)
+## Step 4: Validate
 
 **Call the validation-loop skill directly.** Do NOT wrap this in a subagent — this skill runs in the main conversation, which CAN spawn the 9 validation subagents it needs.
 
-1. `cd` into the worktree path from Step 7
+1. `cd` into the worktree path from Step 3
 2. Call: `Skill(skill='groundwork:validation-loop')`
 3. The validation-loop skill will run 9 verification agents in parallel and fix issues autonomously.
 
 **After validation-loop completes:**
-- All agents approved → Proceed to Step 7.7
+- All agents approved → Proceed to Step 5
 - Validation failed → Report failure; in batch mode output `RESULT: FAILURE | [TASK-NNN] Validation failed: ...` and stop
 - Stuck on recurring issue → Report the stuck finding and stop
 
-### Step 7.7: Merge
+## Step 5: Merge
 
 **From the project root** (NOT the worktree), handle merge:
 
@@ -393,13 +248,13 @@ cd .worktrees/TASK-NNN
 ```
 ```
 
-### Step 8: Complete Task
+## Step 6: Complete Task
 
 After successful merge or user acknowledgment:
 
-1. **Update status** - Change task file to `**Status:** Complete` and update the status table in `{{specs_dir}}/tasks/_index.md` (change the task's row to `Complete`)
+1. **Update status** — Change task file to `**Status:** Complete` and update the status table in `{{specs_dir}}/tasks/_index.md` or `{{specs_dir}}/tasks.md` (change the task's row to `Complete`)
 
-### Step 9: Complete and Report
+## Step 7: Report
 
 **Batch mode (GROUNDWORK_BATCH_MODE=true):** Output the structured result as your final line:
 ```

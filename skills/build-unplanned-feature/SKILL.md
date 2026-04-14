@@ -1,13 +1,22 @@
 ---
 name: build-unplanned-feature
-description: This skill should be used when building a feature from a description without existing task definitions - combines requirement gathering, TDD implementation, and validation
-requires: understanding-feature-requests, validation-loop
+description: Builds a feature from a description without existing task definitions - combines requirement gathering, TDD implementation, and validation
+requires: task-planning, task-implementation, validation-loop
 user-invocable: false
 ---
 
 # Build Unplanned Feature
 
-Enables ad-hoc feature development without existing task definitions. Combines requirement gathering, worktree isolation, TDD implementation, multi-agent validation, and merge.
+Thin orchestrator for ad-hoc feature development without existing task definitions. Delegates to `task-planning` (blurb mode), `task-implementation`, and `validation-loop`.
+
+## Token Discipline
+
+This skill orchestrates long multi-agent workflows. Every turn re-reads the full context window, so unnecessary turns are expensive.
+
+1. **No narration turns.** Do not output text-only turns like "Let me understand your feature" or "Now I'll dispatch implementation." Combine text with a tool call in the same turn, or skip the text entirely.
+2. **Batch tool calls.** When multiple tool calls are independent, issue them all in one turn.
+3. **No waiting updates.** Do not output "Waiting for results..." turns. Wait silently until results arrive.
+4. **Keep context lean.** Do not read file contents you won't use directly. Pass file paths to subagents and let them read in their own context windows.
 
 ## Pre-flight: Model Recommendation
 
@@ -15,17 +24,17 @@ Enables ad-hoc feature development without existing task definitions. Combines r
 
 Skip this step silently if effort is `high` or higher AND you are Sonnet or Opus.
 If effort is below `high`, you MUST show the recommendation prompt — regardless of model.
-If you are not Sonnet or Opus, you MUST show the recommendation prompt - regardless of effort level.
+If you are not Sonnet or Opus, you MUST show the recommendation prompt — regardless of effort level.
 
 Otherwise → use `AskUserQuestion`:
 
 ```json
 {
   "questions": [{
-    "question": "Do you want to switch? Multi-domain reasoning combining requirements, architecture, and design consistency benefits from consistent reasoning.\n\nTo switch: cancel, run `/effort high` (and `/model sonnet` if on Haiku), then re-invoke this skill.",
-    "header": "Recommended: Sonnet or Opus at high effort",
+    "question": "Feature development benefits from consistent multi-domain reasoning.\n\nRecommended: Sonnet or Opus at high effort.\n\nTo switch: cancel, run `/effort high` (and `/model sonnet` if on Haiku), then re-invoke.",
+    "header": "Effort check",
     "options": [
-      { "label": "Continue" },
+      { "label": "Continue anyway" },
       { "label": "Cancel — I'll switch first" }
     ],
     "multiSelect": false
@@ -33,11 +42,9 @@ Otherwise → use `AskUserQuestion`:
 }
 ```
 
-If the user selects "Cancel — I'll switch first": output the switching commands above and stop. Do not proceed with the skill.
+If the user selects "Cancel — I'll switch first": output the switching commands and stop. Do not proceed with the skill.
 
 ## Step 0: Resolve Project Context
-
-**Before loading specs, ensure project context is resolved:**
 
 1. **Monorepo check:** Does `.groundwork.yml` exist at the repo root?
    - If yes → Is `{{project_name}}` non-empty?
@@ -45,7 +52,7 @@ If the user selects "Cancel — I'll switch first": output the switching command
      - If set → Project is `{{project_name}}`, specs at `{{specs_dir}}/`.
    - If no → Continue (single-project repo).
 2. **CWD mismatch check (monorepo only):**
-   - Skip if not in monorepo mode or if the project was just selected in item 1 above.
+   - Skip if not in monorepo mode or if the project was just selected above.
    - If CWD is the repo root → fine, proceed.
    - Check which project's path CWD falls inside (compare against all projects in `.groundwork.yml`).
    - If CWD is inside the selected project's path → fine, proceed.
@@ -55,174 +62,94 @@ If the user selects "Cancel — I'll switch first": output the switching command
      > - "Stay with [selected-project]"
      If the user switches, invoke `Skill(skill="groundwork:project-selector")`.
    - If CWD doesn't match any project → proceed without warning (shared directory).
-3. Proceed with the resolved project context. All `{{specs_dir}}/` paths will resolve to the correct location.
+3. Proceed with the resolved project context.
 
-## Workflow
+## Step 1: Parse Feature Description
 
-### Step 1: Parse Feature Description
+- **Argument provided:** Use the argument text as the feature blurb.
+- **No argument:** Use `AskUserQuestion` to ask:
+  > "What feature would you like to build? Describe it briefly."
 
-Extract the feature description from:
-1. **Argument provided** - Use as initial description
-2. **No argument** - Use `AskUserQuestion` to ask: "What feature would you like to build?" and **wait for user response**
+## Step 2: Plan → `task-planning`
 
-Store the raw description for clarification.
+Call `Skill(skill="groundwork:task-planning")` with the blurb from Step 1 in the conversation context. Do NOT pass a task_id — this triggers blurb/feature mode in task-planning, which will:
+- Load existing specs (if any)
+- Call `understanding-feature-requests` for requirement clarification
+- Generate a `FEATURE-<slug>` identifier
+- Spawn a Plan agent and persist the plan
 
-### Step 2: Load Existing Specs
+**Parse the output:**
+- `RESULT: PLANNED | plan_file_path=<path> | identifier=<id> | branch_prefix=<prefix>` → Save `plan_file_path`, `identifier`, `branch_prefix`. Proceed.
+- `RESULT: FAILURE | ...` → Report the failure to the user and stop.
 
-Before clarifying requirements, check for existing project specs so the clarification can detect contradictions and the implementation can follow established patterns.
+### Step 2.5: Confirm Start
 
-**Check for and read (if they exist):**
-- `{{specs_dir}}/product_specs.md` (or `{{specs_dir}}/product_specs/` directory) → `PRD_CONTEXT`
-- `{{specs_dir}}/architecture.md` (or `{{specs_dir}}/architecture/` directory) → `ARCHITECTURE_CONTEXT`
-- `{{specs_dir}}/design_system.md` → `DESIGN_CONTEXT`
+Use `AskUserQuestion`:
 
-For each, check single file first, then directory. If a directory, aggregate all `.md` files.
+> "[identifier] — plan ready. Proceed to implementation?"
+> - Option 1: "Yes, begin implementation"
+> - Option 2: "Stop here — I'll review the plan first"
 
-If none exist, that's fine — proceed without them.
+**If "Stop here":** Print the plan file path and stop:
 
-### Step 3: Clarify Requirements
+    Plan saved to: <plan_file_path>
+    
+    To resume implementation later:
+    /groundwork:implement-task <plan_file_path>
 
-**You MUST call the Skill tool now:** `Skill(skill="groundwork:understanding-feature-requests")`
+## Step 3: Implement → `task-implementation`
 
-Do NOT attempt to gather requirements yourself. The skill handles this.
+Call `Skill(skill="groundwork:task-implementation")` with `plan_file_path` in the conversation context. Do NOT pass a task_id.
 
-If existing specs were loaded in Step 2, provide them as context to the clarification skill so it can:
-- Detect contradictions with existing PRD requirements
-- Identify overlap with existing features
-- Understand architectural constraints
+**Parse the output:**
+- `RESULT: IMPLEMENTED | worktree_path=<path> | branch=<branch> | base_branch=<bb>` → Save values. Proceed.
+- `RESULT: FAILURE | ...` → Report failure to the user and stop.
 
-Follow the skill to gather:
-- Problem being solved
-- Target user/persona
-- Expected outcome
-- Edge cases and scope boundaries
+### Step 3.5: Optional Context Clear Pause
 
-Continue until requirements are clear and internally consistent.
+Use `AskUserQuestion`:
 
-### Step 4: Generate Feature Identifier
+> "Implementation complete for [identifier]. Validation runs 9 reviewer agents next and can compound context. Clear context before validation?"
+> - Option 1: "Continue to validation now"
+> - Option 2: "Stop here — I'll clear and resume manually"
 
-Create a feature identifier from the clarified requirements:
+**If "Continue to validation now":** Proceed to Step 4.
 
-**Format:** `FEATURE-<slug>`
+**If "Stop here":** Print resume instructions and STOP:
 
-**Slug rules:**
-- Lowercase, hyphen-separated
-- 2-4 words maximum
-- Derived from the core functionality
+    ## Paused before validation
 
-**Examples:**
-- "Add user login" → `FEATURE-user-login`
-- "Export reports to PDF" → `FEATURE-pdf-export`
-- "Rate limiting for API" → `FEATURE-api-rate-limit`
+    Implementation is committed in:
+    - **Worktree:** `<worktree_path>`
+    - **Branch:** `<branch>`
+    - **Base branch:** `<base_branch>`
 
-### Step 5: Present Feature Summary
+    To resume validation in a clean context:
 
-Present summary to the user:
+    1. Run `/clear` to clear Claude Code context
+    2. `cd <worktree_path>`
+    3. Run `/groundwork:validate`
 
-```markdown
-## Feature: [Feature Identifier]
+    After validation passes, merge manually from the project root:
 
-### Description
-[1-2 sentence summary from clarification]
+        cd <project_root>
+        git checkout <base_branch>
+        git merge --no-ff <branch>
+        git worktree remove <worktree_path>
+        git branch -d <branch>
 
-### Execution Context
-**Working Directory:** .worktrees/<feature-identifier>
-**Branch:** feature/<feature-identifier>
-**Base Branch:** [current branch]
+## Step 4: Validate
 
-### Requirements
-- [Requirement 1]
-- [Requirement 2]
-
-### Acceptance Criteria
-- [Criterion 1]
-- [Criterion 2]
-
-### Out of Scope
-- [Exclusion 1]
-```
-
-Then use `AskUserQuestion` to ask:
-
-> "Ready to begin implementation?"
-> - Option 1: "Yes, begin"
-> - Option 2: "No, let me review first"
-
-**Wait for user response before proceeding.**
-
-### Step 6: Implementation (task-executor Agent)
-
-Implementation is dispatched to the **task-executor agent** with a fresh context window. This agent has `use-git-worktree` and `test-driven-development` skills preloaded — it does not need to call `Skill()` or spawn subagents.
-
-**Build the Agent prompt with ALL gathered context from Steps 1-5 (specs from Step 2, requirements from Step 3, feature definition from Steps 4-5).** You MUST include actual values, not placeholders:
-
-    Agent(
-      subagent_type="groundwork:task-executor:task-executor",
-      description="Implement <identifier>",
-      prompt="You are implementing a feature that has already been fully specified.
-
-    PROJECT ROOT: [absolute path to project root]
-
-    FEATURE DEFINITION:
-    - Identifier: [FEATURE-slug from Step 4]
-    - Title: [1-2 sentence summary from Step 5]
-
-    ACTION ITEMS:
-    [Bulleted list of requirements gathered in Steps 1-3]
-
-    ACCEPTANCE CRITERIA:
-    [Bulleted list of acceptance criteria from Step 3/5]
-
-    OUT OF SCOPE:
-    [Bulleted list of exclusions, or 'None specified']
-
-    PROJECT CONTEXT (follow these established patterns):
-    [Include each section below ONLY if the spec was found in Step 2. Omit sections where no spec exists.]
-
-    ARCHITECTURE:
-    [Contents of ARCHITECTURE_CONTEXT — pay attention to technology choices, component boundaries, and decision records. Your implementation must follow these.]
-
-    DESIGN SYSTEM:
-    [Contents of DESIGN_CONTEXT — use these design tokens, patterns, and component styles. Do not invent new patterns that contradict the established system.]
-
-    EXISTING PRD (for reference only):
-    [Contents of PRD_CONTEXT — be aware of existing features to avoid duplication or contradiction. Do not re-implement existing functionality.]
-
-    INSTRUCTIONS:
-    1. Follow your preloaded skills to create a worktree, implement with TDD, and commit.
-    2. The feature definition above provides all session context — do NOT re-ask the user for requirements.
-    3. If project context is provided, follow the established architecture and design patterns.
-    4. When complete, output your final line in EXACTLY this format:
-       RESULT: IMPLEMENTED | <worktree_path> | <branch> | <base_branch>
-       OR:
-       RESULT: FAILURE | [one-line reason]
-
-    IMPORTANT:
-    - Do NOT run validation-loop or merge — the caller handles those
-    - Do NOT use AskUserQuestion for merge decisions
-    - Your LAST line of output MUST be the RESULT line
-    "
-    )
-
-**After the subagent returns**, parse the result:
-- `RESULT: IMPLEMENTED | <path> | <branch> | <base-branch>` — Save these values, proceed to Step 7
-- `RESULT: FAILURE | ...` — Report the failure and worktree location for investigation, stop
-- No parseable RESULT line — Report: "Implementation subagent did not return a structured result. Check worktree status manually." Stop.
-
-### Step 7: Validation (Direct Skill Call)
-
-**Call the validation-loop skill directly.** Do NOT wrap this in a subagent — this skill runs in the main conversation, which CAN spawn the 9 validation subagents it needs.
-
-1. `cd` into the worktree path from Step 6
+1. `cd` into the worktree path from Step 3
 2. Call: `Skill(skill='groundwork:validation-loop')`
 3. The validation-loop skill will run 9 verification agents in parallel and fix issues autonomously.
 
 **After validation-loop completes:**
-- All agents approved → Proceed to Step 8
-- Validation failed → Report the failure and worktree location for investigation, stop
+- All agents approved → Proceed to Step 5
+- Validation failed → Report failure and worktree location for investigation, stop
 - Stuck on recurring issue → Report the stuck finding and stop
 
-### Step 8: Merge Decision
+## Step 5: Merge Decision
 
 **From the project root** (NOT the worktree), handle merge:
 
@@ -238,7 +165,7 @@ Use `AskUserQuestion` to ask:
 
 1. Ensure you are in the project root (cd out of worktree if needed)
 2. Checkout base branch: `git checkout <base-branch>`
-3. Merge: `git merge --no-ff <branch> -m "Merge <branch>: [Title]"`
+3. Merge: `git merge --no-ff <branch> -m "Merge <branch>: [Feature Title]"`
 4. If success: Remove worktree and delete branch:
    ```bash
    git worktree remove .worktrees/<identifier>
@@ -247,8 +174,6 @@ Use `AskUserQuestion` to ask:
 5. If conflicts: Report conflicts and keep worktree for manual resolution
 
 **If not merging or conflicts occurred:**
-
-Report worktree location and manual merge instructions:
 
 ```markdown
 ## Implementation Complete in Worktree
@@ -270,7 +195,7 @@ cd .worktrees/<identifier>
 ```
 ```
 
-### Step 9: Report Completion
+## Step 6: Report
 
 Output implementation summary:
 
@@ -278,16 +203,7 @@ Output implementation summary:
 ## Feature Complete: [identifier]
 
 **What was done:**
-- [Summary of changes]
-
-**Files modified:**
-- `path/to/file` - [description]
-
-**Tests added:**
-- `path/to/test` - [what it tests]
-
-**Acceptance criteria verified:**
-- [x] [Criterion] - [How verified]
+- [summary]
 
 **Validation:** Passed ([N] iteration(s))
 
@@ -295,6 +211,7 @@ Output implementation summary:
 ```
 
 Output the final result line:
+
 ```
 RESULT: SUCCESS | [one-line summary]
 ```

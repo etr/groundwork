@@ -40,6 +40,8 @@ List commands organized by purpose:
 **Task Execution:**
 - `/groundwork:work-on [N]` - Work on a specific task by number
 - `/groundwork:work-on-next-task` - Work on the next task
+- `/groundwork:plan-task [N or description]` - Plan a task or feature without implementing
+- `/groundwork:implement-task [N or plan-path]` - Implement a previously planned task
 
 **Quick Development:**
 - `/groundwork:build-unplanned [description]` - Build a feature from description with worktree isolation and TDD

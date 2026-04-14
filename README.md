@@ -195,6 +195,8 @@ Execute tasks and build features.
 |---------|------|-------------|-------------|
 | `/groundwork:work-on` | `[task-number]` | Execute a specific task with worktree isolation and TDD | Want to work on a specific task by number |
 | `/groundwork:work-on-next-task` | — | Execute the next unblocked task automatically | Working through tasks sequentially |
+| `/groundwork:plan-task` | `[task-number-or-description]` | Plan a task or feature without implementing | Want to review a plan before committing to implementation |
+| `/groundwork:implement-task` | `[task-number-or-plan-path]` | Implement a previously planned task | Resume implementation after reviewing a plan |
 | `/groundwork:just-do-it` | — | Execute all remaining tasks in dependency order | Want batch execution of all remaining work |
 | `/groundwork:just-do-it-swarming` | `[--parallel]` | Execute all tasks using agent teams for context isolation | Large batches where context accumulation is a concern |
 | `/groundwork:build-unplanned` | `[description]` | Build feature from description — no task definitions needed | Quick feature without formal planning |
@@ -284,6 +286,23 @@ Incrementally update specs, implement, then sync:
 /groundwork:create-tasks                # Generate tasks for the new feature
 /groundwork:work-on-next-task           # Execute tasks
 /groundwork:source-product-specs-from-code   # Sync any implementation-time decisions
+```
+
+### Plan Then Implement (Split Workflow)
+
+Plan a task first, review the plan, then implement separately:
+
+```
+/groundwork:plan-task 4                 # Plan task 4, saves to .groundwork-plans/
+# ... review the plan, adjust if needed ...
+/groundwork:implement-task 4            # Implement using the saved plan
+```
+
+Also works for ad-hoc features:
+
+```
+/groundwork:plan-task "Add SSO login"   # Plan from a description
+/groundwork:implement-task .groundwork-plans/FEATURE-sso-login-plan.md
 ```
 
 ### Quick Unplanned Feature
