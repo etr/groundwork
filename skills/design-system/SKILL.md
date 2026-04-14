@@ -366,7 +366,7 @@ See `references/ux-writing-guide.md` for the full UX writing framework.
 
 ### Step 7: Define Patterns and Atmosphere
 
-Derive from architecture + PRD (minimal questions needed). This step has three phases: propose patterns and atmosphere candidates (7a), visually compare atmosphere options (7b), and showcase the complete system (7c).
+Derive from architecture + PRD (minimal questions needed). This step has three phases: propose patterns and atmosphere candidates (7a), visually compare atmosphere options (7b), and showcase the complete system (7d).
 
 #### Step 7a: Propose Patterns and Atmosphere Candidates
 
@@ -432,7 +432,7 @@ See `references/interaction-design-guide.md` for roving tabindex, skip links, na
 **Handle Feedback:**
 - User agrees with functional patterns → Document as UXD-001 through UXD-00N, proceed to 7b
 - User questions a pattern → Explain reasoning, adjust if needed
-- User has strong atmosphere preference already → Skip 7b, go to 7c
+- User has strong atmosphere preference already → Skip 7b, go to 7d
 
 #### Step 7b: Generate Atmosphere Comparison (`{{specs_dir}}/atmosphere-comparison.html`)
 
@@ -466,11 +466,84 @@ Generate a self-contained HTML file that renders the same identity (colors, font
 > "Open `{{specs_dir}}/atmosphere-comparison.html` to see the atmosphere directions side-by-side. Same identity in every column — different feel."
 
 **Handle evaluation feedback:**
-- User picks a winner → Document as UXD decisions, delete file, proceed to 7c
+- User picks a winner → Document as UXD decisions, delete file, proceed to 7d
 - User wants tweaks → Regenerate with adjustments
 - User likes elements from multiple → Regenerate a mixed option
 
-#### Step 7c: Generate Pattern Showcase (`{{specs_dir}}/pattern-showcase.html`)
+#### Step 7c: Propose Layout Architecture + Generate Comparison (`{{specs_dir}}/layout-comparison.html`)
+
+Based on tonal direction, product type, and atmosphere choice, propose 2-3 layout architecture strategies. Each strategy is a coherent bundle of spatial decisions combining:
+
+- **Section geometry** — how sections relate spatially (variable widths, diagonal breaks, rounded stacking, asymmetric splits)
+- **Scroll architecture** — what happens as user scrolls (scroll-scrubbed, parallax, pin-and-reveal, sticky cascade, standard vertical)
+- **Content hierarchy approach** — what dominates visually (image-first, type-dominant, data-dense, balanced)
+- **Navigation architecture** — how nav behaves beyond its type (migratory, dual-layer, embedded hero, content-push, navigation by absence)
+
+See `references/layout-architecture-guide.md` for the full pattern library (~35 patterns with CSS/JS implementation) and `references/layout-examples.md` for 7 curated strategy bundles showing how patterns combine.
+
+**Each proposed strategy should:**
+- Be derived from tonal direction + product type + atmosphere choice (not arbitrary)
+- Reference a curated bundle from `layout-examples.md` as starting point, adapted to this product
+- Name the specific patterns from `layout-architecture-guide.md` being combined
+- Be described in ~5 sentences covering section geometry, scroll behavior, content hierarchy, nav behavior, and page rhythm
+- Note the complexity tier (CSS-only / JS-light / JS-heavy)
+
+**Generate a visual comparison file** before presenting the choice. This file renders each proposed layout strategy as a mini page preview so the user can see spatial feel, section geometry, scroll hints, and nav behavior — not just read descriptions.
+
+**Architecture — data-driven, single render function:**
+
+1. **CSS custom properties** — Identity variables (colors, fonts) shared at `:root`. Per-strategy treatment variables on each column: `--section-geometry`, `--content-hierarchy`, `--nav-behavior`, `--scroll-hint`, `--page-rhythm`.
+
+2. **JS strategies array** — each entry contains:
+   `id`, `name`, `subtitle`, `complexityTier`
+   shared `identity` object (colors, fonts, atmosphere treatments from 7b choice)
+   strategy-specific `layout` object (section widths, geometry style, scroll behavior, content dominance, nav architecture, rhythm pattern)
+
+3. **Single `renderStrategy(strategy)` function** — produces a mini page preview column containing:
+   - **Navigation** demonstrating the proposed nav architecture (migratory, dual-layer, embedded hero, etc.)
+   - **Hero/header section** showing the content hierarchy approach (image-first, type-dominant, data-dense)
+   - **2-3 body sections** demonstrating the section geometry (diagonal breaks, rounded stacking, asymmetric splits, variable widths)
+   - **Scroll behavior indicator** — a visual cue showing what scroll architecture the strategy uses (e.g., a subtle label like "parallax" or "pin-and-reveal", or a miniature scroll animation if JS-light/heavy)
+   - **Page rhythm** — visible in the vertical spacing and section alternation pattern
+   - Each section uses real placeholder content relevant to the product type (not lorem ipsum)
+
+4. **Responsive columns** — strategies render side-by-side on wide viewports, stacked on narrow. Each column is labeled with strategy name, subtitle, and complexity tier badge.
+
+5. **Self-contained** — all CSS/JS inline, Google Fonts via `<link>`, no external dependencies.
+
+**Tell the user** to open `{{specs_dir}}/layout-comparison.html` in their browser, then present the choice:
+
+**Present via AskUserQuestion:**
+```json
+{
+  "questions": [{
+    "question": "I've generated a visual comparison at {{specs_dir}}/layout-comparison.html — open it in your browser to see each strategy rendered. Which layout architecture fits your product best?",
+    "header": "Layout arch",
+    "options": [
+      {
+        "label": "[Strategy A name]",
+        "description": "[~2 sentences: key spatial decisions + complexity tier]"
+      },
+      {
+        "label": "[Strategy B name]",
+        "description": "[~2 sentences]"
+      },
+      {
+        "label": "[Strategy C name] (if warranted)",
+        "description": "[~2 sentences]"
+      }
+    ],
+    "multiSelect": false
+  }]
+}
+```
+
+**Handle feedback:**
+- User picks a strategy → Document as UXD decisions (section geometry, scroll architecture, content hierarchy, nav behavior, page rhythm), proceed to 7d
+- User wants tweaks → Adjust the comparison file and re-present
+- User wants elements from multiple → Propose a hybrid, regenerate comparison showing the hybrid alongside the originals, verify pattern compatibility using the guide's combination warnings
+
+#### Step 7d: Generate Pattern Showcase (`{{specs_dir}}/pattern-showcase.html`)
 
 Generate a single-page preview of the complete finalized system — identity + chosen atmosphere + all functional patterns in one responsive page. This is NOT a comparison — one full-width layout showing how everything works together.
 
@@ -480,18 +553,22 @@ Generate a single-page preview of the complete finalized system — identity + c
 
 2. **JS config object** (single, not array) — `identity`, `atmosphere`, `patterns` (navigation type, loading type, error approach, empty state style, form validation style).
 
-3. **Single `renderShowcase(config)` function** — full page layout:
-   - Navigation (per chosen pattern type)
-   - Hero/landing section (chosen density, texture, entrance)
+3. **Single `renderShowcase(config)` function** — full page layout demonstrating the **chosen layout architecture**, not just component treatments:
+   - Navigation demonstrating the chosen navigation *behavior* (migratory, dual-layer, embedded hero, etc. — not just a static nav bar)
+   - Hero/landing section using the chosen section geometry and content hierarchy (full-bleed vs contained, image-first vs type-dominant)
+   - **Variable section geometry**: some sections full-bleed, some narrow, some wide — matching the chosen layout strategy
    - Card grid (3-4 cards, chosen card treatment, hover signature, stagger)
    - Form section (chosen validation pattern, inline error/success states shown)
    - Empty state panel (chosen empty state pattern)
    - Toast notification (auto-triggers after 2s or via button)
    - Data display with loading skeleton → populated transition
+   - **Density contrast**: alternate between sparse breathing sections and dense content sections per the chosen page rhythm
 
-4. **Motion**: All entrances auto-play on scroll. Hovers interactive. Loading skeleton auto-transitions. Toast auto-triggers. `prefers-reduced-motion` respected.
+4. **Scroll behavior**: If the chosen layout architecture includes scroll patterns (sticky cascade, parallax, pin-and-reveal), implement them in the showcase. A "Cinematic Scroll Narrative" strategy should show pinned sections; a "Sticky Card Stack" should show cascading sticky cards. Standard vertical scroll strategies need no special behavior.
 
-5. **Self-contained, single-column responsive layout.**
+5. **Motion**: All entrances auto-play on scroll. Hovers interactive. Loading skeleton auto-transitions. Toast auto-triggers. `prefers-reduced-motion` respected.
+
+6. **Self-contained, responsive layout** — layout follows the chosen strategy (not forced single-column if the strategy calls for variable widths or asymmetric splits).
 
 **After generating:**
 
@@ -537,10 +614,15 @@ After writing `{{specs_dir}}/design_system.md`, generate a persistent visual ref
    - Toast notification (button-triggered)
    - Loading skeleton → populated transition
    - Motion timing reference (visualized durations)
+   - **Layout Architecture section** documenting the chosen spatial strategy:
+     - Section geometry diagram (annotated: which sections are full-bleed, narrow, wide, diagonal, rounded)
+     - Scroll behavior documentation (what happens on scroll: parallax, pin-and-reveal, sticky cascade, standard)
+     - Navigation behavior annotation (how nav transforms across sections)
+     - Page rhythm visualization (dense vs sparse section alternation)
 
-4. **Key difference from pattern-showcase:** Includes a reference header section showing token names, hex values, and font names — making it useful as a developer reference, not just a visual impression.
+4. **Key difference from pattern-showcase:** Includes a reference header section showing token names, hex values, and font names — making it useful as a developer reference, not just a visual impression. The Layout Architecture section documents spatial decisions so developers know the intended section structure, not just component styling.
 
-5. **Self-contained**, single-column responsive layout. `prefers-reduced-motion` respected.
+5. **Self-contained**, responsive layout. `prefers-reduced-motion` respected.
 
 **After generating:**
 
@@ -624,3 +706,5 @@ Each decision follows a lightweight format:
 - `references/motion-design-guide.md` - Timing rules, easing, perceived performance, reduced motion
 - `references/spatial-design-guide.md` - 4pt grid, semantic tokens, container queries, optical adjustments
 - `references/ux-writing-guide.md` - Button labels, error formulas, empty states, terminology, text expansion
+- `references/layout-architecture-guide.md` - Section geometry, scroll architecture, navigation, content choreography, typography as architecture (~35 patterns)
+- `references/layout-examples.md` - 7 curated strategy bundles combining layout patterns into coherent layouts

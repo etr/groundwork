@@ -246,7 +246,29 @@ Use this template when creating `{{specs_dir}}/design_system.md`.
 
 [Reference §2.5 for defined spatial character. This section documents how spatial decisions apply across page types and breakpoints.]
 
-### 3.10 Interaction States
+### 3.10 Layout Architecture
+
+**Structural spatial decisions that define how the page is organized, how sections relate, and how the user moves through the experience.**
+
+- **Section Geometry**: [variable container widths / fixed width / diagonal breaks / rounded stacking / asymmetric splits / ...]
+  - Rationale: [derived from tonal direction + product requirements]
+  - Container widths: [narrow sections at Xrem, standard at Yrem, full-bleed where]
+- **Scroll Architecture**: [scroll-scrubbed / fixed parallax / pin-and-reveal / sticky card cascade / horizontal scroll conversion / standard vertical / ...]
+  - Reduced motion fallback: [how the page degrades for prefers-reduced-motion]
+  - Scroll library: [none / GSAP ScrollTrigger / CSS scroll-driven animations / ...]
+- **Content Hierarchy**: [image-first / type-dominant / data-dense / balanced / density-contrast alternating / ...]
+  - Primary content type: [what dominates each section type]
+- **Navigation Behavior**: [migratory / dual-layer contextual / embedded hero / content-push / marquee / navigation by absence / standard sticky / ...]
+  - Mobile adaptation: [how the nav pattern adapts to mobile]
+  - Transition points: [when/where nav changes behavior during scroll]
+- **Page Rhythm**: [description of breathing pattern — which sections are dense vs sparse, how rhythm varies across the page]
+  - Section sequence: [e.g., sparse hero → dense features → sparse CTA → dense specs → sparse footer]
+
+**Strategy bundle**: [name from layout-examples.md, if applicable — e.g., "Cinematic Scroll Narrative", "Industrial Precision"]
+**Named patterns**: [list of specific patterns from layout-architecture-guide.md being used]
+**Complexity tier**: [CSS-only / JS-light / JS-heavy]
+
+### 3.11 Interaction States
 
 | State | Visual Treatment | Notes |
 |-------|-----------------|-------|
@@ -259,7 +281,7 @@ Use this template when creating `{{specs_dir}}/design_system.md`.
 | Error | [e.g., red border, error icon] | |
 | Success | [e.g., green check, temporary confirmation] | |
 
-### 3.11 Writing Style
+### 3.12 Writing Style
 
 [Reference §2.4 for voice, tone, and writing patterns. This section documents how writing decisions apply across specific UI contexts.]
 
