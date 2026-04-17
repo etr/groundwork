@@ -5,7 +5,86 @@ allowed-tools: ["Glob", "Read", "Grep", "Skill"]
 disable-model-invocation: true
 ---
 
-CRITICAL INSTRUCTION: Before doing ANYTHING else, you MUST call the Skill tool with:
-  Skill(skill="groundwork:help-with-groundwork")
+# Groundwork Help
 
-Do NOT read files, explore code, or generate any response before invoking this skill. The skill contains your complete workflow and you must follow it exactly as presented to you.
+Lists all available commands, skills, and agents provided by the Groundwork plugin.
+
+## Workflow
+
+### Step 1: Gather Component Information
+
+Read the plugin manifest and scan directories:
+
+1. Read `${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json` for overview
+2. Scan `${CLAUDE_PLUGIN_ROOT}/commands/` for available commands
+3. Scan `${CLAUDE_PLUGIN_ROOT}/skills/` for available skills
+
+### Step 2: Extract Descriptions
+
+For each component, extract the name and description from YAML frontmatter:
+- Commands: Look for `name` and `description` fields
+- Skills: Look for `name` and `description` fields in SKILL.md
+
+### Step 3: Group and Present
+
+Present the components grouped by category:
+
+#### Commands (Slash Commands)
+
+List commands organized by purpose:
+
+**Spec-Driven Development:**
+- `/groundwork:design-product` - Define product requirements
+- `/groundwork:design-architecture` - Design technical approach
+- `/groundwork:create-tasks` - Generate implementation tasks
+
+**Task Execution:**
+- `/groundwork:work-on [N]` - Work on a specific task by number
+- `/groundwork:work-on-next-task` - Work on the next task
+- `/groundwork:plan-task [N or description]` - Plan a task or feature without implementing
+- `/groundwork:implement-task [N or plan-path]` - Implement a previously planned task
+
+**Quick Development:**
+- `/groundwork:build-unplanned [description]` - Build a feature from description with worktree isolation and TDD
+
+**Sync & Alignment:**
+- `/groundwork:source-product-specs-from-code` - Sync specs with code changes
+- `/groundwork:source-architecture-from-code` - Update architecture docs
+- `/groundwork:check-specs-alignment` - Verify spec alignment (full audit)
+- `/groundwork:split-specs` - Convert single-file PRD into directory format
+- `/groundwork:split-architecture` - Convert single-file architecture doc into directory format
+
+**Plugin Management:**
+- `/groundwork:groundwork-check` - Validate plugin health
+- `/groundwork:groundwork-help` - Show this help
+- `/groundwork:skills` - List available skills
+
+#### Skills (Invoked via Skill Tool)
+
+Skills are invoked using the Skill tool and provide structured workflows for:
+- Brainstorming and problem-solving
+- Test-driven development
+- Debugging and investigation
+- Code review and verification
+- Frontend design
+- And more...
+
+Use `/groundwork:skills` to see the full list of available skills.
+
+### Step 4: Usage Examples
+
+Provide usage examples:
+
+```
+/groundwork:design-product          # Start defining a new product
+/groundwork:design-architecture     # Design the technical approach
+/groundwork:create-tasks            # Generate implementation tasks
+/groundwork:work-on-next-task       # Work on the next task
+/groundwork:groundwork-check        # Check plugin health
+```
+
+### Step 5: Additional Resources
+
+Point users to:
+- `README.md` in the plugin root for full documentation
+- GitHub issues for support

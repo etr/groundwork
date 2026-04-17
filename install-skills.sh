@@ -6,6 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # --- Global state ---
 declare -A SKILL_MAP       # skill-dir-name → installed-name
 declare -A HAS_COMMAND     # skill-dir-name → 1 if command entry point
+declare -A COMMAND_MAP     # command-slug → installed-name (source: commands/<slug>.md)
 TARGETS=()
 SCOPE=""
 FORCE=false
@@ -117,16 +118,22 @@ load_config() {
         [[ "$line" =~ ^[[:space:]]*# ]] && continue
         [[ -z "${line// /}" ]] && continue
 
-        local skill installed has_cmd
-        skill=$(echo "$line" | sed 's/[[:space:]]*=.*//' | xargs)
+        local lhs installed has_cmd
+        lhs=$(echo "$line" | sed 's/[[:space:]]*=.*//' | xargs)
         local rhs
         rhs=$(echo "$line" | sed 's/[^=]*=[[:space:]]*//')
         installed=$(echo "$rhs" | awk '{print $1}')
         has_cmd=$(echo "$rhs" | awk '{print $2}')
 
-        SKILL_MAP["$skill"]="$installed"
-        if [[ "$has_cmd" == "command" ]]; then
-            HAS_COMMAND["$skill"]=1
+        if [[ "$lhs" == command:* ]]; then
+            # Command-sourced entry: source is commands/<slug>.md, installs as skill
+            local cmd_slug="${lhs#command:}"
+            COMMAND_MAP["$cmd_slug"]="$installed"
+        else
+            SKILL_MAP["$lhs"]="$installed"
+            if [[ "$has_cmd" == "command" ]]; then
+                HAS_COMMAND["$lhs"]=1
+            fi
         fi
     done < "$config"
 
@@ -155,6 +162,12 @@ load_config() {
                 BODY_SED_CMDS+="s|groundwork:${suffix}|${mapped}|g;"
             fi
         fi
+    done
+
+    # 2b. Command-sourced entries: rewrite groundwork:<command-slug> → <installed-name>
+    for cmd_slug in "${!COMMAND_MAP[@]}"; do
+        local mapped="${COMMAND_MAP[$cmd_slug]}"
+        BODY_SED_CMDS+="s|groundwork:${cmd_slug}|${mapped}|g;"
     done
 
     # 3. Agent single refs (for agents not in skill map)
@@ -445,6 +458,35 @@ $new_body"
         write_file "$dest" "$result" "skill"
         ((SKILL_COUNT++)) || true
     done
+
+    # Command-sourced entries: commands/<slug>.md installed as skills on non-Claude targets.
+    # The command's workflow body was previously a separate skill; it was inlined on Claude
+    # Code, so here we read the body from the command file instead.
+    for cmd_slug in "${!COMMAND_MAP[@]}"; do
+        local installed="${COMMAND_MAP[$cmd_slug]}"
+        local cmd_file="$SOURCE_DIR/commands/${cmd_slug}.md"
+        if [[ ! -f "$cmd_file" ]]; then
+            echo "  [warn] Command file missing for ${cmd_slug}: $cmd_file"
+            continue
+        fi
+
+        local content
+        content=$(<"$cmd_file")
+        local raw_body
+        raw_body=$(get_body "$content")
+
+        local new_fm new_body result
+        new_fm=$(transform_frontmatter "$target" "skill" "$content" "$installed")
+        new_body=$(transform_body "$target" "$raw_body")
+        result="$new_fm
+$new_body"
+
+        local dest_base
+        dest_base=$(get_dest_base "$target")
+        local dest="$dest_base/skills/$installed/SKILL.md"
+        write_file "$dest" "$result" "skill (from command)"
+        ((SKILL_COUNT++)) || true
+    done
 }
 
 # ============================================================
@@ -453,7 +495,8 @@ $new_body"
 
 install_commands_for_target() {
     # Commands are only relevant for Claude Code (which uses cp -r).
-    # All non-Claude targets have directly discoverable skills with groundwork- prefix.
+    # Non-Claude targets install command-sourced entries as skills in
+    # install_skills_for_target (driven by COMMAND_MAP).
     CMD_COUNT=0
     return 0
 }

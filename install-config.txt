@@ -1,13 +1,15 @@
 # install-config.txt
-# Format: skill-name = installed-name [command]
-#   skill-name:     directory name under skills/
+# Format: <lhs> = installed-name [command]
+#   lhs:            either "<skill-dir-name>" (source: skills/<name>/SKILL.md)
+#                   or "command:<command-slug>" (source: commands/<slug>.md)
+#                   — command-sourced entries install as skills on non-Claude targets,
+#                   since non-Claude tools have no command concept
 #   installed-name: name used in target tools (or "drop" to exclude)
-#   command:        optional flag — if present, also install a thin command/prompt entry point
+#   command:        optional flag on skill-sourced entries — if present, also install
+#                   a thin command/prompt entry point on Claude Code
 # Lines starting with # are comments
 
 # Skills with command entry points
-build-unplanned-feature = groundwork-build-unplanned command
-check-alignment = groundwork-check-specs-alignment command
 tasks = groundwork-create-tasks command
 debugging = groundwork-debug command
 architecture = groundwork-design-architecture command
@@ -17,10 +19,8 @@ sync-specs = groundwork-source-product-specs-from-code command
 sync-design-system = groundwork-source-ux-design-from-code command
 design-system = groundwork-ux-design command
 validation-loop = groundwork-validate command
-pr-reviewing = groundwork-review-pr command
 next-task = groundwork-work-on-next-task command
 execute-task = groundwork-work-on command
-execute-all-tasks = groundwork-just-do-it command
 project-selector = groundwork-select-project command
 repo-setup = groundwork-setup-repo command
 split-specifications = groundwork-split-specs command
@@ -31,11 +31,15 @@ test-driven-development = groundwork-test-driven-development
 use-git-worktree = groundwork-use-git-worktree
 understanding-feature-requests = groundwork-understanding-feature-requests
 task-validation-loop = groundwork-task-validation-loop
+task-planning = groundwork-task-planning
+task-implementation = groundwork-task-implementation
+
+# Commands that install as skills on non-Claude targets
+# (source file is commands/<slug>.md — the skill was inlined into the command on Claude Code)
+command:build-unplanned = groundwork-build-unplanned
+command:check-specs-alignment = groundwork-check-specs-alignment
+command:review-pr = groundwork-review-pr
+command:just-do-it = groundwork-just-do-it
 
 # Excluded from non-Claude targets
 using-groundwork = drop
-help-with-groundwork = drop
-check-groundwork = drop
-skills-of-groundwork = drop
-swarm-debugging = drop
-swarm-architecture-design = drop
