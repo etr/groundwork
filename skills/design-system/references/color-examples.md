@@ -28,6 +28,8 @@ A single dominant hue occupies most of the visual space. A sharp accent — cont
 
 **Suits:** Brutally minimal, quiet luxury, editorial, industrial
 
+**Canonical move:** NVIDIA — deep black + a single saturated green (#76B900) so specific it survives without a second brand color. The green itself is off-limits (see "Colors to avoid"); the strategy is copyable, the hex is not.
+
 ### 2. Tonal Range (Single Hue, Wide Lightness)
 
 One hue explored across a wide range of lightness and saturation. Creates cohesion while allowing hierarchy through shade variation.
@@ -49,6 +51,8 @@ One hue explored across a wide range of lightness and saturation. Creates cohesi
 | Light | #FFF7ED | Backgrounds, surfaces |
 
 **Suits:** Organic warmth, soft atmospheric, quiet luxury, art deco
+
+**Canonical moves:** Wise runs a teal range from deep (#163300-adjacent) to mint (#9FE870) as a single-hue family carrying UI + brand + illustrations with no second hue. Residential/luxury-property surfaces use the same strategy with warm neutrals (beige → cream → deep charcoal), reserving chromatic color for photography only.
 
 ### 3. Complementary Tension (Opposite Hues)
 
@@ -72,6 +76,11 @@ Two hues from opposite sides of the color wheel create visual energy and contras
 
 **Suits:** Playful, geometric bold, retro-futuristic, editorial
 
+**Canonical moves:**
+- *Navy + orange single-spike* (Mistral) — the opposition is one short jab, never an even split.
+- *Three-color complementary* (Cohere) — two accents that never share space; only works when one accent is always at rest while the other is active.
+- *Muted heritage complements* — earth-tone canvas + navy + maroon, borrowed from vintage sportswear; never at full saturation. A softer register of the strategy.
+
 ### 4. Analogous Warmth / Cool (Adjacent Hues)
 
 Two or three adjacent hues on the color wheel create a harmonious, temperature-consistent palette. Feels natural and cohesive.
@@ -91,6 +100,8 @@ Two or three adjacent hues on the color wheel create a harmonious, temperature-c
 | Neutral | #F0F9FF | Backgrounds, surfaces |
 
 **Suits:** Organic warmth, soft atmospheric, playful, art deco
+
+**Canonical move:** Lovable — an electric purple → blue gradient treated as a single adjacent family. The gradient *is* the brand, which only works when you commit: no second hue, no accent of another temperature.
 
 ### 5. Monochrome + One (Grayscale + Single Expressive Color)
 
@@ -114,6 +125,43 @@ The entire UI is built in grayscale. A single chromatic color carries all the em
 
 **Suits:** Brutally minimal, brutalist, industrial, quiet luxury
 
+**Canonical move:** Apple — a near-grayscale system frame that holds no chromatic weight; product colors enter only as photography. The separation between frame and content is the idea.
+
+**Extreme variant:** a three-step grayscale with *no* chromatic color at all (Opencode's #211E1E / #656363 / #CFCECD). The absence is the statement.
+
+### 6. Dark Canvas + Signal Accent (AI Lab Archetype)
+
+A near-black surface carrying monochrome UI, broken by a single high-chroma signal color used for the *one* thing the product does. Reads as "research-grade, serious, focused" — and specifically communicates "we are an AI/model provider" because of how consistently the archetype now maps to that category.
+
+**Principle:** The dark canvas lowers the visual temperature of every interaction. The signal color reads as a laboratory readout — an indicator light, not decoration.
+
+**Example A — Near-Black + Electric Violet:**
+| Role | Hex | Usage |
+|------|-----|-------|
+| Canvas | #0B0B0F | Page background, nav, surfaces |
+| Content | #E4E4E7 | Text, UI structure |
+| Signal | #7C5CFF | Primary action, active state, brand mark |
+
+**Example B — Graphite + Warm Signal:**
+| Role | Hex | Usage |
+|------|-----|-------|
+| Canvas | #111113 | Page background |
+| Content | #F4F4F5 | Text |
+| Signal | #FF7A18 | One accent — CTA + logo mark |
+
+**Suits:** AI/ML products, model providers, research-forward dev tools, inference platforms
+
+**The archetype has three dials:**
+- *Hue temperature* — cool signal (electric blue/cyan, the default — see Cohere, Vercel, ClickHouse) reads as research/infrastructure; warm signal (orange, see Mistral) reads as energetic/consumer-adjacent; neon green (Supabase) splits the difference.
+- *Chroma budget* — one signal only (Vercel, Ollama) vs. one primary signal + a small secondary dot (Cohere's orange in the corner).
+- *Signal density* — every interactive element lit up vs. signal reserved for CTAs and the logo mark only. The restrained version feels more serious.
+
+The archetype is currently so saturated in AI-land that the interesting move is often choosing *which dial to differ on*, not picking a new hue.
+
+**When this strategy risks becoming generic:** When *every* AI lab lands on navy+electric accent, you end up looking like every other AI lab. Differentiate via hue temperature (warm vs cool signal) or chroma budget (single signal vs signal + orange dot) rather than by pushing brightness.
+
+**Counter-archetype — Warm Canvas + Black Signal (anti-lab):** Invert the move — cork, cream, or paper-warm canvas with *black* as the only signal color and small vibrant accents reserved for micro-interactions. Reads as "hand-made, irreverent, not-another-lab". Use when the product's voice is humor or craft-centric, not research-centric.
+
 ## Colors to Avoid as Primary
 
 These colors are so widely associated with specific products that using them risks looking derivative:
@@ -125,6 +173,8 @@ These colors are so widely associated with specific products that using them ris
 | Stripe Gradient Purple-Blue | #635BFF → #0A2540 | Instantly recognizable as Stripe |
 | Slack Aubergine | #4A154B | Strongly owned by Slack |
 | Spotify Green | #1DB954 | Strongly owned by Spotify |
+| Webflow Blue | #0052FF | Owned by Webflow and several other visible products — flags as "visual builder or Web3" |
+| NVIDIA Green | #76B900 | Very specific yellow-green — reads as NVIDIA regardless of context |
 
 This doesn't mean you can never use blue or purple — but shift the hue, saturation, or temperature enough to create distance. A dusty slate-blue (#475569) reads differently from enterprise blue. A warm plum (#7E22CE shifted warm) reads differently from dev-tool purple.
 
@@ -134,7 +184,7 @@ This doesn't mean you can never use blue or purple — but shift the hue, satura
 
 2. **Use HSL thinking.** Adjusting saturation and lightness within a hue creates distinctiveness faster than picking a new hue entirely. A muted, desaturated teal (#0F766E at S:40%) feels completely different from a vivid teal (#0D9488 at S:80%).
 
-3. **Test against competitors.** Screenshot three direct competitors. Place your palette next to them. If they could swap palettes without anyone noticing, yours isn't distinctive enough.
+3. **Test against competitors.** Screenshot three direct competitors. Place your palette next to them. If they could swap palettes without anyone noticing, yours isn't distinctive enough. *Worked example:* place Cohere, Mistral, Together.ai, and Replicate side-by-side — all four share "dark canvas + high-chroma accent". A new AI product copying that move reads as a fifth member of the set, not as itself. The fix is rarely a new hue — it's a different *chroma budget* (monochrome + one vs. two accents) or a different surface temperature (warm near-black like Anthropic's cream-over-charcoal vs. the cool navy cluster).
 
 4. **Consider undertones.** A yellow-leaning green (#84CC16) has a completely different personality from a blue-leaning green (#059669). Undertones carry more emotional weight than the base hue.
 

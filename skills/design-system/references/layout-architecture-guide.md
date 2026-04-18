@@ -189,6 +189,8 @@ Patterns defining what happens as the user scrolls through the page.
 
 **When to use:** Product narratives, storytelling landing pages, device showcases (Apple-style). When the content has a sequential reveal that benefits from user-paced exploration.
 
+**Canonical reference:** Apple product pages — device rotation tied to scroll position, pinned over 300vh of scroll room.
+
 **Technique:**
 ```css
 /* CSS-native approach (Scroll-driven Animations API) */
@@ -232,6 +234,8 @@ gsap.to('.hero-device', {
 **One-line:** Background layers scroll at different rates than foreground content, creating depth.
 
 **When to use:** Hero sections, marketing pages with strong imagery, portfolio headers. Effective for a single hero section; avoid applying to every section (causes fatigue).
+
+**Canonical reference:** subtle gradient or particle-node motion behind an otherwise still hero. Stripe's hero-gradient parallax is the quietest production-grade version.
 
 **Technique:**
 ```css
@@ -284,6 +288,8 @@ window.addEventListener('scroll', () => {
 
 **When to use:** Feature walkthroughs, step-by-step product explanations, comparison sections. When you have 3-5 items that benefit from sequential attention in the same visual context.
 
+**Canonical reference:** Apple product pages — camera/display feature panels reveal over a pinned hero across 3× viewport scroll range.
+
 **Technique:**
 ```js
 // GSAP ScrollTrigger pin with progressive reveal
@@ -328,6 +334,8 @@ gsap.to(panels, {
 
 **When to use:** Pricing tiers, feature comparisons, portfolio pieces, testimonials. When items are peers but benefit from focused sequential reading. Huddle-style.
 
+**Canonical reference:** Notion's bento feature cards stacking on scroll — each card sits at increasing top-offset, previous cards scale down slightly as they're covered.
+
 **Technique:**
 ```css
 .cascade-container { padding-block-end: 50vh; /* Scroll room */ }
@@ -371,6 +379,8 @@ cards.forEach(card => observer.observe(card));
 **One-line:** Vertical scrolling is converted to horizontal movement within a section.
 
 **When to use:** Galleries, portfolios, timelines, case study showcases. When items have a natural left-to-right sequence. Use sparingly — one section per page maximum.
+
+**Canonical reference:** Stripe's customer carousels — scroll-converted horizontal flow with snap points, one panel per viewport width.
 
 **Technique:**
 ```js
@@ -623,6 +633,8 @@ obs.observe(hero);
 
 **When to use:** Single-purpose landing pages, immersive art/portfolio pieces, experimental sites with few destinations. Teenage Engineering product pages. Absolutely not for apps, e-commerce, or content-heavy sites.
 
+**Canonical reference:** AI-lab marketing surfaces — spare top bar, no persistent mega-menu, nav often just logo + auth. The extreme version is logo + one menu trigger.
+
 **Technique:**
 ```css
 /* Minimal corner elements */
@@ -851,6 +863,8 @@ sections.forEach(s => observer.observe(s));
 
 **When to use:** Portfolios, creative agency sites, e-commerce product showcases. When images are the primary content and should feel alive. Jacky Winter Gallery, Pixel Poetry style.
 
+**Canonical reference:** Pinterest — masonry grid with infinite scroll + hover lift. Template galleries on visual-builder tools follow the same shape with lighter motion.
+
 **Technique:**
 ```js
 const gallery = document.querySelector('.kinetic-gallery');
@@ -958,6 +972,8 @@ Patterns for what dominates visually and how content is organized.
 **One-line:** The main page content is organized as a scannable table/list rather than cards or hero sections.
 
 **When to use:** Directories, job boards, search results, dashboards, tool indexes. When users need to scan and compare many items efficiently. The Index style.
+
+**The common thread:** when the product's core interface screenshot *is* a data table, marketing pages should mirror that shape rather than hide it behind card abstractions. Linear's issue list and Airtable's grid are the clearest versions of "table as product, not artifact".
 
 **Technique:**
 ```css
@@ -1099,6 +1115,11 @@ Patterns for what dominates visually and how content is organized.
 **One-line:** Alternating between dense, information-packed sections and sparse, breathing sections.
 
 **When to use:** Long marketing pages, documentation landing pages, product pages mixing features and narrative. Creates natural reading rhythm that prevents fatigue.
+
+**Dense vs sparse poles:**
+- *Dense marketing surfaces* — information volume is the promise (keyboard-first productivity tools, data-heavy SaaS).
+- *Sparse marketing surfaces* — restraint is the promise (AI labs, luxury hardware, aspirational consumer).
+- *Masters of the contrast* — Stripe and Notion are the references: sparse narrative opening + dense product/pricing sections within the same page, rhythm as structure.
 
 **Technique:**
 ```css
@@ -1368,6 +1389,8 @@ Patterns where type itself defines spatial structure.
 **One-line:** Display text scales to fill a large percentage of viewport width, becoming the dominant structural element.
 
 **When to use:** Hero sections, portfolio headers, brand statements. When the message IS the design. Making Software, sebastianomerlino.com style.
+
+**Canonical reference:** Apple product pages — single-word product names sized in `vw` units, one per hero, line-height 0.9–1.0.
 
 **Technique:**
 ```css

@@ -241,6 +241,8 @@ body { font-family: 'Space Grotesk', monospace; }
 
 **Reduced motion fallback:** Text-split shows complete text immediately, wipe reveals replaced with simple fade, kinetic gallery static, marquee paused showing all items.
 
+**Small-studio variant:** portfolios and agency sites often run *Choreographed Studio* at ~60% intensity — fewer kinetic surfaces, more restraint — because the page has to double as a pitch deck. Grid asymmetry + hover-reveal project cards are the most common simplification.
+
 ---
 
 ## 5. Content-First Directory (The Index-style)
@@ -448,6 +450,288 @@ body { font-family: 'IBM Plex Mono', monospace; font-size: 0.875rem; }
 
 ---
 
+## 8. AI Lab Minimal
+
+**Character:** Low-chroma dark canvas, one signal color, narrow centered content column, no scroll tricks. The absence of motion *is* the tone — it communicates "focused research surface, not a product demo".
+
+**Patterns combined:**
+- Variable Container Widths (§1.1) — narrow dominant, occasional wide for product tiles
+- Three-Tier Animation System (§4.2) — minimum viable entrance only
+- Navigation by Absence (§3.6) — thin top bar, often just logo + auth
+- Density Contrast (§5.5) — extreme: very sparse marketing, very dense playground/console
+
+**Anti-patterns (explicitly excluded):**
+- No scroll-scrubbed animation
+- No parallax
+- No diagonal section breaks
+- No sticky card cascades
+- No decorative gradients beyond one signal-colored glow
+
+**HTML structure outline:**
+```html
+<nav class="top-bar thin"><!-- logo · nav · auth. No CTA bloat --></nav>
+<section class="hero narrow sparse">
+  <h1 class="display-tight">One declarative sentence.</h1>
+  <p class="lede">One supporting sentence — factual, not marketing-ese.</p>
+  <a class="signal-cta">Primary action</a>
+</section>
+<section class="capabilities narrow">
+  <ul class="feature-list"><!-- Terse rows, no icons, no cards --></ul>
+</section>
+<section class="playground wide dense"><!-- One interactive surface: model comparison / prompt box --></section>
+<section class="docs-teaser narrow"><!-- 3 code examples, copy-pasteable --></section>
+<footer class="thin"><!-- Legal + status + docs + discord. No newsletter hero. --></footer>
+```
+
+**Key CSS properties:**
+```css
+:root {
+  --canvas: #0B0B0F;
+  --content: #E4E4E7;
+  --signal: #7C5CFF; /* exactly one hue */
+}
+body { background: var(--canvas); color: var(--content); font-feature-settings: "ss01", "cv11"; }
+.narrow { max-width: 44rem; margin-inline: auto; }
+.wide { max-width: 68rem; margin-inline: auto; }
+.sparse { padding-block: clamp(6rem, 12vw, 10rem); }
+.display-tight { font-size: clamp(2.5rem, 6vw, 4.25rem); letter-spacing: -0.02em; line-height: 1.02; }
+.signal-cta { background: var(--signal); color: var(--canvas); padding: 0.75rem 1.25rem; border-radius: 6px; }
+.signal-cta:hover { filter: brightness(1.08); }
+/* No gradient backgrounds. No blur. No glow beyond signal color at low opacity. */
+```
+
+**JS hooks needed:**
+- IntersectionObserver for single-stage opacity fade (no stagger, no transform)
+- None for the playground — use native `<form>` and streaming `<pre>`
+- No scroll library
+
+**Scroll behavior:**
+- Standard vertical scroll. Sections are short, content is the whole show.
+- Page fully legible at 200ms after load. No skeletons — content or nothing.
+
+**Reduced motion fallback:** Remove the one opacity fade. Nothing else to disable.
+
+**Who this fits:** model providers and serious dev-focused AI tools where credibility > flash. Does *not* fit consumer AI products whose output is visual — those earn the right to more motion because demonstrating the product *is* the page.
+
+---
+
+## 9. Dev Tool Density
+
+**Character:** Keyboard-first productivity tools. Dense interface screenshots dominate the page; marketing copy plays narrator. The hero is always a real screenshot at real resolution, not an abstract illustration. Cmd-K is the recurring gesture.
+
+**Patterns combined:**
+- Three-Tier Animation System (§4.2) — tight timings (<250ms)
+- Dark-to-Light Emotional Arc (§4.4) — optional, often staying dark throughout
+- Sticky Card Cascade (§2.4) — sparingly, one stack at most
+- Data-Table as Primary UI (§5.2) — the real product always appears in marketing
+- Mix-Blend-Mode Layering (§6.4) — for subtle depth behind product shots
+
+**HTML structure outline:**
+```html
+<nav class="top-bar condensed"><!-- Logo | Changelog | Pricing | Docs | ⌘K --></nav>
+<section class="hero narrow">
+  <h1>One product claim — six words or fewer.</h1>
+  <p class="lede">One sentence of positioning.</p>
+  <div class="product-shot full-res"><!-- Real UI screenshot. No browser chrome unless intentional. --></div>
+</section>
+<section class="speed-proof wide"><!-- "Keyboard shortcut reel": animated keycaps + result --></section>
+<section class="command-palette narrow"><!-- Screenshot of Cmd-K doing real work --></section>
+<section class="integrations wide"><!-- Dense logo grid, 20+ services --></section>
+<section class="changelog narrow"><!-- Recent shipped items, date-stamped --></section>
+```
+
+**Key CSS properties:**
+```css
+:root { --bg: #0E0E10; --surface: #17171A; --accent: #5E6AD2; } /* Linear-adjacent */
+.product-shot { border: 1px solid #26262B; border-radius: 12px; box-shadow: 0 30px 80px -20px rgba(0,0,0,0.6); }
+.keycap { font-family: ui-monospace, Menlo; padding: 2px 8px; border: 1px solid #2A2A30; border-radius: 4px; box-shadow: 0 1px 0 #2A2A30; }
+.changelog-row { display: grid; grid-template-columns: 7rem 1fr; gap: 1.5rem; padding-block: 0.75rem; border-bottom: 1px solid #1C1C20; }
+section { padding-block: clamp(3rem, 6vw, 6rem); } /* Tighter than AI Lab Minimal */
+```
+
+**JS hooks needed:**
+- Lightweight keycap animation loop (setTimeout chain or CSS animation) — never scroll-driven
+- IntersectionObserver for product-shot fade-in only
+- No parallax, no pinning
+
+**Scroll behavior:**
+- Standard vertical scroll. Fast.
+- The implicit promise is speed — the page must feel fast (no large hero videos, aggressive image optimization, minimal JS).
+
+**Reduced motion fallback:** Keycap reel shows the final state (last result) statically. No fades.
+
+**Who this fits:** keyboard-first productivity tools where the promise is speed. Linear is the most-imitated reference. Avoid for design tools where richness beats density.
+
+---
+
+## 10. Automotive Cinematic
+
+**Character:** One hero image or full-bleed video carries the entire page's emotional weight. Type is architectural — viewport-dominant display in a single condensed or italic cut. The product is photographed, not illustrated.
+
+**Patterns combined:**
+- Scroll-Scrubbed Animation (§2.1) — camera orbit around vehicle
+- Pin-and-Reveal (§2.3) — spec panels appear over pinned hero
+- Variable Container Widths (§1.1) — full-bleed dominant, narrow only for body copy
+- Viewport-Dominant Display Type (§7.1)
+- Kinetic Gallery (§4.5) — for model line-up
+- Dark-to-Light Emotional Arc (§4.4) — often reversed: light → dark for drama
+
+**HTML structure outline:**
+```html
+<nav class="top-bar transparent"><!-- Transparent over hero, solid on scroll --></nav>
+<section class="hero full-bleed dark">
+  <video autoplay muted loop playsinline class="hero-video"><!-- Vehicle in motion --></video>
+  <h1 class="display-architecture">MODEL NAME.</h1>
+</section>
+<section class="spec-reveal full-bleed pinned">
+  <div class="vehicle-orbit"><!-- Scroll-scrubbed rotation --></div>
+  <aside class="spec-panel"><!-- 0-100 · top speed · power --></aside>
+</section>
+<section class="configurator wide"><!-- Trim/colour/wheel picker, real-time preview --></section>
+<section class="lineup full-bleed"><!-- Kinetic gallery of model variants --></section>
+<section class="narrative narrow"><!-- One paragraph of heritage copy --></section>
+```
+
+**Key CSS properties:**
+```css
+.display-architecture { font-family: 'Migra Italic', serif; font-size: clamp(4rem, 16vw, 14rem); line-height: 0.88; letter-spacing: -0.03em; }
+.hero { aspect-ratio: 21/9; position: relative; overflow: hidden; }
+.hero-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.spec-reveal { height: 300vh; position: relative; }
+.vehicle-orbit { position: sticky; top: 0; height: 100vh; }
+.spec-panel { position: fixed; bottom: 4rem; right: 4rem; font-variant-numeric: tabular-nums; }
+@media (prefers-reduced-motion: reduce) {
+  .hero-video { display: none; }
+  .hero { background-image: url('hero-still.jpg'); background-size: cover; }
+}
+```
+
+**JS hooks needed:**
+- GSAP ScrollTrigger for vehicle orbit scrubbing (or Lenis + rAF)
+- Preloading: the hero video or image is the critical asset — everything else defers
+- Configurator state machine (pure JS, no animation)
+
+**Scroll behavior:**
+- Pinned hero for 300vh while vehicle rotates via scrubbed video frames or 3D model
+- Spec panel pins to viewport corner during reveal
+- Lineup uses kinetic gallery — cursor parallax on desktop, swipe on mobile
+
+**Reduced motion fallback:** Hero video replaced with still. Vehicle orbit replaced with a single exterior shot + spec panel. No scrubbing, no parallax, no kinetic gallery motion.
+
+**Who this fits:** performance automotive and aspirational consumer hardware where one hero image or video carries the emotional weight of the page. Avoid for anything data-dense — the archetype cannot carry a dashboard.
+
+---
+
+## 11. Fintech Clarity
+
+**Character:** Numbers are the hero. Every page converges on a single comparison, calculator, or ledger. Motion is medium-speed and exists to *demonstrate the math*, not to entertain.
+
+**Patterns combined:**
+- Diagonal Section Breaks (§1.3) — Stripe's signature
+- Fixed-Position Parallax (§2.2) — subtle, background only
+- Three-Tier Animation System (§4.2)
+- Data-Table as Primary UI (§5.2) — for ledgers, fee tables
+- Gradient Dividers (§6.3)
+
+**HTML structure outline:**
+```html
+<nav class="top-bar"><!-- Logo | Products | Docs | Pricing | Sign in | Sign up --></nav>
+<section class="hero diagonal-bottom light">
+  <h1>One outcome-focused claim.</h1>
+  <p class="lede">One sentence quantifying the outcome.</p>
+  <div class="hero-demo"><!-- Live number, updating: "$4.2B processed today" --></div>
+</section>
+<section class="calculator narrow"><!-- Interactive: "Send X from A to B" with fee comparison --></section>
+<section class="api-preview wide"><!-- Side-by-side: natural-language left, curl/json right --></section>
+<section class="trust-bar full-bleed"><!-- Logos of customers, single-row, muted --></section>
+<section class="docs-teaser narrow"><!-- 3 code blocks, instantly copyable --></section>
+```
+
+**Key CSS properties:**
+```css
+.hero { background: linear-gradient(180deg, #F6F9FC 0%, #FFFFFF 100%); }
+.diagonal-bottom { clip-path: polygon(0 0, 100% 0, 100% calc(100% - 3rem), 0 100%); }
+.hero-demo { font-variant-numeric: tabular-nums; font-size: clamp(2rem, 5vw, 3.5rem); font-weight: 500; }
+.calculator input, .calculator output { font-variant-numeric: tabular-nums; }
+.api-preview { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; }
+.api-preview pre { background: #0A2540; color: #8DD1FF; padding: 1.5rem; border-radius: 8px; font-family: ui-monospace, monospace; }
+```
+
+**JS hooks needed:**
+- Live-updating counter (rAF, throttled — pure visual, not real-time data)
+- Calculator with real math (debounced on input, displays both values simultaneously)
+- IntersectionObserver for code-block reveal
+
+**Scroll behavior:**
+- Standard vertical scroll with subtle parallax on background gradient
+- Calculator and API preview stay in flow — never pinned (would break the "do the math right now" feeling)
+
+**Reduced motion fallback:** Counter shows final value immediately. Gradient stays static. All other sections unaffected (no motion-critical patterns).
+
+**Who this fits:** payments, crypto exchanges, banking APIs. Stripe is the canonical reference for the custom-family + live-counter variant. Does not suit traditional banks themselves — they need a Trust/Compliance archetype instead.
+
+---
+
+## 12. Creative Tool Playful
+
+**Character:** The canvas is the brand. Every surface demonstrates what you can *make* with the tool. Animation is lively but brief; color saturation is higher than average; illustration mixes with UI screenshots freely.
+
+**Patterns combined:**
+- Asymmetric Splits (§1.4) — different layout per section
+- Sticky Card Cascade (§2.4) — for feature walks
+- Kinetic Gallery (§4.5) — for template/showcase sections
+- Scale-Transform Breathing (§6.5)
+- Mix-Blend-Mode Layering (§6.4)
+- Three-Tier Animation System (§4.2) — with higher intensity
+
+**HTML structure outline:**
+```html
+<nav class="top-bar colorful"><!-- Gradient on logo, otherwise neutral --></nav>
+<section class="hero split-asymmetric">
+  <div class="hero-copy">
+    <h1 class="display-playful">Build it <span class="decorated-accent">without</span> code.</h1>
+  </div>
+  <div class="hero-demo animated"><!-- Live UI demo, looping --></div>
+</section>
+<section class="feature-cascade"><!-- Sticky cards, each a different color --></section>
+<section class="template-gallery kinetic"><!-- Masonry of user-made examples --></section>
+<section class="community narrow"><!-- Profiles/avatars, social proof --></section>
+<section class="cta colorful"><!-- High-saturation call to action --></section>
+```
+
+**Key CSS properties:**
+```css
+:root {
+  --surface-a: #FEF9F4; --surface-b: #EEF4FF; --surface-c: #F5EEFF; /* rotating section colors */
+  --accent-hot: #FF4F00;
+}
+.hero { display: grid; grid-template-columns: 0.9fr 1.1fr; align-items: center; gap: 4rem; }
+.display-playful { font-size: clamp(3rem, 8vw, 6rem); line-height: 1.0; }
+.decorated-accent { color: var(--accent-hot); font-style: italic; }
+.feature-cascade > .card:nth-child(3n+1) { background: var(--surface-a); }
+.feature-cascade > .card:nth-child(3n+2) { background: var(--surface-b); }
+.feature-cascade > .card:nth-child(3n+3) { background: var(--surface-c); }
+.template-gallery { column-count: auto; column-width: 18rem; gap: 1.5rem; }
+.template-gallery > * { break-inside: avoid; transition: transform 400ms cubic-bezier(0.16,1,0.3,1); }
+.template-gallery > *:hover { transform: translateY(-4px); }
+```
+
+**JS hooks needed:**
+- Looping hero demo (video or Lottie)
+- IntersectionObserver for feature-cascade scale/color transitions
+- Masonry gallery with lazy-loaded images
+
+**Scroll behavior:**
+- Standard vertical scroll with sticky cards that change color as you pass
+- Template gallery breathes on hover (cursor-responsive lift)
+- No pinning, no parallax — the motion is ambient, not structural
+
+**Reduced motion fallback:** Hero demo pauses on first frame. Cards stop breathing on hover. Colors still rotate (static, not a transition).
+
+**Who this fits:** no-code builders, design tools, visual boards, social-creative surfaces — anywhere the canvas is the brand and marketing pages can demonstrate what users will make. Does not fit enterprise infra, where the playfulness reads as unserious.
+
+---
+
 ## Bundle Selection Guide
 
 | If the product is... | Consider | Avoid |
@@ -459,5 +743,10 @@ body { font-family: 'IBM Plex Mono', monospace; font-size: 0.875rem; }
 | Directory/database | Content-First Directory | Any animation-heavy bundle |
 | Consumer SaaS/community | Sticky Card Stack | Industrial Precision |
 | Personal portfolio/writer | Typography-Dominant | Content-First Directory |
+| AI model provider / research-forward | AI Lab Minimal | Creative Tool Playful |
+| Keyboard-first productivity | Dev Tool Density | Cinematic Scroll Narrative |
+| Performance automotive / luxury hardware | Automotive Cinematic | Content-First Directory |
+| Payments / money movement / crypto | Fintech Clarity | Choreographed Studio |
+| No-code builder / visual tool / social creative | Creative Tool Playful | AI Lab Minimal |
 
 **Mixing bundles:** Avoid combining more than 2 bundles. If mixing, take section geometry + content hierarchy from one and scroll architecture from another. Never mix navigation patterns from different bundles.

@@ -80,6 +80,23 @@ Nobody cares how fast your site is — just how fast it *feels*.
 - For scroll-triggered animations, use Intersection Observer. Unobserve after animating once.
 - Create motion tokens (duration, easing, common transitions) for consistency across the system.
 
+## Motion Signatures
+
+Products converge on a small number of motion archetypes. Pick one deliberately — whichever demonstrates the product's claim — and let every other motion be subordinate.
+
+| Signature | Timing | Feel | Fits | Canonical reference |
+|-----------|--------|------|------|---------------------|
+| **Crisp productivity** | <150ms micro-interactions, no scroll hijacking | "Feels fast" | Keyboard-first dev tools | Linear |
+| **Demonstrative** | Live-updating counters, medium hover scales ~200ms, subtle hero parallax | "Look, the product is doing real work" | Fintech, APIs | Stripe |
+| **Cinematic** | 600–800ms scroll-linked section reveals | Luxurious storytelling | Consumer hardware, automotive | Apple product pages |
+| **Near-motionless** | Fades + focus rings only | Trust, gravitas | Scheduling, money, serious AI surfaces | Cal.com, AI-lab marketing pages |
+| **Bento flip/reveal** | ~400ms soft ease-out on sticky modular cards | "We have many features; here they are" | Modular SaaS, content platforms | Notion |
+| **Playful spring** | Spring easing on cards, looping hero demos | Canvas is the brand | Creative tools, no-code | Framer |
+| **Gallery lift** | <300ms hover-lift on masonry, infinite-scroll fade-in | Discovery-driven | Pin boards, template galleries, asset libraries | Pinterest |
+| **Infrastructure pulse** | Global node/particle pulse behind still foreground | "Live infrastructure" | Edge networks, realtime backends | Vercel |
+
+**Budget heuristic:** one signature move per homepage. Any second motion choice must be subordinate (hover feedback, focus rings, reduced-motion-safe entrances) to the signature.
+
 ---
 
 **Avoid**: Animating everything (animation fatigue). Durations >500ms for UI feedback. Ignoring `prefers-reduced-motion`. Using animation to hide slow loading. Bounce/elastic easing. Animating layout properties.

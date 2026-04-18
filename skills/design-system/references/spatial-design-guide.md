@@ -47,6 +47,16 @@ Blur your eyes (or screenshot and blur). Can you still identify:
 
 If everything looks the same weight blurred, you have a hierarchy problem.
 
+### Density Commitment
+
+The squint test also separates products by their *spatial commitment*. Screenshot a homepage, blur it, and sort by what survives:
+
+- **Dense side** — the blurred page looks like one large rectangle of text. The promise is "high information per scroll" (keyboard-first productivity tools, data-heavy SaaS).
+- **Airy side** — two or three dominant shapes with vast negative space. The promise is "the thing that matters is the only thing here" (AI labs, luxury hardware, aspirational consumer).
+- **Mid-rhythm** — an airy hero followed by a dense product-proof section on the same page. Stripe and Notion are the clearest references; rhythm becomes structure.
+
+A product's density signature is one of its strongest identity signals — more legible than color at a distance. Pick a side deliberately, or pick a rhythm between the two, and apply it across every surface.
+
 ### Multiple Dimensions
 
 Don't rely on size alone. Combine 2-3 dimensions for clear hierarchy:
