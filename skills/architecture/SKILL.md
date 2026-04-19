@@ -225,7 +225,7 @@ Before recording a decision, check for conflicts with earlier decisions:
 
 ## Step 5: Document Architecture
 
-When all major decisions are made, create the architecture document using template in `references/architecture-template.md`.
+When all major decisions are made, create the architecture document using template in `${CLAUDE_PLUGIN_ROOT}/references/architecture/architecture-template.md`.
 
 **Output location:** `{{specs_dir}}/architecture.md` (single file by default)
 
@@ -305,8 +305,8 @@ After successfully updating the architecture document, ask what should be the ne
 
 **Handle the response:**
 
-- **Design UX**: Invoke the `groundwork:ux-design` skill to create UX designs
-- **Create tasks**: Invoke the `groundwork:tasks` skill to create a list of executable tasks
+- **Design UX**: Run `/groundwork:ux-design` to create UX designs
+- **Create tasks**: Run `/groundwork:create-tasks` to create a list of executable tasks
 
 ## Decision Record Format (ADR-lite)
 
@@ -360,5 +360,5 @@ Each decision in the architecture doc follows this format:
 
 ## Reference Files
 
-- `references/architecture-template.md` - Template for architecture document
-- `references/decision-examples.md` - Example decision records from real projects
+- `${CLAUDE_PLUGIN_ROOT}/references/architecture/architecture-template.md` - Template for architecture document
+- `${CLAUDE_PLUGIN_ROOT}/references/architecture/decision-examples.md` - Example decision records from real projects

@@ -358,7 +358,7 @@ All other Step 4 behavior (exploratory questions, conflict detection, YAGNI prin
 
 Follow the `groundwork:architecture` skill's Step 5 exactly.
 
-Write the architecture document using the template in `references/architecture-template.md`. Include ALL decision records with discarded options and reasoning. Run the prd-architecture-checker validation.
+Write the architecture document using the template in `${CLAUDE_PLUGIN_ROOT}/references/architecture/architecture-template.md`. Include ALL decision records with discarded options and reasoning. Run the prd-architecture-checker validation.
 
 **Additional:** In each Decision Record, add a "Research" section linking to the research journal entry for that decision area:
 ```markdown

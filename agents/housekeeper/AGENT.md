@@ -173,13 +173,13 @@ Your conversational response in file mode is exactly one JSON line (no findings 
 
 When findings indicate spec/documentation gaps, include the appropriate skill in your recommendation:
 
-| Category | Suggested Skill |
-|----------|-----------------|
-| `spec-not-updated` | `groundwork:sync-specs` |
-| `architecture-not-updated` | `groundwork:sync-architecture` |
-| `design-system-not-updated` | `groundwork:sync-design-system` |
+| Category | Suggested Command |
+|----------|-------------------|
+| `spec-not-updated` | `/groundwork:source-product-specs-from-code` |
+| `architecture-not-updated` | `/groundwork:source-architecture-from-code` |
+| `design-system-not-updated` | `/groundwork:source-ux-design-from-code` |
 
-Example recommendation with skill:
+Example recommendation with command:
 ```
-"recommendation": "Update the design system to document the new color tokens. Run groundwork:sync-design-system to capture these changes."
+"recommendation": "Update the design system to document the new color tokens. Run /groundwork:source-ux-design-from-code to capture these changes."
 ```

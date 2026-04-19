@@ -93,7 +93,7 @@ Parse the task identifier from the argument:
 
 - **Numeric** (e.g., `4`): Interpret as `TASK-004` (zero-padded to 3 digits)
 - **Full format** (e.g., `TASK-004`): Use as-is
-- **No argument**: Invoke `groundwork:next-task` skill to determine the next workable task, then use that ID. If next-task returns nothing workable, report and stop.
+- **No argument**: Run `/groundwork:work-on-next-task` to determine the next workable task, then use that ID. If it returns nothing workable, report and stop.
 
 **Error:** Invalid format → "Please specify a task number, e.g. `/groundwork:work-on 4` or `/groundwork:work-on TASK-004`"
 

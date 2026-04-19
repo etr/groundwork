@@ -72,7 +72,7 @@ Before finishing:
 
 For non-trivial changes, ask: "Is there a more elegant way to implement this?"
 
-Read `${CLAUDE_PLUGIN_ROOT}/docs/clean-code-principles.md` and apply its guidance on simpler abstractions, better naming, reduced complexity, and cleaner interfaces.
+Read `${CLAUDE_PLUGIN_ROOT}/references/clean-code-principles.md` and apply its guidance on simpler abstractions, better naming, reduced complexity, and cleaner interfaces.
 
 ### 4b. Frontend Visual Polish
 

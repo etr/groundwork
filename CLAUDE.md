@@ -15,9 +15,11 @@ groundwork/
 ├── .claude-plugin/plugin.json  # Plugin manifest
 ├── skills/                     # Markdown-based workflow skills (SKILL.md files)
 ├── commands/                   # User-invoked slash commands
+├── agents/                     # Subagent definitions (AGENT.md files)
 ├── hooks/                      # Event-driven automation (SessionStart, PreCompact)
 ├── lib/                        # JavaScript utilities
-└── docs/                       # Documentation templates
+├── references/                 # Runtime reference files loaded by skills/commands/agents
+└── docs/                       # User-facing documentation
 ```
 
 ## Component Formats
