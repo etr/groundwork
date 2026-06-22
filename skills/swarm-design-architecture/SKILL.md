@@ -354,6 +354,12 @@ When presenting options:
 
 All other Step 4 behavior (exploratory questions, conflict detection, YAGNI principles, user interaction) follows the base architecture skill exactly.
 
+## Step 4.5: Design It Twice (module interfaces)
+
+The swarm (Steps 3–4) chooses *what to build with*. For the chosen stack, also decide *how the modules fit together* — your first interface is rarely your best.
+
+Invoke `Skill(skill="groundwork:design-it-twice")` for any non-trivial new module, service boundary, or public API: it frames the problem, generates 2–3 divergent designs (reuse this skill's parallel-agent machinery), compares them on depth / locality / seam, and returns an opinionated recommendation. Fold that recommendation into the relevant decision records in Step 5.
+
 ## Step 5: Document Architecture
 
 Follow the `groundwork:design-architecture` skill's Step 5 exactly.

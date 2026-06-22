@@ -133,6 +133,31 @@ Personal skills with the same name as plugin skills take precedence.
 4. **Exit criteria** - Define what "done" looks like
 5. **Error handling** - Include what to do when stuck
 
+## Authoring Discipline
+
+Skills create **predictability** — the agent runs the same process every time. Two failure modes erode that: **sprawl** (so long the agent skims) and **sediment** (stale lines nobody pruned). Edit ruthlessly.
+
+- **The no-op test.** For each sentence ask: "Does this change behavior versus the model's default?" If the model already does it unprompted, delete the sentence — don't rewrite it. No-ops are the main cause of sprawl.
+- **Single source of truth.** One authoritative place per fact. If a rule lives in another skill or a reference, link to it (`[[skill-name]]`, `references/...`) instead of restating it. Duplication rots out of sync.
+- **Leading words.** Anchor behavior with a compact concept the model already knows ("deep module", "Chesterton's Fence", "tight") rather than three sentences of explanation.
+- **Front-load the description.** For model-invocable skills the description loads every turn — every word costs. Lead with the trigger word; one trigger per genuine branch; cut identity already obvious from the body.
+
+## Progressive Disclosure
+
+Keep `SKILL.md` to what the agent needs on every run. Move branch-specific or reference material into sibling files opened on demand:
+
+```
+skills/my-skill/
+  SKILL.md     # the workflow + an index of when to open each sibling
+  FORMAT.md    # a template consulted only when producing the artifact
+```
+
+Name each sibling and the condition for opening it ("When producing the report, follow `FORMAT.md`"). Inline only what *every* run needs. Split into a *separate skill* (not just a sibling) only when the cut earns its context cost: a distinct leading word worth independent invocation.
+
+## Router Discoverability
+
+A user-only leaf (`disable-model-invocation: true`) is invisible to the model — it can be surfaced only through the lifecycle router in `using-groundwork`. When you add a leaf, add its router entry too, or it's a dead end.
+
 ## Validation
 
 Run `/groundwork:groundwork-check` to validate your skill:

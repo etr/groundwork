@@ -46,6 +46,67 @@ digraph skill_flow {
 }
 ```
 
+## Lifecycle Map — work → skill
+
+Find the work, invoke the skill. **Dispatch tier matters:**
+
+- **(auto)** — dual/library skills you invoke directly with the `Skill` tool, or that other skills call.
+- **(user runs)** — user-only leaves (`disable-model-invocation: true`). You **cannot** invoke or dispatch these; they are invisible to you at call time. When one fits, **recommend the slash command and let the user run it**. They are heavyweight or high-blast-radius (swarms, full PRD generation, autonomous loops, outward-facing deploy) on purpose.
+
+### Define / Discover
+| Work | Skill |
+|------|-------|
+| Generate a PRD/specs from scratch | `/groundwork:design-product` (user runs) |
+| Clarify or stress-test a feature request | `understanding-feature-requests` (auto) |
+| Design or reverse-engineer UX | `/groundwork:ux-design`, `/groundwork:source-ux-design-from-code` (user runs) |
+| Reverse-engineer specs/architecture from existing code | `/groundwork:source-product-specs-from-code`, `/groundwork:source-architecture-from-code` (user runs) |
+| Build/maintain the domain glossary | `domain-modeling` (auto) |
+
+### Plan / Architect
+| Work | Skill |
+|------|-------|
+| Translate PRD into architecture | `design-architecture` (auto) |
+| Adversarial tech comparison across options | `/groundwork:swarm-design-architecture` (user runs) |
+| Design a non-trivial module / interface / API | `design-it-twice` (auto) |
+| Record a hard-to-reverse decision | captured in `design-architecture` (auto) |
+| Break specs into tasks | `/groundwork:create-tasks` (user runs) |
+| Plan a single task | `plan-task` (auto) |
+| Verify task list covers the PRD | `task-validation-loop` (auto) |
+| Check code ↔ spec alignment | `check-specs-alignment` (auto) |
+| Convert single-file spec/arch to directory | `split-specs`, `split-architecture` (auto) |
+
+### Build
+| Work | Skill |
+|------|-------|
+| Execute task N / the next task | `work-on`, `work-on-next-task` (auto) |
+| Implement a planned task in isolation | `implement-task` (auto) |
+| Build without a task / autonomously | `/groundwork:build-unplanned`, `/groundwork:just-do-it`, `/groundwork:just-do-it-swarming` (user runs) |
+| Write any feature or bugfix | `test-driven-development` (auto) |
+| Ship thin slices behind a flag | `vertical-slice` (auto) |
+| Pressure-test a high-stakes/irreversible decision | `doubt-driven-development` (auto) |
+| Isolate work in a worktree | `use-git-worktree` (auto) |
+
+### Verify / Review / Debug
+| Work | Skill |
+|------|-------|
+| Local multi-agent validation + autofix | `validate` (auto) |
+| Review a GitHub PR | `/groundwork:review-pr` (user runs) |
+| Investigate a bug systematically | `debug` (auto), `/groundwork:swarm-debug` (user runs) |
+
+### Ship
+| Work | Skill |
+|------|-------|
+| Orchestrate the ship phase | `/groundwork:ship` (user runs) |
+| Add logging/metrics/traces | `instrument-observability` (auto) |
+| Roll out behind a flag in stages | `staged-rollout` (auto) |
+
+### Meta / Project
+| Work | Skill |
+|------|-------|
+| Configure repo / switch project | `setup-repo`, `select-project` (auto) |
+| Hand off work to another session | `handoff` (auto) |
+| List skills / health-check the plugin | `/groundwork:groundwork-help`, `/groundwork:groundwork-check` (user runs) |
+
 ## Red Flags
 
 These thoughts mean STOP—you're rationalizing:

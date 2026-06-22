@@ -275,7 +275,7 @@ Every task MUST follow this exact format to ensure compatibility with `/groundwo
 Target: 1-3 days of work per task for an experienced developer.
 
 ### Vertical Slicing
-Prefer tasks that deliver working functionality over horizontal layers:
+Prefer tasks that deliver working functionality over horizontal layers (the **thin vertical slice** principle — `${CLAUDE_PLUGIN_ROOT}/references/engineering-principles.md`):
 
 ❌ Horizontal (avoid):
 - TASK-001: Create all database schemas
@@ -286,6 +286,8 @@ Prefer tasks that deliver working functionality over horizontal layers:
 - TASK-001: User signup flow (DB + API + UI)
 - TASK-002: User login flow (DB + API + UI)
 - TASK-003: Profile management (DB + API + UI)
+
+Decomposition is the planning side of slicing. Each sliced task is then *built* the same way — flag-first, end-to-end, test-committed per slice; see [[vertical-slice]].
 
 ### Dependency Minimization
 - Identify true dependencies vs. nice-to-haves

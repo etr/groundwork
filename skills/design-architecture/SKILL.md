@@ -20,6 +20,10 @@ Interactive workflow for translating product requirements into architecture thro
 3. **Iterate Decisions** - For each decision: present options → discuss → decide
 4. **Document** - Write architecture with full decision records
 
+## Design Principles
+
+Anchor decisions on the named principles in `${CLAUDE_PLUGIN_ROOT}/references/engineering-principles.md` — favor **deep modules** (simple interface, substantial functionality), minimize the surface **Hyrum's Law** will freeze into a contract, and **design it twice** before committing to a module boundary. When a decision passes the decision-record gate (in the principles file), record it using the Decision Record Format (ADR-lite) below. Sharpen the shared vocabulary with [[domain-modeling]].
+
 ## Pre-flight: Model Recommendation
 
 **Your current effort level is `{{effort_level}}`.**
@@ -223,6 +227,12 @@ Before recording a decision, check for conflicts with earlier decisions:
 - When in doubt, choose the option with fewer moving parts
 - Ask: "What's the cost of adding this later vs. building it now?"
 
+## Step 4.5: Design It Twice (module interfaces)
+
+Steps 3–4 chose *what to build with*. For any non-trivial new module, service boundary, or public API in this design, also decide *how the interface is shaped* — and your first shape is rarely the best.
+
+Invoke `Skill(skill="groundwork:design-it-twice")`: frame the problem, generate 2–3 divergent designs (parallel `Agent` fan-out when available, sequential otherwise — no agent teams needed), compare them on depth / locality / seam, and carry an opinionated recommendation into the decision records. Skip for designs with no non-trivial new interface.
+
 ## Step 5: Document Architecture
 
 When all major decisions are made, create the architecture document using template in `${CLAUDE_PLUGIN_ROOT}/references/architecture/architecture-template.md`.
@@ -310,7 +320,7 @@ After successfully updating the architecture document, ask what should be the ne
 
 ## Decision Record Format (ADR-lite)
 
-Each decision in the architecture doc follows this format:
+**Record a decision only when it passes the decision-record gate** (`${CLAUDE_PLUGIN_ROOT}/references/engineering-principles.md`): hard to reverse, surprising without context, and a real trade-off — otherwise just implement it. Each qualifying decision is captured inline in the architecture doc (no separate ADR files — `housekeeper` keeps these current) using this format:
 
 ```markdown
 ### DR-NNN: [Decision Title]

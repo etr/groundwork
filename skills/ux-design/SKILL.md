@@ -10,6 +10,8 @@ disable-model-invocation: true
 
 Establishes a complete design system through guided collaboration: foundations, brand identity, and UX patterns.
 
+**Accessibility standard:** Design to the bar your patterns will be reviewed against. Treat `${CLAUDE_PLUGIN_ROOT}/references/checklists/accessibility.md` as the WCAG 2.1 AA standard your color choices, components, focus behavior, and patterns must meet — the same checklist `design-consistency-checker` enforces.
+
 ## Pre-flight: Model Recommendation
 
 **Your current effort level is `{{effort_level}}`.**

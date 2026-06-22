@@ -14,6 +14,8 @@ Write the test first. Watch it fail. Write minimal code to pass.
 
 **Violating the letter of the rules is violating the spirit of the rules.**
 
+**Test-quality standard:** Write tests to the same bar they'll be judged against. `${CLAUDE_PLUGIN_ROOT}/references/checklists/testing.md` is the canonical test-quality checklist — pyramid, DAMP, mocking gates, what not to test, coverage. This skill is the *workflow*; that file is the *standard* (the `test-quality-reviewer` agent grades against it).
+
 ## When to Use
 
 **Always:**
@@ -218,24 +220,7 @@ Next failing test for next feature.
 
 ## What NOT to Test
 
-Not everything benefits from TDD. Writing tests for these wastes budget and creates maintenance burden:
-
-**Skip tests for:**
-- Static markup and CSS classes (layout, colors, spacing, font sizes)
-- Element counts ("renders 6 nav items") — only fails on intentional changes
-- Pure presentational components with zero logic (just HTML + Tailwind)
-- Tooltip styling, container classes, overflow attributes
-- That an icon renders as an SVG
-
-**DO test:**
-- Conditional rendering (shows X when condition Y)
-- Computed values (formats currency, calculates percentage)
-- User interactions (click, keyboard, filter, sort, pagination)
-- State transitions (toggle, edit mode, selection)
-- Edge cases (empty data, zero values, overflow)
-- Business rules (color thresholds, frequency detection, amortization math)
-
-**Rule of thumb:** If the test would only fail when someone intentionally changes the UI, it's not testing behavior — it's preventing change. Delete it.
+The canonical skip-list lives in `${CLAUDE_PLUGIN_ROOT}/references/checklists/testing.md`. **Rule of thumb:** if a test would only fail when someone *intentionally* changes behavior (static markup, CSS, element counts, presentational-only components), it's preventing change, not testing it — don't write it. DO test conditional rendering, computed values, user interactions, state transitions, edge cases, and business rules.
 
 ## Why Order Matters
 
@@ -383,6 +368,8 @@ Can't check all boxes? You skipped TDD. Start over.
 | Test setup huge | Extract helpers. Still complex? Simplify design. |
 
 ## Coverage Requirements
+
+Canonical criteria — test pyramid, the four pillars, coverage completeness — live in `${CLAUDE_PLUGIN_ROOT}/references/checklists/testing.md`. Highlights:
 
 ### Target: 80%+ Coverage of Logic Paths
 - Coverage means branch/logic coverage, not line coverage of markup

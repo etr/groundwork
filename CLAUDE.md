@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Groundwork is a Claude Code plugin that provides a skills library for structured development workflows. It contains 32 skills for planning, TDD, debugging, and synchronization. Every capability is a skill; there is no separate commands layer (skills are both user-invocable via `/groundwork:<name>` and, where appropriate, model-invocable).
+Groundwork is a Claude Code plugin that provides a skills library for structured development workflows. It contains 40 skills spanning the full lifecycle — discovery, domain modeling, architecture, planning, TDD, debugging, validation, and shipping. Every capability is a skill; there is no separate commands layer (skills are both user-invocable via `/groundwork:<name>` and, where appropriate, model-invocable).
+
+The `using-groundwork` skill is the **lifecycle router**: it maps work → skill across every phase and is the only way the model can surface user-only leaves (which are invisible to it at call time). When authoring or editing a skill, see `docs/developing-skills.md` (contributor guide: anatomy, frontmatter, tier selection, authoring discipline, progressive disclosure).
 
 ## Project Structure
 
@@ -18,6 +20,8 @@ groundwork/
 ├── hooks/                      # Event-driven automation (SessionStart, PreCompact)
 ├── lib/                        # JavaScript utilities
 ├── references/                 # Runtime reference files loaded by skills/agents
+│   ├── checklists/             # Shared checklists read by BOTH a producer skill and a reviewer agent (testing: test-driven-development ↔ test-quality-reviewer; accessibility: ux-design ↔ design-consistency-checker)
+│   └── engineering-principles.md  # Named-principle vocabulary (deep modules, Hyrum's Law, Chesterton's Fence, …)
 └── docs/                       # User-facing documentation
 ```
 

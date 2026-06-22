@@ -2,7 +2,6 @@
 name: work-on-next-task
 description: Execute next uncompleted task with full project context (PRD, architecture, tasks). Usage /groundwork:work-on-next-task
 allowed-tools: ["Read", "Edit", "Write", "Bash", "Glob", "Grep", "Task", "Skill"]
-disable-model-invocation: true
 ---
 
 # Next Task Skill

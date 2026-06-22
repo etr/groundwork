@@ -3,7 +3,6 @@ name: check-specs-alignment
 description: Verify alignment between code and specs. Usage /groundwork:check-specs-alignment
 argument-hint: "[alignment-context]"
 allowed-tools: ["Read", "Glob", "Grep", "Task", "Skill"]
-disable-model-invocation: true
 ---
 
 # Check Alignment Skill
