@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # --- Global state ---
-declare -A SKILL_MAP       # skill-dir-name → installed-name
+OVERRIDES=""               # newline-delimited "skill-dir-name=installed-name" exceptions
 TARGETS=()
 SCOPE=""
 FORCE=false
@@ -104,25 +104,44 @@ auto_detect_source() {
     fi
 }
 
+# Resolve a skill-dir name to its installed name: an explicit override from
+# install-config.txt if present, otherwise the fail-closed default
+# (groundwork-<name>). Returns "drop" for skills excluded by the config.
+# bash 3.2 compatible — no associative array.
+installed_name() {
+    local skill="$1" line
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        if [[ "${line%%=*}" == "$skill" ]]; then
+            echo "${line#*=}"
+            return
+        fi
+    done <<< "$OVERRIDES"
+    echo "groundwork-${skill}"
+}
+
 load_config() {
     local config="$SOURCE_DIR/install-config.txt"
-    if [[ ! -f "$config" ]]; then
-        echo "Error: Config file not found: $config"
-        exit 1
+
+    # Fail-closed: every skill on disk exports as groundwork-<name> by default.
+    # The config file lists only exceptions (drops and custom renames), so a
+    # newly-added skill is exported automatically and can never be silently
+    # omitted by forgetting to register it. Exceptions are kept as a small
+    # newline-delimited string and consulted by installed_name().
+    OVERRIDES=""
+    if [[ -f "$config" ]]; then
+        while IFS= read -r line; do
+            [[ "$line" =~ ^[[:space:]]*# ]] && continue
+            [[ -z "${line// /}" ]] && continue
+
+            local lhs installed rhs
+            lhs=$(echo "$line" | sed 's/[[:space:]]*=.*//' | xargs)
+            rhs=$(echo "$line" | sed 's/[^=]*=[[:space:]]*//')
+            installed=$(echo "$rhs" | awk '{print $1}')
+
+            OVERRIDES+="${lhs}=${installed}"$'\n'
+        done < "$config"
     fi
-
-    while IFS= read -r line; do
-        [[ "$line" =~ ^[[:space:]]*# ]] && continue
-        [[ -z "${line// /}" ]] && continue
-
-        local lhs installed
-        lhs=$(echo "$line" | sed 's/[[:space:]]*=.*//' | xargs)
-        local rhs
-        rhs=$(echo "$line" | sed 's/[^=]*=[[:space:]]*//')
-        installed=$(echo "$rhs" | awk '{print $1}')
-
-        SKILL_MAP["$lhs"]="$installed"
-    done < "$config"
 
     # Pre-build sed commands for groundwork:name → mapped-name
     # Order matters: more specific patterns first to avoid partial matches
@@ -133,31 +152,34 @@ load_config() {
         [[ ! -d "$agent_dir" ]] && continue
         local agent_name
         agent_name=$(basename "$agent_dir")
-        BODY_SED_CMDS+="s|groundwork:${agent_name}:${agent_name}|the ${agent_name} agent|g;"
+        BODY_SED_CMDS+="s|groundwork:${agent_name}:${agent_name}|the ${agent_name} agent|g"$'\n'
     done
 
-    # 2. Skill name mappings: config keys + reverse aliases
-    for skill in "${!SKILL_MAP[@]}"; do
-        local mapped="${SKILL_MAP[$skill]}"
+    # 2. Skill name mappings: every skill dir (default or overridden) + reverse aliases
+    for skill_dir in "$SOURCE_DIR"/skills/*/; do
+        [[ ! -d "$skill_dir" ]] && continue
+        local skill mapped suffix
+        skill=$(basename "$skill_dir")
+        mapped=$(installed_name "$skill")
         if [[ "$mapped" != "drop" ]]; then
-            # Primary: groundwork:<config-key> → <installed-name>
-            BODY_SED_CMDS+="s|groundwork:${skill}|${mapped}|g;"
-            # Reverse alias: if installed suffix differs from config key,
+            # Primary: groundwork:<skill> → <installed-name>
+            BODY_SED_CMDS+="s|groundwork:${skill}|${mapped}|g"$'\n'
+            # Reverse alias: if installed suffix differs from skill name,
             # also map groundwork:<suffix> → <installed-name>
-            local suffix="${mapped#groundwork-}"
+            suffix="${mapped#groundwork-}"
             if [[ "$suffix" != "$skill" ]]; then
-                BODY_SED_CMDS+="s|groundwork:${suffix}|${mapped}|g;"
+                BODY_SED_CMDS+="s|groundwork:${suffix}|${mapped}|g"$'\n'
             fi
         fi
     done
 
-    # 3. Agent single refs (for agents not in skill map)
+    # 3. Agent single refs (for agents with no same-named skill)
     for agent_dir in "$SOURCE_DIR"/agents/*/; do
         [[ ! -d "$agent_dir" ]] && continue
         local agent_name
         agent_name=$(basename "$agent_dir")
-        if [[ -z "${SKILL_MAP[$agent_name]:-}" ]]; then
-            BODY_SED_CMDS+="s|groundwork:${agent_name}|the ${agent_name} agent|g;"
+        if [[ ! -d "$SOURCE_DIR/skills/$agent_name" ]]; then
+            BODY_SED_CMDS+="s|groundwork:${agent_name}|the ${agent_name} agent|g"$'\n'
         fi
     done
 }
@@ -253,6 +275,10 @@ transform_frontmatter() {
     local target="$1" component="$2" content="$3" installed_name="$4"
     local desc
     desc=$(get_fm_value "$content" "description")
+    # Strip the Claude-Code-only slash-command hint ("Usage /groundwork:<name> ...").
+    # Other harnesses have no /groundwork: slash command — they discover skills by
+    # description match — so the clause is noise and would leak a "groundwork:" ref.
+    desc=$(printf '%s' "$desc" | sed 's| *Usage /groundwork:.*$||')
 
     echo "---"
     case "$component" in
@@ -329,6 +355,7 @@ transform_body() {
         node "$SOURCE_DIR/lib/transform-agents.js" --target "$target" | \
         sed \
         -e 's|Skill(skill="\(groundwork:[^"]*\)"[^)]*)|the \1 workflow|g' \
+        -e "s|Skill(skill='\(groundwork:[^']*\)'[^)]*)|the \1 workflow|g" \
         "${appendix_seds[@]}" \
         -e 's|[Ii]nvoke `\(the [^`]* workflow\)`|Follow \1 steps|g' \
         -e 's|AskUserQuestion|Ask the user|g' \
@@ -401,8 +428,8 @@ install_skills_for_target() {
         local skill_file="$skill_dir/SKILL.md"
         [[ ! -f "$skill_file" ]] && continue
 
-        local installed="${SKILL_MAP[$skill_name]:-}"
-        [[ -z "$installed" ]] && continue
+        local installed
+        installed=$(installed_name "$skill_name")
         [[ "$installed" == "drop" ]] && continue
 
         local content

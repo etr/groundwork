@@ -142,7 +142,7 @@ Use `AskUserQuestion`:
 ## Step 4: Validate
 
 1. `cd` into the worktree path from Step 3
-2. Call: `Skill(skill='groundwork:validate')`
+2. Call: `Skill(skill="groundwork:validate")`
 3. The validate skill will run 9 verification agents in parallel and fix issues autonomously.
 
 **After validate completes:**

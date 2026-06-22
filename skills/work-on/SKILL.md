@@ -182,7 +182,7 @@ This is a hard stop. The user explicitly chose to take over the rest of the work
 **Call the validate skill directly.** Do NOT wrap this in a subagent — this skill runs in the main conversation, which CAN spawn the 9 validation subagents it needs.
 
 1. `cd` into the worktree path from Step 3
-2. Call: `Skill(skill='groundwork:validate')`
+2. Call: `Skill(skill="groundwork:validate")`
 3. The validate skill will run 9 verification agents in parallel and fix issues autonomously.
 
 **After validate completes:**

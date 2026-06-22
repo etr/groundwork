@@ -1,47 +1,16 @@
 # install-config.txt
-# Format: <skill-dir-name> = <installed-name>
-#   skill-dir-name: source is skills/<name>/SKILL.md
-#   installed-name: name used in target tools (or "drop" to exclude)
-# Lines starting with # are comments
 #
-# Groundwork has no separate commands layer — every capability is a skill. On
-# non-Claude targets all installed entries are skills; Claude Code gets a full
-# plugin copy (no transformation).
+# Exceptions to the default export rule. By default EVERY skill in skills/ is
+# exported to non-Claude targets as "groundwork-<skill-name>" (fail-closed: a
+# new skill is exported automatically — you cannot forget to register it).
+#
+# List only exceptions here, one per line:
+#   <skill-dir-name> = drop          exclude from non-Claude targets
+#   <skill-dir-name> = <other-name>  export under a custom name (rare)
+#
+# Claude Code always gets a full, untransformed plugin copy regardless of this file.
 
-# User-facing workflow skills
-build-unplanned = groundwork-build-unplanned
-check-specs-alignment = groundwork-check-specs-alignment
-create-tasks = groundwork-create-tasks
-debug = groundwork-debug
-design-architecture = groundwork-design-architecture
-design-product = groundwork-design-product
-implement-task = groundwork-implement-task
-just-do-it = groundwork-just-do-it
-just-do-it-swarming = groundwork-just-do-it-swarming
-plan-task = groundwork-plan-task
-review-pr = groundwork-review-pr
-select-project = groundwork-select-project
-setup-repo = groundwork-setup-repo
-source-architecture-from-code = groundwork-source-architecture-from-code
-source-product-specs-from-code = groundwork-source-product-specs-from-code
-source-ux-design-from-code = groundwork-source-ux-design-from-code
-split-architecture = groundwork-split-architecture
-split-specs = groundwork-split-specs
-swarm-debug = groundwork-swarm-debug
-swarm-design-architecture = groundwork-swarm-design-architecture
-ux-design = groundwork-ux-design
-validate = groundwork-validate
-work-on = groundwork-work-on
-work-on-next-task = groundwork-work-on-next-task
-
-# Internal "library" skills (user-invocable: false) — used by other skills,
-# auto-loaded by description match
-test-driven-development = groundwork-test-driven-development
-understanding-feature-requests = groundwork-understanding-feature-requests
-use-git-worktree = groundwork-use-git-worktree
-task-validation-loop = groundwork-task-validation-loop
-
-# Plugin-management skills — Claude Code / plugin specific, excluded elsewhere
+# Plugin-management / Claude-Code-specific skills — excluded on other targets
 groundwork-check = drop
 groundwork-help = drop
 skills = drop
