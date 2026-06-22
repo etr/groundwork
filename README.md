@@ -92,7 +92,7 @@ You can install to multiple targets at once:
 - **Skills** — Workflow definitions (planning, TDD, debugging, etc.) are installed with a `groundwork-` prefix. On OpenCode, skill dependencies are automatically inlined as appendix sections.
 - **Agents** — Verification and review agents (code quality, security, architecture alignment, etc.) are installed in each target's native agent format.
 - **Hooks** — Not installed automatically. Event-driven automations (session start, pre-compact, commit alignment) require manual setup for each tool.
-- **Commands** — Not applicable. Other tools discover skills directly by name rather than through slash commands.
+- **Slash invocation** — Not applicable on other tools. Groundwork has no separate commands layer; other tools discover skills directly by name rather than through Claude Code slash commands.
 
 #### Limitations
 
@@ -103,14 +103,14 @@ You can install to multiple targets at once:
 ### Verify Installation
 
 Restart Claude Code or start a new session. You should see:
-- Start typing `/groundwork:`. It should show groundwork commands available
+- Start typing `/groundwork:`. It should show groundwork skills available
 
 Run `/groundwork:groundwork-check` to validate the plugin installation.
 
 ## Dependencies
 
 - **Required**: `node`, `python3`
-- **Optional**: `gh` (GitHub CLI for PR commands)
+- **Optional**: `gh` (GitHub CLI for PR workflows)
 
 ### Windows Users
 
@@ -170,15 +170,15 @@ Analyze existing code to generate initial specifications:
 /groundwork:design-product           # Analyzes codebase to propose PRD
 ```
 
-## Commands
+## Skills
 
-Commands are what you type to interact with Groundwork. All commands are prefixed with `groundwork:` (e.g., `/groundwork:design-product`), though the prefix can be omitted if no other plugin uses the same command name.
+Every Groundwork capability is a skill. User-facing skills are invoked as slash commands, all prefixed with `groundwork:` (e.g., `/groundwork:design-product`); the prefix can be omitted if no other plugin uses the same name. Some skills are also invoked automatically by the model when relevant, and a few low-level "library" skills are used only by other skills (not listed below).
 
-### Planning Commands
+### Planning Skills
 
 Define what to build and how to build it.
 
-| Command | Args | Description | When to Use |
+| Skill | Args | Description | When to Use |
 |---------|------|-------------|-------------|
 | `/groundwork:design-product` | `[product-name]` | Create or update PRD with EARS requirements | Starting a new project or adding features |
 | `/groundwork:design-architecture` | `[feature-name]` | Design technical architecture with decision records | After PRD exists, need technical design |
@@ -187,11 +187,11 @@ Define what to build and how to build it.
 | `/groundwork:create-tasks` | `[filter]` | Generate implementation tasks from PRD + architecture | After specs exist, ready to plan implementation |
 | `/groundwork:setup-repo` | — | Configure repo — detect single-project or monorepo | First time using Groundwork in a repo |
 
-### Implementation Commands
+### Implementation Skills
 
 Execute tasks and build features.
 
-| Command | Args | Description | When to Use |
+| Skill | Args | Description | When to Use |
 |---------|------|-------------|-------------|
 | `/groundwork:work-on` | `[task-number]` | Execute a specific task with worktree isolation and TDD | Want to work on a specific task by number |
 | `/groundwork:work-on-next-task` | — | Execute the next unblocked task automatically | Working through tasks sequentially |
@@ -202,37 +202,37 @@ Execute tasks and build features.
 | `/groundwork:build-unplanned` | `[description]` | Build feature from description — no task definitions needed | Quick feature without formal planning |
 | `/groundwork:select-project` | `[project-name]` | Switch to a different project in a monorepo | Working across multiple projects |
 
-### Debugging Commands
+### Debugging Skills
 
 Investigate and resolve issues systematically.
 
-| Command | Args | Description | When to Use |
+| Skill | Args | Description | When to Use |
 |---------|------|-------------|-------------|
 | `/groundwork:debug` | `[bug description]` | Systematic 5-phase debugging workflow | Investigating bugs or test failures |
 | `/groundwork:swarm-debug` | `[bug description]` | Parallel hypothesis investigation with agent teams | Multiple plausible root causes, needs adversarial testing |
 
-### Verification Commands
+### Verification Skills
 
 Validate code quality and spec alignment.
 
-| Command | Args | Description | When to Use |
+| Skill | Args | Description | When to Use |
 |---------|------|-------------|-------------|
 | `/groundwork:validate` | — | Re-run 9-agent verification on current changes | Verify code quality after manual changes |
 | `/groundwork:check-specs-alignment` | `[context]` | Audit code alignment with PRD and architecture | Periodic drift detection |
 
-### Review Commands
+### Review Skills
 
 Review pull requests with multi-agent analysis. Requires `gh` (GitHub CLI).
 
-| Command | Args | Description | When to Use |
+| Skill | Args | Description | When to Use |
 |---------|------|-------------|-------------|
 | `/groundwork:review-pr` | `[PR# or URL] [--no-interactive]` | Multi-agent PR review with inline GitHub comments | Reviewing PRs before merge |
 
-### Synchronization Commands
+### Synchronization Skills
 
 Keep specs in sync with what was actually built. Run these at the end of a session when implementation diverged from the original plan.
 
-| Command | Args | Description | When to Use |
+| Skill | Args | Description | When to Use |
 |---------|------|-------------|-------------|
 | `/groundwork:source-product-specs-from-code` | `[files...]` | Update PRD to reflect implementation changes | After product decisions during implementation |
 | `/groundwork:source-architecture-from-code` | `[files...]` | Update architecture docs with new decisions | After architectural changes during implementation |
@@ -240,21 +240,21 @@ Keep specs in sync with what was actually built. Run these at the end of a sessi
 | `/groundwork:split-specs` | — | Convert single-file PRD into directory format | PRD has grown large (auto-triggered at 500+ lines or 15+ features) |
 | `/groundwork:split-architecture` | — | Convert single-file architecture doc into directory format | Architecture doc has grown large (auto-triggered at 500+ lines or 10+ DRs) |
 
-### Utility Commands
+### Utility Skills
 
 Plugin management and reference.
 
-| Command | Args | Description | When to Use |
+| Skill | Args | Description | When to Use |
 |---------|------|-------------|-------------|
 | `/groundwork:skills` | — | List all available Groundwork skills | Discovering available capabilities |
 | `/groundwork:groundwork-check` | — | Validate plugin installation | Troubleshooting issues |
-| `/groundwork:groundwork-help` | — | Show all commands and skills | Quick reference |
+| `/groundwork:groundwork-help` | — | Show all skills | Quick reference |
 
 ## Model Recommendations
 
-Skills vary in complexity. The table below lists the minimum model tier recommended for each command. Running a command below its recommended tier may produce lower-quality results or hit context limits.
+Skills vary in complexity. The table below lists the minimum model tier recommended for each skill. Running a skill below its recommended tier may produce lower-quality results or hit context limits.
 
-| Tier | Minimum Model | Commands |
+| Tier | Minimum Model | Skills |
 |------|---------------|----------|
 | **Opus (1M)** | Opus at high effort | `/groundwork:design-product`, `/groundwork:design-architecture`, `/groundwork:ux-design`, `/groundwork:create-tasks`, `/groundwork:debug`, `/groundwork:swarm-debug`, `/groundwork:swarm-design-architecture` |
 | **Sonnet+** | Sonnet or Opus at high effort | `/groundwork:work-on`, `/groundwork:work-on-next-task`, `/groundwork:just-do-it`, `/groundwork:just-do-it-swarming`, `/groundwork:build-unplanned`, `/groundwork:validate`, `/groundwork:check-specs-alignment`, `/groundwork:review-pr`, `/groundwork:source-product-specs-from-code`, `/groundwork:source-architecture-from-code`, `/groundwork:source-ux-design-from-code` |
@@ -420,14 +420,14 @@ projects:
 
 ### Switching Projects
 
-Use `/groundwork:select-project` to switch between projects. This sets the active project context so all planning, implementation, and sync commands operate on the correct project. Selection persists across sessions.
+Use `/groundwork:select-project` to switch between projects. This sets the active project context so all planning, implementation, and sync skills operate on the correct project. Selection persists across sessions.
 
 You can also pass a project name directly: `/groundwork:select-project api-server`
 
 ### How It Works
 
 - Specs are stored per-project: `<project-path>/specs/`
-- All planning, implementation, and sync commands are monorepo-aware
+- All planning, implementation, and sync skills are monorepo-aware
 - Project selection persists across sessions via `.groundwork.local` at the repo root (gitignored)
 - Environment variables: `GROUNDWORK_PROJECT` (project name), `GROUNDWORK_PROJECT_ROOT` (absolute path)
 

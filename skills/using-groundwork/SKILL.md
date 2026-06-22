@@ -64,17 +64,17 @@ These thoughts mean STOP—you're rationalizing:
 | "I'll just do this one thing first" | Check BEFORE doing anything. |
 | "This feels productive" | Undisciplined action wastes time. Skills prevent this. |
 | "I know what that means" | Knowing the concept ≠ using the skill. Invoke it. |
-| "I'll just start working on the task" | Task execution REQUIRES the execute-task skill. Invoke it first. |
-| "Let me implement this task" | Always invoke execute-task skill - it handles worktree isolation. |
+| "I'll just start working on the task" | Task execution REQUIRES the work-on skill. Invoke it first. |
+| "Let me implement this task" | Always invoke work-on skill - it handles worktree isolation. |
 
 ## Skill Priority
 
 When multiple skills could apply, use this order:
 
-1. **Process skills first** (product-design, architecture) - these determine HOW to approach the task
+1. **Process skills first** (design-product, design-architecture) - these determine HOW to approach the task
 2. **Implementation skills second** (tasks, test-driven-development) - these guide execution
 
-"Let's build X" -> product-design first, then implementation skills.
+"Let's build X" -> design-product first, then implementation skills.
 
 ## Skill Types
 

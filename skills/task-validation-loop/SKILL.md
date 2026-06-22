@@ -40,7 +40,7 @@ If the user selects "Cancel — I'll switch first": output the switching command
 
 1. **Monorepo check:** Does `.groundwork.yml` exist at the repo root?
    - If yes → Is `{{project_name}}` non-empty?
-     - If empty → Invoke `Skill(skill="groundwork:project-selector")` to select a project, then restart this skill.
+     - If empty → Invoke `Skill(skill="groundwork:select-project")` to select a project, then restart this skill.
      - If set → Project is `{{project_name}}`, specs at `{{specs_dir}}/`.
    - If no → Continue (single-project repo).
 2. **CWD mismatch check (monorepo only):**
@@ -52,7 +52,7 @@ If the user selects "Cancel — I'll switch first": output the switching command
      > "You're working from `<cwd>` (inside **[cwd-project]**), but the selected Groundwork project is **[selected-project]** (`[selected-project-path]/`). What would you like to do?"
      > - "Switch to [cwd-project]"
      > - "Stay with [selected-project]"
-     If the user switches, invoke `Skill(skill="groundwork:project-selector")`.
+     If the user switches, invoke `Skill(skill="groundwork:select-project")`.
    - If CWD doesn't match any project → proceed without warning (shared directory).
 3. Proceed with the resolved project context. All `{{specs_dir}}/` paths will resolve to the correct location.
 

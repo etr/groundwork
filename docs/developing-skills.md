@@ -32,8 +32,21 @@ description: Use when [condition] - [what it does]
 | Field | Required | Description |
 |-------|----------|-------------|
 | `name` | Yes | Lowercase with hyphens (e.g., `my-skill`) |
-| `description` | Yes | Must start with "Use when..." |
+| `description` | Yes | When the skill applies + what it does (also shown in slash autocomplete) |
 | `requires` | No | Comma-separated list of skill dependencies |
+| `argument-hint` | No | Hint shown in `/groundwork:<name>` autocomplete (e.g. `"[task-number]"`) |
+| `allowed-tools` | No | Pre-approves tools for the skill (e.g. `["Read", "Bash", "Skill"]`) |
+| `disable-model-invocation` | No | `true` = user-only slash; blocks model auto-trigger **and** `Skill()` calls from other skills. Use only on leaf skills nothing else invokes. |
+| `user-invocable` | No | `false` = hidden from the slash menu but still callable by the model / other skills (library tier). Default `true`. |
+| `model` | No | Override the model when this skill is active |
+
+#### Invocation tiers
+
+| Tier | Frontmatter | User slash | Model auto | Callable by other skills |
+|------|-------------|:--:|:--:|:--:|
+| User workflow (leaf) | `disable-model-invocation: true` | ✅ | ❌ | ❌ |
+| Chain / dual | *(defaults)* | ✅ | ✅ | ✅ |
+| Hidden library | `user-invocable: false` | ❌ | ✅ | ✅ |
 
 ## Writing Good Descriptions
 

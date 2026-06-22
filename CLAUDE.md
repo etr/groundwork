@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Groundwork is a Claude Code plugin that provides a skills library for structured development workflows. It contains 32 skills and 27 commands for planning, TDD, debugging, and synchronization.
+Groundwork is a Claude Code plugin that provides a skills library for structured development workflows. It contains 32 skills for planning, TDD, debugging, and synchronization. Every capability is a skill; there is no separate commands layer (skills are both user-invocable via `/groundwork:<name>` and, where appropriate, model-invocable).
 
 ## Project Structure
 
@@ -13,12 +13,11 @@ This is a **Claude Code plugin**, not a traditional software project. No build s
 ```
 groundwork/
 ├── .claude-plugin/plugin.json  # Plugin manifest
-├── skills/                     # Markdown-based workflow skills (SKILL.md files)
-├── commands/                   # User-invoked slash commands
+├── skills/                     # Markdown-based workflow skills (SKILL.md files) — the only entry-point layer
 ├── agents/                     # Subagent definitions (AGENT.md files)
 ├── hooks/                      # Event-driven automation (SessionStart, PreCompact)
 ├── lib/                        # JavaScript utilities
-├── references/                 # Runtime reference files loaded by skills/commands/agents
+├── references/                 # Runtime reference files loaded by skills/agents
 └── docs/                       # User-facing documentation
 ```
 
@@ -29,21 +28,29 @@ groundwork/
 ---
 name: skill-name
 description: Use when [condition] - [what it does]
-requires: optional-skill-1, optional-skill-2
+requires: optional-skill-1, optional-skill-2   # optional skill dependencies
+argument-hint: "[optional-args]"               # optional, shown in slash autocomplete
+allowed-tools: Bash(specific:*), Grep, Read    # optional, pre-approves tools
+disable-model-invocation: true                 # optional, see invocation table below
+user-invocable: false                          # optional, see invocation table below
 ---
 [Skill content in markdown]
 ```
 
 The optional `requires` field declares skill dependencies. These are validated by `lib/validate-plugin.js`.
 
-### Commands (`commands/<name>.md`)
-```markdown
----
-allowed-tools: Bash(specific:*), Grep, Read
-argument-hint: "[optional-args]"
----
-[Command implementation]
-```
+#### Invocation control
+
+Skills replaced the old commands layer. Three tiers, set via frontmatter:
+
+| Tier | `user-invocable` | `disable-model-invocation` | User slash | Model auto | Callable by other skills | Examples |
+|------|:--:|:--:|:--:|:--:|:--:|----------|
+| **User workflow** (leaf) | (default) | `true` | ✅ | ❌ | ❌ | `design-product`, `create-tasks`, `review-pr` |
+| **Chain / dual** | (default) | (default) | ✅ | ✅ | ✅ | `debug`, `work-on`, `plan-task`, `validate` |
+| **Hidden library** | `false` | (default) | ❌ | ✅ | ✅ | `test-driven-development`, `use-git-worktree` |
+
+> **Important:** `disable-model-invocation: true` also blocks programmatic `Skill()` calls from
+> other skills. Never put it on a skill that appears in another skill's orchestration chain.
 
 ## Development Workflow
 
@@ -56,9 +63,9 @@ argument-hint: "[optional-args]"
 ### Adding a New Skill
 
 1. Create `skills/<skill-name>/SKILL.md`
-2. Add YAML frontmatter with `name` and `description`
+2. Add YAML frontmatter with `name` and `description`; set the invocation tier (see table above)
 3. Write the skill content following existing patterns
-4. Test with `/skill-name` or the Skill tool
+4. Test with `/groundwork:<skill-name>` or the Skill tool
 
 ### Hook Events
 
