@@ -48,6 +48,8 @@ Groundwork skills and agents can be installed into other AI coding tools using t
 | [Codex CLI](https://github.com/openai/codex) | `--codex` | Agents are installed as skills with a `review-` prefix |
 | [OpenCode](https://github.com/opencode-ai/opencode) | `--opencode` | Agents are installed as standalone agent files |
 | [Kiro](https://kiro.dev) | `--kiro` | Agents use JSON config + prompt file pairs |
+| Pi | `--pi` | Agents install as `review-`prefixed skills, plus a pre-built TypeScript extension (`pi-extension/`) |
+| Claude Code | `--claude-code` | Recommends the marketplace install (no transformation needed) |
 
 #### Installation
 
@@ -187,6 +189,17 @@ Define what to build and how to build it.
 | `/groundwork:create-tasks` | `[filter]` | Generate implementation tasks from PRD + architecture | After specs exist, ready to plan implementation |
 | `/groundwork:setup-repo` | — | Configure repo — detect single-project or monorepo | First time using Groundwork in a repo |
 
+### Design & Engineering Techniques
+
+Sharpen a design or de-risk an approach before committing to it.
+
+| Skill | Args | Description | When to Use |
+|---------|------|-------------|-------------|
+| `/groundwork:domain-modeling` | — | Build and maintain a pure domain glossary | Project lacks shared, agreed terminology |
+| `/groundwork:design-it-twice` | — | Generate 2–3 divergent interface designs and compare on depth/locality/seam | Before committing to a non-trivial module, service boundary, or public API |
+| `/groundwork:doubt-driven-development` | — | Adversarially refute the chosen approach before building | High-stakes/hard-to-reverse change — migrations, auth, payments, destructive ops |
+| `/groundwork:vertical-slice` | — | Structure work as thin, end-to-end, independently-shippable slices behind a flag | Feature large enough to span multiple layers |
+
 ### Implementation Skills
 
 Execute tasks and build features.
@@ -228,6 +241,16 @@ Review pull requests with multi-agent analysis. Requires `gh` (GitHub CLI).
 |---------|------|-------------|-------------|
 | `/groundwork:review-pr` | `[PR# or URL] [--no-interactive]` | Multi-agent PR review with inline GitHub comments | Reviewing PRs before merge |
 
+### Shipping Skills
+
+Make a change observable and roll it out safely.
+
+| Skill | Args | Description | When to Use |
+|---------|------|-------------|-------------|
+| `/groundwork:instrument-observability` | — | Add structured logging, RED metrics, trace spans, and symptom-based alerts | While building a change, before an incident proves it was unobservable |
+| `/groundwork:staged-rollout` | — | Roll out behind a feature flag with a monitoring window and written rollback plan | Before shipping anything user-facing |
+| `/groundwork:ship` | — | Sequence observability + staged rollout behind a final go/no-go gate | Ready to ship a validated change to production |
+
 ### Synchronization Skills
 
 Keep specs in sync with what was actually built. Run these at the end of a session when implementation diverged from the original plan.
@@ -246,6 +269,7 @@ Plugin management and reference.
 
 | Skill | Args | Description | When to Use |
 |---------|------|-------------|-------------|
+| `/groundwork:handoff` | `[focus]` | Produce a compact handoff document transferring context, state, and next objective | Ending a session or passing work to another agent |
 | `/groundwork:skills` | — | List all available Groundwork skills | Discovering available capabilities |
 | `/groundwork:groundwork-check` | — | Validate plugin installation | Troubleshooting issues |
 | `/groundwork:groundwork-help` | — | Show all skills | Quick reference |
@@ -256,9 +280,9 @@ Skills vary in complexity. The table below lists the minimum model tier recommen
 
 | Tier | Minimum Model | Skills |
 |------|---------------|----------|
-| **Opus (1M)** | Opus at high effort | `/groundwork:design-product`, `/groundwork:design-architecture`, `/groundwork:ux-design`, `/groundwork:create-tasks`, `/groundwork:debug`, `/groundwork:swarm-debug`, `/groundwork:swarm-design-architecture` |
-| **Sonnet+** | Sonnet or Opus at high effort | `/groundwork:work-on`, `/groundwork:work-on-next-task`, `/groundwork:just-do-it`, `/groundwork:just-do-it-swarming`, `/groundwork:build-unplanned`, `/groundwork:validate`, `/groundwork:check-specs-alignment`, `/groundwork:review-pr`, `/groundwork:source-product-specs-from-code`, `/groundwork:source-architecture-from-code`, `/groundwork:source-ux-design-from-code` |
-| **Any** | No requirement | `/groundwork:setup-repo`, `/groundwork:select-project`, `/groundwork:skills`, `/groundwork:groundwork-help`, `/groundwork:groundwork-check` |
+| **Opus (1M)** | Opus at high effort | `/groundwork:design-product`, `/groundwork:design-architecture`, `/groundwork:ux-design`, `/groundwork:create-tasks`, `/groundwork:debug`, `/groundwork:swarm-debug`, `/groundwork:swarm-design-architecture`, `/groundwork:design-it-twice`, `/groundwork:doubt-driven-development` |
+| **Sonnet+** | Sonnet or Opus at high effort | `/groundwork:work-on`, `/groundwork:work-on-next-task`, `/groundwork:just-do-it`, `/groundwork:just-do-it-swarming`, `/groundwork:build-unplanned`, `/groundwork:validate`, `/groundwork:check-specs-alignment`, `/groundwork:review-pr`, `/groundwork:source-product-specs-from-code`, `/groundwork:source-architecture-from-code`, `/groundwork:source-ux-design-from-code`, `/groundwork:domain-modeling`, `/groundwork:vertical-slice`, `/groundwork:instrument-observability`, `/groundwork:staged-rollout`, `/groundwork:ship` |
+| **Any** | No requirement | `/groundwork:setup-repo`, `/groundwork:select-project`, `/groundwork:handoff`, `/groundwork:skills`, `/groundwork:groundwork-help`, `/groundwork:groundwork-check` |
 
 ## Workflows
 
@@ -437,15 +461,16 @@ For contributors and curious users — how the plugin works under the hood.
 
 ### Agents
 
-Agents are specialized sub-processes that run verification and validation tasks. They are invoked automatically by skills like `validation-loop`, `task-validation-loop`, and `pr-reviewing`.
+Agents are specialized sub-processes that run verification and validation tasks. They are invoked automatically by skills like `validate`, `task-validation-loop`, and `review-pr`.
 
-#### Implementation Verification (10 agents)
+#### Implementation Verification (11 agents)
 
-These run after task implementation via the `validation-loop` skill:
+These run after task implementation via the `validate` skill:
 
 | Agent | Description |
 |-------|-------------|
 | `code-quality-reviewer` | Reviews code for quality, readability, elegance, and test coverage |
+| `conventions-reviewer` | Reviews changes against project-specific conventions documented in `CLAUDE.md` files |
 | `test-quality-reviewer` | Reviews test quality — structural correctness, coverage completeness, redundancy, best practices |
 | `security-reviewer` | Reviews for security vulnerabilities — OWASP Top 10, input validation, auth issues |
 | `spec-alignment-checker` | Verifies implementation aligns with task definition and product specs |
@@ -477,6 +502,12 @@ These run after task list creation via the `task-validation-loop` skill:
 | Agent | Description |
 |-------|-------------|
 | `task-executor` | Executes task implementation with worktree isolation, TDD, and skill preloading |
+
+#### Validation Fixing (1 agent)
+
+| Agent | Description |
+|-------|-------------|
+| `validation-fixer` | Fixes findings from reviewer agents — TDD for behavioral fixes, direct changes for cosmetic ones; reports files touched and findings addressed |
 
 #### Research (1 agent)
 
