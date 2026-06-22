@@ -54,82 +54,11 @@ Check that code uses design tokens instead of hardcoded values:
 
 ### 2. Accessibility Compliance
 
-#### Accessibility Review Checklist
+Read `${CLAUDE_PLUGIN_ROOT}/references/checklists/accessibility.md` — the authoritative WCAG 2.1 AA criteria for this review, and the single source the `ux-design` skill produces against. Apply it in full; do not restate it here. Accessibility failures (no focus state, contrast failure, missing label) are **critical** — they lock real users out. Section 3 below adds only the design-system-specific specs and the concrete code patterns to flag.
 
-Authoritative criteria for accessibility review, targeting **WCAG 2.1 Level AA**. Accessibility failures (no focus state, contrast failure, missing label) are critical — they lock real users out, not just degrade polish.
+### 3. Design-System Accessibility Specs & Code Patterns to Flag
 
-##### WCAG 2.1 AA — The Four Principles
-
-- **Perceivable** — text alternatives for non-text content; captions/transcripts for media; sufficient contrast; content adapts to 320px width and 200% zoom without loss
-- **Operable** — everything works by keyboard; no keyboard traps; no seizure-inducing flashing (>3/sec); skip links; visible focus
-- **Understandable** — predictable navigation; inputs labeled; errors identified with suggestions; consistent components
-- **Robust** — valid semantic HTML; ARIA used correctly; works with assistive tech
-
-##### Keyboard Navigation
-
-- [ ] Every interactive element is reachable and operable by keyboard alone (Tab, Enter, Space, arrows, Esc)
-- [ ] Tab order is logical and follows visual/reading order; no positive `tabindex` (`tabindex` is only `0` or `-1`)
-- [ ] No keyboard traps — focus can always move away (esp. modals, embeds, custom widgets)
-- [ ] Component groups (tabs, menus, radios, listboxes) use roving tabindex, not one stop per item
-- [ ] Skip-to-main-content link present for pages with repeated nav
-- [ ] No `onClick` on `<div>`/`<span>` without `role`, `tabindex="0"`, and a key handler — prefer `<button>`/`<a>`
-
-##### Screen Reader / ARIA
-
-- [ ] Semantic HTML first: `<button>`, `<a href>`, `<nav>`, `<main>`, `<h1>`–`<h6>` in order, `<table>` for tabular data
-- [ ] ARIA only when native semantics are insufficient — "no ARIA is better than bad ARIA"
-- [ ] Icon-only buttons/links have an accessible name (`aria-label` or visually-hidden text)
-- [ ] Images: meaningful ones have descriptive `alt`; decorative ones have `alt=""` or `aria-hidden="true"`
-- [ ] `alt` describes content/function, not the medium (`alt="image"`/`"icon"`/`"logo"` is a fail)
-- [ ] Dynamic updates announced via `aria-live` (`polite`/`assertive`) regions
-- [ ] ARIA roles/states valid and kept in sync (`aria-expanded`, `aria-selected`, `aria-checked`, `aria-disabled`)
-- [ ] `aria-hidden="true"` never on a focusable element
-
-##### Color & Contrast
-
-- [ ] Normal text ≥ **4.5:1**; large text (≥ 18.66px bold or 24px) ≥ **3:1**
-- [ ] UI components and graphical objects (icons, input borders, focus rings) ≥ **3:1** against adjacent colors
-- [ ] Information is never conveyed by color alone (add icon, text, or pattern — e.g. error state)
-- [ ] Semantic colors (error/warning/success) checked against their backgrounds, including dark mode
-
-##### Focus Management
-
-- [ ] Every interactive element has a visible focus indicator; never `outline: none` without a replacement
-- [ ] Focus indicator ≥ 3:1 contrast, with offset, not relying on color change alone
-- [ ] Use `:focus-visible` (keyboard) rather than bare `:focus` (also fires on mouse click)
-- [ ] Modals/dialogs: trap focus inside, move focus in on open, return focus to the trigger on close
-- [ ] Background made inert (`inert` / `aria-hidden`) while a modal is open
-- [ ] Route changes / new content move focus to a sensible target (heading or main region)
-
-##### Forms & Labels
-
-- [ ] Every input has a programmatically associated `<label>` (`for`/`id` or wrapping) — placeholder is **not** a label
-- [ ] Related controls grouped with `<fieldset>` + `<legend>` (radio/checkbox groups)
-- [ ] Required fields and constraints communicated in text, not color/asterisk alone
-- [ ] Errors: identified in text, tied to the field (`aria-describedby`), and offer a fix suggestion
-- [ ] Error summary on submit moves focus to itself / first invalid field
-- [ ] Autocomplete attributes on common fields (`autocomplete="email"`, etc.)
-- [ ] Touch targets ≥ 44×44px (or small visual + enlarged hit area)
-
-##### Structure & Media
-
-- [ ] One `<h1>`; headings nest without skipping levels
-- [ ] Page has a descriptive `<title>` and `lang` attribute on `<html>`
-- [ ] Viewport meta allows zoom — no `user-scalable=no` or `maximum-scale=1`
-- [ ] Body/reading text ≥ 16px; layout survives 200% zoom and 320px width
-- [ ] `prefers-reduced-motion` honored — every animation/transition has a reduced-motion path
-- [ ] Video/audio has captions/transcripts; no autoplay with sound
-
-##### Testing Tools
-
-- **Automated (catches ~30–40%):** axe-core / `@axe-core/playwright`, Lighthouse a11y audit, `eslint-plugin-jsx-a11y`, Pa11y, WAVE
-- **Manual contrast:** browser DevTools contrast checker, WebAIM Contrast Checker
-- **Keyboard:** unplug the mouse — Tab/Shift+Tab/Enter/Space/Esc/arrows through the whole flow
-- **Screen readers:** VoiceOver (macOS/iOS), NVDA (Windows), TalkBack (Android), Orca (Linux)
-- **Zoom/reflow:** 200% browser zoom and 320px-wide viewport
-> Automated tools never prove accessibility — they only flag a subset. Manual keyboard + screen-reader passes are required for real coverage.
-
-### 3. Further accessibility criteria based on design_system.md
+Generic WCAG criteria live in `accessibility.md` (referenced in §2). This section adds the project-specific specs (from `design_system.md`) and the concrete ❌/✅ code patterns to flag in review.
 
 **Focus States:**
 - All interactive elements must have visible focus indicators
@@ -145,17 +74,6 @@ Authoritative criteria for accessibility review, targeting **WCAG 2.1 Level AA**
 - For AA: 4.5:1 normal text, 3:1 large text
 - For AAA: 7:1 normal text, 4.5:1 large text
 - Check semantic colors (error, warning) also meet requirements
-
-**Keyboard Navigation:**
-- All interactive elements reachable by keyboard
-- Logical tab order (no tabindex > 0)
-- Skip links for main content if applicable
-
-**Screen Reader Support:**
-- Images have alt text (or aria-hidden if decorative)
-- Form inputs have associated labels
-- ARIA labels for icon-only buttons
-- Dynamic content uses aria-live regions
 
 **Labels and Placeholders:**
 - ❌ `<input placeholder="Email address">` without a `<label>` element
