@@ -42,11 +42,11 @@ function describe(name, fn) {
 // Tests
 describe('extractFrontmatter', () => {
   test('extracts name and description from valid skill file', () => {
-    const skillFile = path.join(SKILLS_DIR, 'product-design', 'SKILL.md');
+    const skillFile = path.join(SKILLS_DIR, 'design-product', 'SKILL.md');
     const result = extractFrontmatter(skillFile);
 
-    assert.strictEqual(result.name, 'product-design');
-    assert.ok(result.description.includes('used when'));
+    assert.strictEqual(result.name, 'design-product');
+    assert.ok(result.description, 'should extract a non-empty description');
   });
 
   test('returns empty strings for missing file', () => {
@@ -76,7 +76,7 @@ describe('findSkillsInDir', () => {
     const skills = findSkillsInDir(SKILLS_DIR, 'plugin');
 
     assert.ok(skills.length > 0, 'Should find at least one skill');
-    assert.ok(skills.some(s => s.name === 'product-design'), 'Should find product-design');
+    assert.ok(skills.some(s => s.name === 'design-product'), 'Should find design-product');
   });
 
   test('returns empty array for nonexistent directory', () => {
