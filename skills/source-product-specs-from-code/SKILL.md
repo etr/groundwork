@@ -14,8 +14,8 @@ Keeps `{{specs_dir}}/product_specs.md` synchronized with product decisions made 
 
 **Your current effort level is `{{effort_level}}`.**
 
-Skip this step silently if effort is `high` or higher AND you are Sonnet or Opus.
-If effort is below `high`, you MUST show the recommendation prompt — regardless of model.
+Skip this step silently if effort is `high`, `xhigh`, or `max` (the scale is `low` < `medium` < `high` < `xhigh` < `max`, so `xhigh` and `max` are already above `high`) AND you are Sonnet or Opus.
+If effort is `low` or `medium` (i.e. below `high`), you MUST show the recommendation prompt — regardless of model.
 If you are not Sonnet or Opus, you MUST show the recommendation prompt - regardless of effort level.
 
 Otherwise → use `AskUserQuestion`:

@@ -22,8 +22,8 @@ This skill orchestrates long multi-agent workflows. Every turn re-reads the full
 
 **Your current effort level is `{{effort_level}}`.**
 
-Skip this step silently if effort is `high` or higher AND you are Sonnet or Opus.
-If effort is below `high`, you MUST show the recommendation prompt — regardless of model.
+Skip this step silently if effort is `high`, `xhigh`, or `max` (the scale is `low` < `medium` < `high` < `xhigh` < `max`, so `xhigh` and `max` are already above `high`) AND you are Sonnet or Opus.
+If effort is `low` or `medium` (i.e. below `high`), you MUST show the recommendation prompt — regardless of model.
 If you are not Sonnet or Opus, you MUST show the recommendation prompt — regardless of effort level.
 
 Otherwise → use `AskUserQuestion`:
@@ -108,14 +108,16 @@ If session context contains `GROUNDWORK_BATCH_MODE=true`, batch mode is active. 
 Call `Skill(skill="groundwork:plan-task")` with the task ID from Step 1 in the conversation context.
 
 **Parse the output:**
-- `RESULT: PLANNED | plan_file_path=<path> | identifier=<id> | branch_prefix=<prefix>` → Save `plan_file_path`, `identifier`, `branch_prefix`. Proceed.
+- `RESULT: PLANNED | plan_file_path=<path> | identifier=<id> | branch_prefix=<prefix>` → Save `plan_file_path`, `identifier`, `branch_prefix`, then **continue to Step 2.5 in this same turn**.
 - `RESULT: FAILURE | ...` → Report failure. In batch mode output `RESULT: FAILURE | [TASK-NNN] <reason>` and stop. In interactive mode, report the failure and stop.
+
+> **Do NOT stop after planning.** Planning is only the first of three phases in `work-on`. The "DO NOT proceed past this step" note inside `plan-task` applies to `plan-task` itself, not to this orchestrator — when control returns here with `RESULT: PLANNED`, you are NOT done. Never end your turn on a bare plan summary; the very next action after a successful plan is the Step 2.5 question.
 
 ### Step 2.5: Confirm Start (Interactive Only)
 
 **Batch mode (GROUNDWORK_BATCH_MODE=true):** Skip to Step 3.
 
-**Interactive mode:** Use `AskUserQuestion`:
+**Interactive mode:** This question is **mandatory** — if you reached here with a plan, you must ask it rather than stopping. Use `AskUserQuestion`:
 
 > "[TASK-NNN] [Title] — plan ready. Proceed to implementation?"
 > - Option 1: "Yes, begin implementation"
