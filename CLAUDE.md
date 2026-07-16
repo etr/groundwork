@@ -53,7 +53,7 @@ Skills replaced the old commands layer. Three tiers, set via frontmatter:
 
 | Tier | `user-invocable` | `disable-model-invocation` | User slash | Model auto | Callable by other skills | Examples |
 |------|:--:|:--:|:--:|:--:|:--:|----------|
-| **User workflow** (leaf) | (default) | `true` | ✅ | ❌ | ❌ | `design-product`, `create-tasks`, `review-pr` |
+| **User workflow** (leaf) | (default) | `true` | ✅ | ❌ | ❌ | `just-do-it`, `ship`, `review-pr` |
 | **Chain / dual** | (default) | (default) | ✅ | ✅ | ✅ | `debug`, `work-on`, `plan-task`, `validate` |
 | **Hidden library** | `false` | (default) | ❌ | ✅ | ✅ | `test-driven-development`, `use-git-worktree` |
 

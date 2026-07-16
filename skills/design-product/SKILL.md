@@ -3,7 +3,6 @@ name: design-product
 description: Create detailed product requirements document (PRD) for a feature. Usage /groundwork:design-product
 argument-hint: "[product-name]"
 allowed-tools: ["Read", "Edit", "Write", "Glob", "Grep", "Task", "Skill"]
-disable-model-invocation: true
 ---
 
 # Product Design Skill
