@@ -223,6 +223,43 @@ describe('exported output is free of Claude-Code-only leakage', () => {
   }
 });
 
+describe('Codex model recommendations', () => {
+  test('translates Claude model recommendations to Codex equivalents', () => {
+    const root = runInstaller('codex');
+    if (root === null) return;
+    try {
+      const debug = fs.readFileSync(
+        path.join(root, '.codex', 'skills', 'groundwork-debug', 'SKILL.md'),
+        'utf8'
+      );
+      assert.ok(debug.includes('Sol at high effort'));
+      assert.ok(debug.includes('/model sol'));
+      assert.ok(!debug.includes('Opus (1M context)'));
+      assert.ok(!debug.includes('/model opus[1m]'));
+
+      const workOn = fs.readFileSync(
+        path.join(root, '.codex', 'skills', 'groundwork-work-on', 'SKILL.md'),
+        'utf8'
+      );
+      assert.ok(workOn.includes('Terra or Sol at high effort'));
+      assert.ok(workOn.includes('/model terra'));
+      assert.ok(workOn.includes('if on Luna'));
+      assert.ok(!workOn.includes('Sonnet or Opus'));
+      assert.ok(!workOn.includes('/model sonnet'));
+      assert.ok(!workOn.includes('Haiku'));
+
+      const codexSkills = allFiles(path.join(root, '.codex', 'skills'));
+      const claudeModels = /\b(?:Opus|Sonnet|Haiku|Fable)\b|opus\[1m\]/;
+      const offenders = codexSkills.filter((file) =>
+        claudeModels.test(fs.readFileSync(file, 'utf8'))
+      );
+      assert.deepStrictEqual(offenders, [], 'Codex export retained Claude model names');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
 // --- Summary ---
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exitCode = 1;

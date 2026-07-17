@@ -306,6 +306,23 @@ transform_frontmatter() {
 transform_body() {
     local target="$1" content="$2"
 
+    # Codex model names differ from Claude Code's. Keep source recommendations
+    # native to Claude Code and translate only the Codex export.
+    if [[ "$target" == "codex" ]]; then
+        content=$(echo "$content" | sed \
+            -e 's|Sonnet or Opus|Terra or Sol|g' \
+            -e 's|sonnet or opus|terra or sol|g' \
+            -e 's|Opus (1M context)|Sol|g' \
+            -e 's|opus\[1m\]|sol|g' \
+            -e 's|Haiku|Luna|g' \
+            -e 's|haiku|luna|g' \
+            -e 's|Sonnet|Terra|g' \
+            -e 's|sonnet|terra|g' \
+            -e 's|Opus|Sol|g' \
+            -e 's|opus|sol|g'
+        )
+    fi
+
     # Pi-specific tool name transforms (run before shared pipeline)
     if [[ "$target" == "pi" ]]; then
         content=$(echo "$content" | sed \
