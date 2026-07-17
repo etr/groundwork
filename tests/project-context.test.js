@@ -65,35 +65,6 @@ function runCli(repo, env, ...args) {
 }
 
 describe('project context CLI', () => {
-  test('Codex selection persists under CODEX_HOME and resolves template bindings', () => {
-    const repo = makeMonorepo();
-    const codexHome = path.join(repo, 'codex-home');
-    fs.mkdirSync(codexHome);
-    const env = { ...process.env, CODEX_HOME: codexHome };
-
-    try {
-      const selected = JSON.parse(execFileSync(
-        'node', [CLI, 'select', 'web', '--harness', 'codex'],
-        { cwd: repo, env, encoding: 'utf8' }
-      ));
-      assert.strictEqual(selected.project_name, 'web');
-      assert.strictEqual(selected.project_root, 'apps/web');
-      assert.strictEqual(selected.specs_dir, 'apps/web/specs');
-      assert.ok(selected.state_file.startsWith(path.join(codexHome, 'groundwork-state')));
-      assert.ok(fs.existsSync(selected.state_file));
-
-      const resolved = JSON.parse(execFileSync(
-        'node', [CLI, 'resolve', '--harness', 'codex'],
-        { cwd: repo, env, encoding: 'utf8' }
-      ));
-      assert.strictEqual(resolved.selection_required, false);
-      assert.strictEqual(resolved.project_name, 'web');
-      assert.strictEqual(resolved.specs_dir, 'apps/web/specs');
-    } finally {
-      fs.rmSync(repo, { recursive: true, force: true });
-    }
-  });
-
   const harnessCases = [
     ['claude', 'CLAUDE_CONFIG_DIR', 'claude-config'],
     ['codex', 'CODEX_HOME', 'codex-home'],
@@ -114,8 +85,18 @@ describe('project context CLI', () => {
 
       try {
         const selected = runCli(repo, env, 'select', 'web', '--harness', harness);
+        assert.strictEqual(selected.harness, harness);
+        assert.strictEqual(selected.project_name, 'web');
+        assert.strictEqual(selected.project_root, 'apps/web');
+        assert.strictEqual(selected.specs_dir, 'apps/web/specs');
         assert.ok(selected.state_file.startsWith(path.join(override, 'groundwork-state')));
         assert.ok(fs.existsSync(selected.state_file));
+
+        const resolved = runCli(repo, env, 'resolve', '--harness', harness);
+        assert.strictEqual(resolved.selection_required, false);
+        assert.strictEqual(resolved.project_name, 'web');
+        assert.strictEqual(resolved.project_root, 'apps/web');
+        assert.strictEqual(resolved.specs_dir, 'apps/web/specs');
       } finally {
         fs.rmSync(repo, { recursive: true, force: true });
       }
@@ -232,6 +213,60 @@ describe('project context CLI', () => {
       }
     });
   }
+
+  test('select fails when the harness state cannot be persisted', () => {
+    const repo = makeMonorepo();
+    const home = path.join(repo, 'home');
+    const codexHome = path.join(repo, 'codex-home');
+    fs.mkdirSync(home);
+    fs.writeFileSync(codexHome, 'not a directory');
+    const env = cleanEnv(home);
+    env.CODEX_HOME = codexHome;
+
+    try {
+      const result = spawnSync(
+        'node', [CLI, 'select', 'web', '--harness', 'codex'],
+        { cwd: repo, env, encoding: 'utf8' }
+      );
+      assert.notStrictEqual(result.status, 0);
+      assert.strictEqual(result.stdout, '');
+      assert.ok(result.stderr.includes('project-context error:'), result.stderr);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  test('select reuses repository metadata within the CLI process', () => {
+    const repo = makeMonorepo();
+    const home = path.join(repo, 'home');
+    const bin = path.join(repo, 'bin');
+    const countFile = path.join(repo, 'git-count');
+    const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+    fs.mkdirSync(home);
+    fs.mkdirSync(bin);
+    const gitShim = path.join(bin, 'git');
+    fs.writeFileSync(gitShim, [
+      '#!/usr/bin/env node',
+      "const fs = require('fs');",
+      "const { spawnSync } = require('child_process');",
+      "fs.appendFileSync(process.env.GROUNDWORK_GIT_COUNT, '1\\n');",
+      `const result = spawnSync(${JSON.stringify(realGit)}, process.argv.slice(2), { stdio: 'inherit' });`,
+      'process.exit(result.status === null ? 1 : result.status);',
+      '',
+    ].join('\n'));
+    fs.chmodSync(gitShim, 0o755);
+    const env = cleanEnv(home);
+    env.GROUNDWORK_GIT_COUNT = countFile;
+    env.PATH = `${bin}${path.delimiter}${env.PATH}`;
+
+    try {
+      runCli(repo, env, 'select', 'web', '--harness', 'codex');
+      const gitCalls = fs.readFileSync(countFile, 'utf8').trim().split('\n').length;
+      assert.ok(gitCalls <= 2, `expected at most 2 git calls, received ${gitCalls}`);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
 
   test('rejects a configured project whose path is missing', () => {
     const repo = makeMonorepo();

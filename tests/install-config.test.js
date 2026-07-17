@@ -261,20 +261,48 @@ describe('Codex model recommendations', () => {
 });
 
 describe('exported project context runtime', () => {
-  test('codex select-project bundles and invokes its local runtime', () => {
-    const root = runInstaller('codex');
-    if (root === null) return;
-    try {
-      const skillDir = path.join(root, '.codex', 'skills', 'groundwork-select-project');
-      const skill = fs.readFileSync(path.join(skillDir, 'SKILL.md'), 'utf8');
-      assert.ok(fs.existsSync(path.join(skillDir, 'scripts', 'project-context-cli.js')));
-      assert.ok(fs.existsSync(path.join(skillDir, 'scripts', 'project-context.js')));
-      assert.ok(skill.includes('project-context-cli.js select "<selected-name>" --harness codex'));
-      assert.ok(!skill.includes('${PLUGIN_ROOT}'));
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
+  for (const [target, targetDir, stateEnv] of [
+    ['codex', '.codex', 'CODEX_HOME'],
+    ['opencode', '.opencode', 'OPENCODE_CONFIG_DIR'],
+  ]) {
+    test(`${target} select-project bundles and executes its local runtime`, () => {
+      const root = runInstaller(target);
+      if (root === null) return;
+      try {
+        const skillDir = path.join(root, targetDir, 'skills', 'groundwork-select-project');
+        const cli = path.join(skillDir, 'scripts', 'project-context-cli.js');
+        const skill = fs.readFileSync(path.join(skillDir, 'SKILL.md'), 'utf8');
+        assert.ok(fs.existsSync(cli));
+        assert.ok(fs.existsSync(path.join(skillDir, 'scripts', 'project-context.js')));
+        assert.ok(skill.includes(`project-context-cli.js select "<selected-name>" --harness ${target}`));
+        assert.ok(!skill.includes('${PLUGIN_ROOT}'));
+
+        const repo = path.join(root, `${target}-repo`);
+        fs.mkdirSync(path.join(repo, 'apps', 'web', 'specs'), { recursive: true });
+        fs.writeFileSync(path.join(repo, '.groundwork.yml'), [
+          'version: 1', 'projects:', '  web:', '    path: apps/web', '',
+        ].join('\n'));
+        execFileSync('git', ['init', '-q'], { cwd: repo });
+        const env = { ...process.env, [stateEnv]: path.join(root, `${target}-state`) };
+
+        const selected = JSON.parse(execFileSync(
+          'node', [cli, 'select', 'web', '--harness', target],
+          { cwd: repo, env, encoding: 'utf8' }
+        ));
+        assert.strictEqual(selected.project_name, 'web');
+        assert.strictEqual(selected.specs_dir, 'apps/web/specs');
+
+        const resolved = JSON.parse(execFileSync(
+          'node', [cli, 'resolve', '--harness', target],
+          { cwd: repo, env, encoding: 'utf8' }
+        ));
+        assert.strictEqual(resolved.selection_required, false);
+        assert.strictEqual(resolved.project_name, 'web');
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    });
+  }
 
   test('codex select-project command treats a metacharacter-leading name as data', () => {
     const root = runInstaller('codex');
