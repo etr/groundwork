@@ -452,8 +452,8 @@ You can also pass a project name directly: `/groundwork:select-project api-serve
 
 - Specs are stored per-project: `<project-path>/specs/`
 - All planning, implementation, and sync skills are monorepo-aware
-- Project selection persists across sessions via `.groundwork.local` at the repo root (gitignored)
-- Environment variables: `GROUNDWORK_PROJECT` (project name), `GROUNDWORK_PROJECT_ROOT` (absolute path)
+- Project selection persists per terminal pane in the active harness's state directory (for example, `$CODEX_HOME/groundwork-state` or the corresponding Claude, OpenCode, Kiro, or Pi home)
+- Exported skills use their bundled resolver to derive the active project name, project root, and specs directory from that harness-scoped selection
 
 ## Internals
 

@@ -383,6 +383,21 @@ transform_body() {
         -e "${BODY_SED_CMDS:-.}"
 }
 
+portable_project_context_preamble() {
+    local target="$1"
+    cat <<EOF
+## Portable Project Context
+
+Before interpreting project-context placeholders in this workflow:
+
+1. Resolve the directory containing this \`SKILL.md\`.
+2. Run \`node <skill-directory>/scripts/project-context-cli.js resolve --harness ${target}\` from the repository working directory.
+3. Use the returned JSON values as the exact bindings for \`{{project_name}}\`, \`{{project_root}}\`, and \`{{specs_dir}}\` everywhere below.
+4. If \`selection_required\` is true, follow the \`groundwork-select-project\` workflow, then resolve again.
+
+EOF
+}
+
 # ============================================================
 # File writing
 # ============================================================
@@ -467,6 +482,18 @@ $inlined_deps"
         local new_fm new_body result
         new_fm=$(transform_frontmatter "$target" "skill" "$content" "$installed")
         new_body=$(transform_body "$target" "$raw_body")
+
+        local needs_project_runtime=false
+        if [[ "$skill_name" == "select-project" ]]; then
+            needs_project_runtime=true
+            new_body=$(printf '%s' "$new_body" | sed \
+                "s|node the plugin directory/lib/persist-project.js \"<selected-name>\"|node <skill-directory>/scripts/project-context-cli.js select \"<selected-name>\" --harness ${target}|")
+        fi
+        if [[ "$raw_body" == *'{{project_name}}'* || "$raw_body" == *'{{project_root}}'* || "$raw_body" == *'{{specs_dir}}'* ]]; then
+            needs_project_runtime=true
+            new_body="$(portable_project_context_preamble "$target")
+$new_body"
+        fi
         result="$new_fm
 $new_body"
 
@@ -481,6 +508,12 @@ $new_body"
         esac
 
         write_file "$dest" "$result" "skill"
+        if [[ "$needs_project_runtime" == true ]]; then
+            local runtime_dir
+            runtime_dir="$(dirname "$dest")/scripts"
+            write_file "$runtime_dir/project-context-cli.js" "$(<"$SOURCE_DIR/lib/project-context-cli.js")" "project context runtime"
+            write_file "$runtime_dir/project-context.js" "$(<"$SOURCE_DIR/lib/project-context.js")" "project context runtime"
+        fi
         ((SKILL_COUNT++)) || true
     done
 }

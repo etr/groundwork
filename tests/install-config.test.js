@@ -14,7 +14,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const assert = require('assert');
-const { execFileSync } = require('child_process');
+const { execFileSync, spawnSync } = require('child_process');
 
 const PLUGIN_ROOT = path.resolve(__dirname, '..');
 const SKILLS_DIR = path.join(PLUGIN_ROOT, 'skills');
@@ -254,6 +254,68 @@ describe('Codex model recommendations', () => {
         claudeModels.test(fs.readFileSync(file, 'utf8'))
       );
       assert.deepStrictEqual(offenders, [], 'Codex export retained Claude model names');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('exported project context runtime', () => {
+  test('codex select-project bundles and invokes its local runtime', () => {
+    const root = runInstaller('codex');
+    if (root === null) return;
+    try {
+      const skillDir = path.join(root, '.codex', 'skills', 'groundwork-select-project');
+      const skill = fs.readFileSync(path.join(skillDir, 'SKILL.md'), 'utf8');
+      assert.ok(fs.existsSync(path.join(skillDir, 'scripts', 'project-context-cli.js')));
+      assert.ok(fs.existsSync(path.join(skillDir, 'scripts', 'project-context.js')));
+      assert.ok(skill.includes('project-context-cli.js select "<selected-name>" --harness codex'));
+      assert.ok(!skill.includes('${PLUGIN_ROOT}'));
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('codex select-project command treats a metacharacter-leading name as data', () => {
+    const root = runInstaller('codex');
+    if (root === null) return;
+    try {
+      const skillDir = path.join(root, '.codex', 'skills', 'groundwork-select-project');
+      const skill = fs.readFileSync(path.join(skillDir, 'SKILL.md'), 'utf8');
+      const template = skill.split('\n').find((line) => line.includes('project-context-cli.js select'));
+      assert.ok(template, 'select-project command template is missing');
+
+      const binDir = path.join(root, 'bin');
+      const marker = path.join(root, 'injected');
+      const injectedCommand = path.join(binDir, 'pwn');
+      fs.mkdirSync(binDir);
+      fs.writeFileSync(injectedCommand, '#!/bin/sh\n: > "$MARKER"\n');
+      fs.chmodSync(injectedCommand, 0o755);
+
+      const command = template.trim()
+        .replace('<skill-directory>', skillDir)
+        .replace('<selected-name>', ';pwn');
+      spawnSync('bash', ['-c', command], {
+        cwd: root,
+        env: { ...process.env, MARKER: marker, PATH: `${binDir}:${process.env.PATH}` },
+        encoding: 'utf8',
+      });
+      assert.strictEqual(fs.existsSync(marker), false);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('codex context-aware skills bundle a resolver and explain placeholder binding', () => {
+    const root = runInstaller('codex');
+    if (root === null) return;
+    try {
+      const skillDir = path.join(root, '.codex', 'skills', 'groundwork-plan-task');
+      const skill = fs.readFileSync(path.join(skillDir, 'SKILL.md'), 'utf8');
+      assert.ok(fs.existsSync(path.join(skillDir, 'scripts', 'project-context-cli.js')));
+      assert.ok(fs.existsSync(path.join(skillDir, 'scripts', 'project-context.js')));
+      assert.ok(skill.includes('project-context-cli.js resolve --harness codex'));
+      assert.ok(skill.includes('exact bindings for `{{project_name}}`, `{{project_root}}`, and `{{specs_dir}}`'));
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
