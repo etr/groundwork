@@ -223,6 +223,58 @@ describe('exported output is free of Claude-Code-only leakage', () => {
   }
 });
 
+describe('statusline target routing', () => {
+  const targetDirs = {
+    codex: '.codex',
+    opencode: '.opencode',
+    kiro: '.kiro',
+    pi: '.pi',
+  };
+
+  for (const target of Object.keys(targetDirs)) {
+    test(`${target}: ${target === 'codex' ? 'exports' : 'omits'} groundwork-statusline`, () => {
+      const root = runInstaller(target);
+      if (root === null) return;
+      try {
+        const skill = path.join(
+          root,
+          targetDirs[target],
+          'skills',
+          'groundwork-statusline',
+          'SKILL.md'
+        );
+        assert.strictEqual(fs.existsSync(skill), target === 'codex');
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    });
+  }
+
+  test('Codex export configures and owns only the native tui.status_line field', () => {
+    const root = runInstaller('codex');
+    if (root === null) return;
+    try {
+      const skill = fs.readFileSync(
+        path.join(root, '.codex', 'skills', 'groundwork-statusline', 'SKILL.md'),
+        'utf8'
+      );
+      const expected = 'status_line = ["model-with-reasoning", "context-used", ' +
+        '"used-tokens", "five-hour-limit", "weekly-limit", "current-dir", "git-branch"]';
+
+      assert.ok(skill.includes(expected));
+      assert.ok(skill.includes('$CODEX_HOME'));
+      assert.ok(skill.includes('preserve every unrelated TOML key and table'));
+      assert.ok(skill.includes('ask the user before replacing it'));
+      assert.ok(skill.includes('already equals the exact Groundwork-owned value'));
+      assert.ok(skill.includes('remove it only when it exactly matches the Groundwork-owned value'));
+      assert.ok(!skill.includes('settings.json'));
+      assert.ok(!skill.includes('CLAUDE_PLUGIN_ROOT'));
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('Codex model recommendations', () => {
   test('translates Claude model recommendations to Codex equivalents', () => {
     const root = runInstaller('codex');
@@ -254,6 +306,56 @@ describe('Codex model recommendations', () => {
         claudeModels.test(fs.readFileSync(file, 'utf8'))
       );
       assert.deepStrictEqual(offenders, [], 'Codex export retained Claude model names');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('exports a runtime binding preamble for Codex recommendation skills', () => {
+    const root = runInstaller('codex');
+    if (root === null) return;
+    try {
+      const skillDir = path.join(root, '.codex', 'skills', 'groundwork-debug');
+      const skill = fs.readFileSync(path.join(skillDir, 'SKILL.md'), 'utf8');
+      const runtime = path.join(skillDir, 'scripts', 'runtime-context-cli.js');
+
+      assert.ok(fs.existsSync(runtime), 'Codex recommendation skill has no runtime resolver');
+      assert.ok(skill.includes('runtime-context-cli.js --harness codex'));
+      assert.ok(skill.includes('exact bindings for `{{effort_level}}` and the current model'));
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('Codex runtime resolver reads the configured model and effort', () => {
+    const root = runInstaller('codex');
+    if (root === null) return;
+    try {
+      const runtime = path.join(
+        root, '.codex', 'skills', 'groundwork-debug', 'scripts', 'runtime-context-cli.js'
+      );
+
+      const codexHome = path.join(root, 'codex-home');
+      fs.mkdirSync(codexHome);
+      fs.writeFileSync(path.join(codexHome, 'config.toml'), [
+        'model = "gpt-5.6-sol"',
+        'model_reasoning_effort = "high"',
+        '',
+        '[tui]',
+        'status_line = ["model-with-reasoning"]',
+        '',
+      ].join('\n'));
+
+      const resolved = JSON.parse(execFileSync(
+        'node', [runtime, '--harness', 'codex'],
+        {
+          cwd: root,
+          env: { ...process.env, CODEX_HOME: codexHome },
+          encoding: 'utf8',
+        }
+      ));
+      assert.strictEqual(resolved.model, 'gpt-5.6-sol');
+      assert.strictEqual(resolved.effort_level, 'high');
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

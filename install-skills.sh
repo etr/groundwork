@@ -120,6 +120,11 @@ installed_name() {
     echo "groundwork-${skill}"
 }
 
+should_export_skill() {
+    local target="$1" skill="$2"
+    [[ "$skill" != "statusline" || "$target" == "codex" ]]
+}
+
 load_config() {
     local config="$SOURCE_DIR/install-config.txt"
 
@@ -306,6 +311,10 @@ transform_frontmatter() {
 transform_body() {
     local target="$1" content="$2"
 
+    if [[ "$target" != "codex" ]]; then
+        content=$(printf '%s\n' "$content" | sed '\|/groundwork:statusline|d')
+    fi
+
     # Codex model names differ from Claude Code's. Keep source recommendations
     # native to Claude Code and translate only the Codex export.
     if [[ "$target" == "codex" ]]; then
@@ -383,6 +392,38 @@ transform_body() {
         -e "${BODY_SED_CMDS:-.}"
 }
 
+translate_statusline_body() {
+    cat <<'EOF'
+# Groundwork Statusline for Codex
+
+Use the requested action, `install` or `uninstall`. When no action was supplied, default to `install`.
+
+When `$CODEX_HOME` is set, resolve the configuration file beneath it; otherwise use `$HOME/.codex`. The resulting file is `${CODEX_HOME:-$HOME/.codex}/config.toml`. Create its parent directory and the file only when an install needs them.
+
+Groundwork owns exactly this native Codex setting:
+
+```toml
+[tui]
+status_line = ["model-with-reasoning", "context-used", "used-tokens", "five-hour-limit", "weekly-limit", "current-dir", "git-branch"]
+```
+
+## Install
+
+1. Read the existing `config.toml`, if present.
+2. If `tui.status_line` already equals the exact Groundwork-owned value, make no configuration change and report that it is installed.
+3. If another `tui.status_line` value exists, ask the user before replacing it. Stop without changing the file when they decline.
+4. Add or replace only `tui.status_line`. Keep one `[tui]` table and preserve every unrelated TOML key and table exactly as configured.
+5. Report that the native statusline is installed and will appear in a new Codex session.
+
+## Uninstall
+
+1. Read `config.toml`. If it or `tui.status_line` is absent, report that nothing is installed.
+2. During uninstall, remove it only when it exactly matches the Groundwork-owned value. If it differs, leave the foreign setting untouched and report that Groundwork does not own it.
+3. Preserve every unrelated TOML key and table. Leaving an otherwise empty `[tui]` table is safe.
+4. Report that the statusline is removed and the change will appear in a new Codex session.
+EOF
+}
+
 portable_project_context_preamble() {
     local target="$1"
     cat <<EOF
@@ -394,6 +435,20 @@ Before interpreting project-context placeholders in this workflow:
 2. Run \`node <skill-directory>/scripts/project-context-cli.js resolve --harness ${target}\` from the repository working directory.
 3. Use the returned JSON values as the exact bindings for \`{{project_name}}\`, \`{{project_root}}\`, and \`{{specs_dir}}\` everywhere below.
 4. If \`selection_required\` is true, follow the \`groundwork-select-project\` workflow, then resolve again.
+
+EOF
+}
+
+portable_runtime_context_preamble() {
+    cat <<'EOF'
+## Codex Runtime Context
+
+Before applying any model or effort recommendation in this workflow:
+
+1. Resolve the directory containing this `SKILL.md`.
+2. Run `node <skill-directory>/scripts/runtime-context-cli.js --harness codex` from the repository working directory.
+3. Use the returned `effort_level` and `model` values as the exact bindings for `{{effort_level}}` and the current model.
+4. Do not infer either value from the generic assistant family label when the resolver returns a concrete value.
 
 EOF
 }
@@ -459,6 +514,7 @@ install_skills_for_target() {
         skill_name=$(basename "$skill_dir")
         local skill_file="$skill_dir/SKILL.md"
         [[ ! -f "$skill_file" ]] && continue
+        should_export_skill "$target" "$skill_name" || continue
 
         local installed
         installed=$(installed_name "$skill_name")
@@ -481,9 +537,20 @@ $inlined_deps"
 
         local new_fm new_body result
         new_fm=$(transform_frontmatter "$target" "skill" "$content" "$installed")
-        new_body=$(transform_body "$target" "$raw_body")
+        if [[ "$target" == "codex" && "$skill_name" == "statusline" ]]; then
+            new_body=$(translate_statusline_body)
+        else
+            new_body=$(transform_body "$target" "$raw_body")
+        fi
 
         local needs_project_runtime=false
+        local needs_runtime_context=false
+        if [[ "$target" == "codex" && "$raw_body" == *'{{effort_level}}'* ]]; then
+            needs_runtime_context=true
+            new_body="$(portable_runtime_context_preamble)
+
+$new_body"
+        fi
         if [[ "$skill_name" == "select-project" ]]; then
             needs_project_runtime=true
             new_body=$(printf '%s' "$new_body" | sed \
@@ -492,6 +559,7 @@ $inlined_deps"
         if [[ "$raw_body" == *'{{project_name}}'* || "$raw_body" == *'{{project_root}}'* || "$raw_body" == *'{{specs_dir}}'* ]]; then
             needs_project_runtime=true
             new_body="$(portable_project_context_preamble "$target")
+
 $new_body"
         fi
         result="$new_fm
@@ -513,6 +581,11 @@ $new_body"
             runtime_dir="$(dirname "$dest")/scripts"
             write_file "$runtime_dir/project-context-cli.js" "$(<"$SOURCE_DIR/lib/project-context-cli.js")" "project context runtime"
             write_file "$runtime_dir/project-context.js" "$(<"$SOURCE_DIR/lib/project-context.js")" "project context runtime"
+        fi
+        if [[ "$needs_runtime_context" == true ]]; then
+            local runtime_dir
+            runtime_dir="$(dirname "$dest")/scripts"
+            write_file "$runtime_dir/runtime-context-cli.js" "$(<"$SOURCE_DIR/lib/runtime-context-cli.js")" "runtime context resolver"
         fi
         ((SKILL_COUNT++)) || true
     done

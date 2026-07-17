@@ -95,6 +95,16 @@ Identifies and works on the next unblocked task.
 - **Review regularly** - Use `/groundwork:validate` to re-run multi-agent verification after each major change
 - **Review PRs with agents** - Use `/groundwork:review-pr` to run multi-agent analysis and post inline comments to GitHub
 
+## Optional Statusline
+
+Groundwork includes an opt-in statusline workflow. Installing the plugin does not change your statusline. Run:
+
+```text
+/groundwork:statusline install
+```
+
+On Claude Code this installs Groundwork's three-line renderer. On Codex it configures the native statusline fields. Run `/groundwork:statusline uninstall` to remove only the configuration owned by Groundwork. No separate `groundwork-statusline` plugin is needed.
+
 ## Getting Help
 
 - `/groundwork:skills` - List all available skills
