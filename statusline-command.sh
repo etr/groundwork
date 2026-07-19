@@ -1,23 +1,38 @@
 #!/usr/bin/env bash
 input=$(cat)
-cwd=$(echo "$input" | jq -r '.cwd')
+
+# Parse renderer input and stable settings in one jq process. @sh keeps eval data-only.
+settings_file="$HOME/.claude/settings.json"
+[ -f "$settings_file" ] || settings_file=/dev/null
+parsed_input=$(printf '%s' "$input" | jq -r --rawfile settings "$settings_file" '
+[
+    (.cwd // ""),
+    (.model.display_name // .model.id // "unknown"),
+    (.context_window.used_percentage // ""),
+    (.context_window.context_window_size // 0),
+    (if .context_window.current_usage != null then
+        ((.context_window.current_usage.input_tokens // 0)
+         + (.context_window.current_usage.cache_creation_input_tokens // 0)
+         + (.context_window.current_usage.cache_read_input_tokens // 0))
+     else 0 end),
+    (($settings | try fromjson catch {}) | .effortLevel // "default")
+] | map(tostring | @sh) |
+"cwd=\(.[0])\nmodel=\(.[1])\nused=\(.[2])\nctx_size=\(.[3])\nctx_used_abs=\(.[4])\neffort=\(.[5])"
+' 2>/dev/null)
+eval "$parsed_input"
+: "${cwd:=}" "${model:=unknown}" "${used:=}" "${ctx_size:=0}" "${ctx_used_abs:=0}" "${effort:=default}"
 
 # -- Bells-and-whistles mute indicator ----------------------------------------
 speaker_symbol=""
-BNW_INSTALL_PATH=$(python3 - <<'PYEOF' 2>/dev/null
-import json, sys, os
-try:
-    data = json.load(open(os.path.join(os.environ['HOME'], '.claude/plugins/installed_plugins.json')))
-    plugins = data.get('plugins', {})
-    for key, entries in plugins.items():
-        if 'bells-and-whistles' in key:
-            if entries and isinstance(entries, list):
-                print(entries[0].get('installPath', ''))
-            sys.exit(0)
-except Exception:
-    pass
-PYEOF
-)
+BNW_INSTALL_PATH=""
+installed_plugins="$HOME/.claude/plugins/installed_plugins.json"
+if [ -f "$installed_plugins" ]; then
+    BNW_INSTALL_PATH=$(jq -r '
+        [.plugins | to_entries[]
+         | select(.key | contains("bells-and-whistles"))
+         | .value[0].installPath // empty][0] // empty
+    ' "$installed_plugins" 2>/dev/null)
+fi
 
 if [ -n "$BNW_INSTALL_PATH" ]; then
     MUTE_DIR=$(dirname "$BNW_INSTALL_PATH")
@@ -45,36 +60,81 @@ if [ -n "$BNW_INSTALL_PATH" ]; then
     fi
 fi
 
-# Model display name and effort level
-model=$(echo "$input" | jq -r '.model.display_name // .model.id // "unknown"')
-effort=$(jq -r '.effortLevel // "default"' ~/.claude/settings.json 2>/dev/null)
+sha1_digest() {
+    python3 -c 'import hashlib, sys; print(hashlib.sha1(sys.stdin.buffer.read()).hexdigest())'
+}
 
 # Git info
 git_info=""
 if git -C "$cwd" rev-parse --git-dir > /dev/null 2>&1; then
     git_root=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null)
-    git_repo=$(basename "$git_root")
+    git_repo=${git_root##*/}
     git_branch=$(git -C "$cwd" symbolic-ref --short HEAD 2>/dev/null || git -C "$cwd" rev-parse --short HEAD 2>/dev/null)
 
     git_pr=""
     if command -v gh > /dev/null 2>&1; then
-        pr_num=$(GIT_OPTIONAL_LOCKS=0 gh pr view --json number --jq '.number' 2>/dev/null)
-        [ -n "$pr_num" ] && git_pr="#${pr_num}"
-    fi
-
-    if [ -n "$git_pr" ]; then
-        git_info=" \033[2m(\033[0m\033[33m${git_repo}\033[0m\033[2m:\033[0m\033[96m${git_branch}\033[0m \033[35m${git_pr}\033[0m\033[2m)\033[0m"
-    else
-        git_info=" \033[2m(\033[0m\033[33m${git_repo}\033[0m\033[2m:\033[0m\033[96m${git_branch}\033[0m\033[2m)\033[0m"
+        pr_cache_dir="$HOME/.claude/statusline-pr-cache"
+        pr_cache_hash=$(printf '%s\n%s' "$git_root" "$git_branch" | sha1_digest)
+        pr_cache_key=${pr_cache_hash:0:20}
+        pr_cache="$pr_cache_dir/$pr_cache_key"
+        mkdir -p "$pr_cache_dir" 2>/dev/null
+        if [ -f "$pr_cache" ]; then
+            pr_num=$(cat "$pr_cache" 2>/dev/null)
+            [ -n "$pr_num" ] && git_pr="#${pr_num}"
+        fi
+        pr_cache_age=999999
+        if [ -f "$pr_cache" ]; then
+            pr_cache_age=$(( $(date +%s) - $(date -r "$pr_cache" +%s 2>/dev/null || echo 0) ))
+        fi
+        pr_attempt="${pr_cache}.attempt"
+        pr_attempt_age=999999
+        if [ -f "$pr_attempt" ]; then
+            pr_attempt_age=$(( $(date +%s) - $(date -r "$pr_attempt" +%s 2>/dev/null || echo 0) ))
+        fi
+        pr_lock="${pr_cache}.lock"
+        if [ -d "$pr_lock" ]; then
+            pr_lock_age=$(( $(date +%s) - $(date -r "$pr_lock" +%s 2>/dev/null || echo 0) ))
+            [ "$pr_lock_age" -ge 60 ] && rmdir "$pr_lock" 2>/dev/null
+        fi
+        if [ "$pr_cache_age" -ge 60 ] && [ "$pr_attempt_age" -ge 60 ] && \
+                mkdir "$pr_lock" 2>/dev/null; then
+            : > "$pr_attempt"
+            nohup env GIT_OPTIONAL_LOCKS=0 python3 -c '
+import os, subprocess, sys
+root, cache, lock = sys.argv[1:4]
+try:
+    try:
+        result = subprocess.run(
+            ["gh", "pr", "view", "--json", "number", "--jq", ".number"],
+            cwd=root, capture_output=True, text=True, timeout=3, check=False)
+        number = result.stdout.strip() if result.returncode == 0 else ""
+    except (OSError, subprocess.SubprocessError):
+        number = ""
+    tmp = f"{cache}.{os.getpid()}"
+    try:
+        with open(tmp, "w") as handle:
+            handle.write(number)
+        os.replace(tmp, cache)
+    except OSError:
+        pass
+finally:
+    try:
+        os.rmdir(lock)
+    except OSError:
+        pass
+' "$git_root" "$pr_cache" "$pr_lock" \
+                </dev/null >/dev/null 2>&1 &
+        fi
     fi
 fi
 
 # Groundwork project indicator
 gw_segment=""
 gw_root="${git_root:-$cwd}"
-if [ -d "$HOME/.claude/plugins/cache/groundwork-marketplace" ]; then
-    if [ -f "${gw_root}/.groundwork.yml" ]; then
+if [ -f "${gw_root}/.groundwork.yml" ]; then
         gw_project=""
+        gw_cwd_hash=$(printf '%s' "$cwd" | sha1_digest)
+        gw_cwd_hash_key="cwd-${gw_cwd_hash:0:12}"
 
         # 1. Resolve pane key
         gw_pane_tty=""
@@ -101,7 +161,7 @@ if [ -d "$HOME/.claude/plugins/cache/groundwork-marketplace" ]; then
         if [ -n "$gw_pane_tty" ] && [ "$gw_pane_tty" != "?" ]; then
             gw_pane_key=$(echo "$gw_pane_tty" | sed 's|^/dev/||; s|/|_|g')
         else
-            gw_pane_key="cwd-$(printf '%s' "$cwd" | sha1sum | awk '{print substr($1,1,12)}')"
+            gw_pane_key="$gw_cwd_hash_key"
         fi
 
         # 2. Resolve main repo root
@@ -121,7 +181,6 @@ if [ -d "$HOME/.claude/plugins/cache/groundwork-marketplace" ]; then
         # resolve to pts_NN (or vice versa).
         gw_repo_slug=$(echo "$gw_main_root" | sed 's|/|_|g')
         gw_primary_file="$HOME/.claude/groundwork-state/panes/${gw_pane_key}__${gw_repo_slug}.json"
-        gw_cwd_hash_key="cwd-$(printf '%s' "$cwd" | sha1sum | awk '{print substr($1,1,12)}')"
         gw_fallback_file="$HOME/.claude/groundwork-state/panes/${gw_cwd_hash_key}__${gw_repo_slug}.json"
 
         gw_chosen_file=""
@@ -146,35 +205,25 @@ if [ -d "$HOME/.claude/plugins/cache/groundwork-marketplace" ]; then
         fi
 
         if [ -n "$gw_project" ]; then
-            gw_segment=" \033[2m|\033[0m \033[32mProject: ${gw_project}\033[0m"
+            gw_project_selected=1
         else
-            gw_segment=" \033[2m|\033[0m \033[2mNo Project Selected\033[0m"
+            gw_project_selected=0
         fi
-    fi
 fi
 
 # Context usage
-used=$(echo "$input" | jq -r '.context_window.used_percentage // empty')
-ctx_size=$(echo "$input" | jq -r '.context_window.context_window_size // 0')
-
 format_tokens() {
-    local n=$1
+    local n
+    n=$(printf '%.0f' "$1")
     if [ "$n" -ge 1000000 ]; then
-        awk "BEGIN { printf \"%.0fM\", $n/1000000 }"
+        printf '%sM' "$(( (n + 500000) / 1000000 ))"
     elif [ "$n" -ge 1000 ]; then
-        awk "BEGIN { printf \"%.0fk\", $n/1000 }"
+        printf '%sk' "$(( (n + 500) / 1000 ))"
     else
-        echo "$n"
+        printf '%s' "$n"
     fi
 }
 ctx_size_fmt=$(format_tokens "$ctx_size")
-
-ctx_used_abs=$(echo "$input" | jq -r '
-    if .context_window.current_usage != null then
-        (.context_window.current_usage.input_tokens
-         + .context_window.current_usage.cache_creation_input_tokens
-         + .context_window.current_usage.cache_read_input_tokens)
-    else 0 end')
 ctx_used_fmt=$(format_tokens "$ctx_used_abs")
 
 BAR_WIDTH=10
@@ -194,8 +243,16 @@ fi
 
 bar_filled_part=""
 bar_empty_part=""
-for i in $(seq 1 "$filled"); do bar_filled_part="${bar_filled_part}${FILLED_CHAR}"; done
-for i in $(seq 1 "$empty");  do bar_empty_part="${bar_empty_part}${EMPTY_CHAR}";   done
+i=0
+while [ "$i" -lt "$filled" ]; do
+    bar_filled_part="${bar_filled_part}${FILLED_CHAR}"
+    i=$(( i + 1 ))
+done
+i=0
+while [ "$i" -lt "$empty" ]; do
+    bar_empty_part="${bar_empty_part}${EMPTY_CHAR}"
+    i=$(( i + 1 ))
+done
 
 case "$cwd" in
     "$HOME"/*) cwd="~${cwd#"$HOME"}" ;;
@@ -212,19 +269,15 @@ fi
 
 # Anthropic usage API
 USAGE_CACHE="$HOME/.claude/statusline-usage-cache.json"
+USAGE_REFRESH_ATTEMPT="$HOME/.claude/statusline-usage-refresh.attempt"
+USAGE_REFRESH_LOCK="$HOME/.claude/statusline-usage-refresh.lock"
 session_util=""
 weekly_util=""
-{
-    use_cache=0
-    if [ -f "$USAGE_CACHE" ]; then
-        cache_age=$(( $(date +%s) - $(date -r "$USAGE_CACHE" +%s 2>/dev/null || echo 0) ))
-        [ "$cache_age" -lt 300 ] && use_cache=1
-    fi
+session_resets_at=""
+weekly_resets_at=""
 
-    if [ "$use_cache" -eq 1 ]; then
-        usage_json=$(cat "$USAGE_CACHE")
-    else
-        TOKEN=$(python3 -c "
+refresh_usage_cache() {
+    TOKEN=$(python3 -c "
 import json, sys, subprocess, os
 creds_json = None
 creds_file = os.path.join(os.environ['HOME'], '.claude', '.credentials.json')
@@ -245,34 +298,60 @@ if creds_json:
     print(creds_json['claudeAiOauth']['accessToken'])
 else:
     sys.exit(1)
-" 2>/dev/null)
-        if [ -n "$TOKEN" ]; then
-            usage_json=$(curl -s --max-time 5 \
-                "https://api.anthropic.com/api/oauth/usage" \
-                -H "Authorization: Bearer $TOKEN" \
-                -H "anthropic-beta: oauth-2025-04-20" 2>/dev/null)
-            # Only cache a response with real (non-null) utilization. A null
-            # response means "no data right now" — don't overwrite the cache,
-            # so the previous good value is kept and reused below.
-            if echo "$usage_json" | jq -e '.five_hour.utilization != null' > /dev/null 2>&1; then
-                echo "$usage_json" > "$USAGE_CACHE" 2>/dev/null
-            else
-                usage_json=""
-            fi
-        fi
-        # If the refresh failed (no token, timeout, null/invalid JSON), fall back
-        # to the last cached response even if stale, so the usage segment doesn't
-        # blink out on a transient error.
-        if [ -z "$usage_json" ] && [ -f "$USAGE_CACHE" ]; then
-            usage_json=$(cat "$USAGE_CACHE")
+" 2>/dev/null) || return
+    [ -n "$TOKEN" ] || return
+
+    usage_json=$(printf 'Authorization: Bearer %s\nanthropic-beta: oauth-2025-04-20\n' "$TOKEN" | \
+        curl -s --max-time 3 \
+            "https://api.anthropic.com/api/oauth/usage" \
+            -H @- 2>/dev/null) || return
+    if printf '%s' "$usage_json" | jq -e '.five_hour.utilization != null' > /dev/null 2>&1; then
+        cache_tmp="${USAGE_CACHE}.$$"
+        printf '%s\n' "$usage_json" > "$cache_tmp" 2>/dev/null && mv "$cache_tmp" "$USAGE_CACHE"
+    fi
+}
+
+run_usage_refresh() {
+    trap 'rmdir "$USAGE_REFRESH_LOCK" 2>/dev/null' EXIT HUP INT TERM
+    refresh_usage_cache
+}
+
+{
+    usage_json=""
+    cache_age=999999
+    if [ -f "$USAGE_CACHE" ]; then
+        usage_json=$(cat "$USAGE_CACHE")
+        cache_age=$(( $(date +%s) - $(date -r "$USAGE_CACHE" +%s 2>/dev/null || echo 0) ))
+    fi
+    usage_attempt_age=999999
+    if [ -f "$USAGE_REFRESH_ATTEMPT" ]; then
+        usage_attempt_age=$(( $(date +%s) - $(date -r "$USAGE_REFRESH_ATTEMPT" +%s 2>/dev/null || echo 0) ))
+    fi
+    if [ -d "$USAGE_REFRESH_LOCK" ]; then
+        usage_lock_age=$(( $(date +%s) - $(date -r "$USAGE_REFRESH_LOCK" +%s 2>/dev/null || echo 0) ))
+        [ "$usage_lock_age" -ge 600 ] && rmdir "$USAGE_REFRESH_LOCK" 2>/dev/null
+    fi
+    if [ "$cache_age" -ge 300 ] && [ "$usage_attempt_age" -ge 300 ]; then
+        mkdir -p "$HOME/.claude" 2>/dev/null
+        if mkdir "$USAGE_REFRESH_LOCK" 2>/dev/null; then
+            : > "$USAGE_REFRESH_ATTEMPT"
+            export USAGE_CACHE USAGE_REFRESH_LOCK
+            nohup bash -c "$(declare -f refresh_usage_cache); $(declare -f run_usage_refresh); run_usage_refresh" \
+                </dev/null >/dev/null 2>&1 &
         fi
     fi
 
     if [ -n "$usage_json" ]; then
-        session_util=$(echo "$usage_json" | jq -r '.five_hour.utilization // empty' 2>/dev/null)
-        weekly_util=$(echo  "$usage_json" | jq -r '.seven_day.utilization  // empty' 2>/dev/null)
-        session_resets_at=$(echo "$usage_json" | jq -r '.five_hour.resets_at // empty' 2>/dev/null)
-        weekly_resets_at=$(echo "$usage_json" | jq -r '.seven_day.resets_at // empty' 2>/dev/null)
+        parsed_usage=$(printf '%s' "$usage_json" | jq -r '
+            [
+                (.five_hour.utilization // ""),
+                (.seven_day.utilization // ""),
+                (.five_hour.resets_at // ""),
+                (.seven_day.resets_at // "")
+            ] | map(tostring | @sh) |
+            "session_util=\(.[0])\nweekly_util=\(.[1])\nsession_resets_at=\(.[2])\nweekly_resets_at=\(.[3])"
+        ' 2>/dev/null)
+        eval "$parsed_usage"
         [ -n "$session_util" ] && session_util=$(printf "%.0f" "$session_util")
         [ -n "$weekly_util"  ] && weekly_util=$(printf  "%.0f" "$weekly_util")
     fi
@@ -291,63 +370,91 @@ else:
     [ -z "$session_resets_at" ] && session_resets_at="$prev_session_reset"
     [ -z "$weekly_resets_at"  ] && weekly_resets_at="$prev_weekly_reset"
     if [ -n "$session_resets_at" ] || [ -n "$weekly_resets_at" ]; then
-        printf '{"session":"%s","weekly":"%s"}\n' \
-            "$session_resets_at" "$weekly_resets_at" > "$RESET_CACHE" 2>/dev/null
+        jq -n \
+            --arg session "$session_resets_at" \
+            --arg weekly "$weekly_resets_at" \
+            '{session: $session, weekly: $weekly}' > "$RESET_CACHE" 2>/dev/null
     fi
 } 2>/dev/null
 
-format_reset_time() {
-    local resets_at="$1" mode="$2"
-    python3 -c "
+format_reset_times() {
+    python3 -c '
+import re
 import sys
 from datetime import datetime, timezone, timedelta
 
-resets_at = '$resets_at'
-mode = '$mode'
+session_reset, weekly_reset = sys.argv[1:3]
+timestamp_pattern = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$"
+)
 
-try:
-    ra = resets_at.replace('Z', '+00:00')
-    reset_dt = datetime.fromisoformat(ra)
-    now_dt = datetime.now(timezone.utc)
-    diff = int((reset_dt - now_dt).total_seconds())
-    if diff < 0:
-        diff = 0
+def format_reset_time(resets_at, mode, now_dt):
+    if len(resets_at) > 64 or timestamp_pattern.fullmatch(resets_at) is None:
+        return ""
+    try:
+        reset_dt = datetime.fromisoformat(resets_at.replace("Z", "+00:00"))
+        diff = max(0, int((reset_dt - now_dt).total_seconds()))
 
-    if diff < 3600:
-        mins = (diff + 59) // 60
-        print(f' ({mins}m)')
-    elif mode == 'session' or diff < 86400:
-        hrs = diff // 3600
-        mins = (diff % 3600 + 59) // 60
-        if mins == 60:
-            mins = 0
-            hrs += 1
-        if mins > 0:
-            print(f' ({hrs}h {mins}m)')
-        else:
-            print(f' ({hrs}h)')
-    else:
+        if diff < 3600:
+            mins = (diff + 59) // 60
+            return f" ({mins}m)"
+        if mode == "session" or diff < 86400:
+            hrs = diff // 3600
+            mins = (diff % 3600 + 59) // 60
+            if mins == 60:
+                mins = 0
+                hrs += 1
+            if mins > 0:
+                return f" ({hrs}h {mins}m)"
+            return f" ({hrs}h)"
+
         reset_local = reset_dt.astimezone()
         now_local = now_dt.astimezone()
-        tomorrow = (now_local + timedelta(days=1)).date()
-        reset_date = reset_local.date()
-        hr = reset_local.strftime('%I').lstrip('0') + reset_local.strftime('%p')
-        if reset_date == tomorrow:
-            print(f' (Tomorrow {hr})')
-        else:
-            day_name = reset_local.strftime('%A')
-            day_num = reset_local.day
-            month_name = reset_local.strftime('%B')
-            print(f' ({day_name} {day_num} {month_name} {hr})')
-except Exception:
-    pass
-" 2>/dev/null
+        hr = reset_local.strftime("%I").lstrip("0") + reset_local.strftime("%p")
+        if reset_local.date() == (now_local + timedelta(days=1)).date():
+            return f" (Tomorrow {hr})"
+        day_name = reset_local.strftime("%A")
+        month_name = reset_local.strftime("%B")
+        return f" ({day_name} {reset_local.day} {month_name} {hr})"
+    except Exception:
+        return ""
+
+now = datetime.now(timezone.utc)
+print(
+    format_reset_time(session_reset, "session", now)
+    + "\x1f"
+    + format_reset_time(weekly_reset, "weekly", now),
+    end="",
+)
+' "$session_resets_at" "$weekly_resets_at" 2>/dev/null
 }
 
 session_reset_str=""
 weekly_reset_str=""
-[ -n "$session_resets_at" ] && session_reset_str=$(format_reset_time "$session_resets_at" "session")
-[ -n "$weekly_resets_at" ]  && weekly_reset_str=$(format_reset_time "$weekly_resets_at" "weekly")
+if [ -n "$session_resets_at" ] || [ -n "$weekly_resets_at" ]; then
+    reset_strings=$(format_reset_times)
+    IFS=$'\x1f' read -r session_reset_str weekly_reset_str <<< "$reset_strings"
+fi
+
+# Sanitize every externally sourced display field in one process. The unit
+# separator cannot survive clean(), so it is safe as the assignment delimiter.
+sanitized_text=$(jq -nr \
+    --arg model "$model" \
+    --arg effort "$effort" \
+    --arg cwd "$cwd" \
+    --arg repo "${git_repo:-}" \
+    --arg branch "${git_branch:-}" \
+    --arg pr "${git_pr:-}" \
+    --arg project "${gw_project:-}" '
+    def clean:
+        explode
+        | map(select(. >= 32 and . != 127 and (. < 128 or . > 159)))
+        | implode;
+    [$model, $effort, $cwd, $repo, $branch, $pr, $project]
+    | map(clean)
+    | join("\u001f")
+' 2>/dev/null)
+IFS=$'\x1f' read -r model effort cwd git_repo git_branch git_pr gw_project <<< "$sanitized_text"
 
 # LINE 1
 printf "\033[35m%s\033[0m \033[2m(%s)\033[0m" "${model}" "${effort}"
@@ -369,5 +476,14 @@ fi
 # LINE 3
 printf "\n"
 printf "\033[01;34m%s\033[00m" "${cwd}"
-printf "%b" "${git_info}"
-printf "%b" "${gw_segment}"
+if [ -n "$git_repo" ]; then
+    printf " \033[2m(\033[0m\033[33m%s\033[0m\033[2m:\033[0m\033[96m%s\033[0m" \
+        "$git_repo" "$git_branch"
+    [ -n "$git_pr" ] && printf " \033[35m%s\033[0m" "$git_pr"
+    printf "\033[2m)\033[0m"
+fi
+if [ "${gw_project_selected:-}" = "1" ]; then
+    printf " \033[2m|\033[0m \033[32mProject: %s\033[0m" "$gw_project"
+elif [ "${gw_project_selected:-}" = "0" ]; then
+    printf " \033[2m|\033[0m \033[2mNo Project Selected\033[0m"
+fi
