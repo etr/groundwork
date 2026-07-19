@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
 
 ## Project Overview
 
@@ -81,7 +81,7 @@ Skills replaced the old commands layer. Three tiers, set via frontmatter:
 bash tests/run-tests.sh
 ```
 
-Runs every `tests/*.test.js` suite (plain Node `assert`, no dependencies). `tests/install-config.test.js` guards the export installer: skills↔config parity and zero Claude-Code-only leakage in generated output.
+Runs every `tests/*.test.js` suite (plain Node `assert`, no dependencies). `tests/install-config.test.js` guards the export installer: skills↔config parity and zero Codex-only leakage in generated output.
 
 ### Hook Events
 
@@ -123,7 +123,7 @@ Hooks are defined in `hooks/hooks.json` and use `${CLAUDE_PLUGIN_ROOT}` for port
 
 `install-skills.sh` exports the skills/agents to non-Claude harnesses (`--codex`, `--opencode`, `--kiro`, `--pi`; `--claude-code` recommends the marketplace). It is **fail-closed**: every skill in `skills/` is exported as `groundwork-<name>` automatically — `install-config.txt` lists only exceptions (`<name> = drop` or `<name> = <other-name>`), so a new skill can never be silently omitted.
 
-During export it rewrites Claude-specific constructs to harness-neutral prose: `Skill(...)`/`Agent(...)` calls (via `lib/transform-agents.js`), `${CLAUDE_PLUGIN_ROOT}`, `/groundwork:` slash hints, tool names (Pi). Agents install as native TOML custom agents (Codex), standalone agent files (OpenCode), JSON+prompt pairs (Kiro), or `review-`prefixed skills (Pi); Pi additionally gets `pi-extension/`. The script targets **bash 3.2 + BSD sed** (stock macOS) — avoid bash-4-only features (associative arrays, `mapfile`) and `;`-joined sed programs. `tests/install-config.test.js` enforces parity and no-leakage; run it after touching the installer or adding skills.
+During export it rewrites Claude-specific constructs to harness-neutral prose: `Skill(...)`/`Agent(...)` calls (via `lib/transform-agents.js`), `${CLAUDE_PLUGIN_ROOT}`, `/groundwork:` slash hints, tool names (Pi). Agents install as native TOML custom agents (Codex), standalone agent files (OpenCode), JSON+prompt pairs (Kiro), or `review-`prefixed skills (Pi); Pi additionally gets `pi-extension/`. The script targets **bash 3.2 + BSD sed** (stock macOS) — avoid bash-4-only features (associative arrays, `mapfile`) and `;`-joined sed programs. `tests/install-config.test.js` enforces parity and no Claude-Code-only leakage; run it after touching the installer or adding skills.
 
 ## External Dependencies
 

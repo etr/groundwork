@@ -216,12 +216,37 @@ get_dest_base() {
 # Extract a single YAML frontmatter value (single-line only)
 get_fm_value() {
     local content="$1" key="$2"
-    echo "$content" | sed -n '/^---$/,/^---$/p' | grep "^${key}:" | head -1 | sed "s/^${key}:[[:space:]]*//"
+    echo "$content" | sed -n '/^---$/,/^---$/p' | sed -n "s/^${key}:[[:space:]]*//p" | head -1
 }
 
 # Extract body text (everything after second ---)
 get_body() {
     echo "$1" | awk 'BEGIN{c=0} /^---$/{c++;if(c==2){f=1;next}} f{print}'
+}
+
+codex_model_for_claude() {
+    local model="$1"
+    case "$model" in
+        ""|inherit) echo "" ;;
+        sonnet) echo "gpt-5.6-terra" ;;
+        'opus[1m]') echo "gpt-5.6-sol" ;;
+        *)
+            echo "Error: No Codex model mapping for Claude model '$model'" >&2
+            return 1
+            ;;
+    esac
+}
+
+codex_effort_for_claude() {
+    local effort="$1"
+    case "$effort" in
+        "") echo "" ;;
+        low|medium|high|max) echo "$effort" ;;
+        *)
+            echo "Error: No Codex reasoning-effort mapping for Claude effort '$effort'" >&2
+            return 1
+            ;;
+    esac
 }
 
 # Recursively inline required skill bodies into a parent skill.
@@ -398,6 +423,20 @@ Before interpreting project-context placeholders in this workflow:
 EOF
 }
 
+portable_runtime_context_preamble() {
+    cat <<'EOF'
+## Codex Runtime Context
+
+Before applying any model or effort recommendation in this workflow:
+
+1. Resolve the directory containing this `SKILL.md`.
+2. Run `node <skill-directory>/scripts/runtime-context-cli.js --harness codex` from the repository working directory.
+3. Use the returned `effort_level` and `model` values as the exact bindings for `{{effort_level}}` and the current model.
+4. Do not infer either value from the generic assistant family label when the resolver returns a concrete value.
+
+EOF
+}
+
 # ============================================================
 # File writing
 # ============================================================
@@ -418,6 +457,45 @@ write_file() {
     mkdir -p "$(dirname "$dest")"
     printf '%s\n' "$content" > "$dest"
     echo "  [wrote] $dest ($label)"
+}
+
+write_codex_agent() {
+    local dest="$1" content="$2" label="$3" dest_base="$4"
+
+    if [[ "$DRY_RUN" == true ]]; then
+        echo "  [dry-run] $dest ($label)"
+        return 0
+    fi
+
+    local args=(--base "$dest_base" --dest "$dest")
+    [[ "$FORCE" == true ]] && args+=(--force)
+
+    local result
+    result=$(printf '%s\n' "$content" | node "$SOURCE_DIR/lib/write-codex-agent.js" "${args[@]}")
+    if [[ "$result" == "skipped" ]]; then
+        echo "  [skip] $dest (exists, use --force)"
+    else
+        echo "  [wrote] $dest ($label)"
+    fi
+}
+
+remove_legacy_codex_agent_skill() {
+    local agent_name="$1" dest_base="$2"
+    local legacy_skill="$dest_base/skills/review-${agent_name}/SKILL.md"
+
+    if [[ "$DRY_RUN" == true ]]; then
+        if [[ -e "$legacy_skill" || -L "$legacy_skill" ]]; then
+            echo "  [dry-run] remove $legacy_skill (legacy agent skill)"
+        fi
+        return 0
+    fi
+
+    local result
+    result=$(node "$SOURCE_DIR/lib/remove-legacy-codex-agent-skill.js" \
+        --base "$dest_base" --skill "$legacy_skill")
+    if [[ "$result" == "removed" ]]; then
+        echo "  [removed] $legacy_skill (legacy agent skill)"
+    fi
 }
 
 # ============================================================
@@ -484,6 +562,13 @@ $inlined_deps"
         new_body=$(transform_body "$target" "$raw_body")
 
         local needs_project_runtime=false
+        local needs_runtime_context=false
+        if [[ "$target" == "codex" && "$raw_body" == *'{{effort_level}}'* ]]; then
+            needs_runtime_context=true
+            new_body="$(portable_runtime_context_preamble)
+
+$new_body"
+        fi
         if [[ "$skill_name" == "select-project" ]]; then
             needs_project_runtime=true
             new_body=$(printf '%s' "$new_body" | sed \
@@ -492,6 +577,7 @@ $inlined_deps"
         if [[ "$raw_body" == *'{{project_name}}'* || "$raw_body" == *'{{project_root}}'* || "$raw_body" == *'{{specs_dir}}'* ]]; then
             needs_project_runtime=true
             new_body="$(portable_project_context_preamble "$target")
+
 $new_body"
         fi
         result="$new_fm
@@ -513,6 +599,11 @@ $new_body"
             runtime_dir="$(dirname "$dest")/scripts"
             write_file "$runtime_dir/project-context-cli.js" "$(<"$SOURCE_DIR/lib/project-context-cli.js")" "project context runtime"
             write_file "$runtime_dir/project-context.js" "$(<"$SOURCE_DIR/lib/project-context.js")" "project context runtime"
+        fi
+        if [[ "$needs_runtime_context" == true ]]; then
+            local runtime_dir
+            runtime_dir="$(dirname "$dest")/scripts"
+            write_file "$runtime_dir/runtime-context-cli.js" "$(<"$SOURCE_DIR/lib/runtime-context-cli.js")" "runtime context resolver"
         fi
         ((SKILL_COUNT++)) || true
     done
@@ -544,13 +635,25 @@ install_agents_for_target() {
 
         case "$target" in
             codex)
-                # Install as a skill with review- prefix (Codex has no native agent concept)
-                local installed_name="review-${agent_name}"
-                local new_fm
-                new_fm=$(transform_frontmatter "$target" "skill" "$content" "$installed_name")
-                local dest="$dest_base/skills/${installed_name}/SKILL.md"
-                write_file "$dest" "$new_fm
-$new_body" "review agent"
+                local claude_model claude_effort codex_model codex_effort
+                claude_model=$(get_fm_value "$content" "model")
+                claude_effort=$(get_fm_value "$content" "effort")
+                codex_model=$(codex_model_for_claude "$claude_model")
+                codex_effort=$(codex_effort_for_claude "$claude_effort")
+
+                local render_args=(
+                    --name "$agent_name"
+                    --description "$desc"
+                )
+                [[ -n "$codex_model" ]] && render_args+=(--model "$codex_model")
+                [[ -n "$codex_effort" ]] && render_args+=(--effort "$codex_effort")
+
+                local codex_agent
+                codex_agent=$(printf '%s' "$new_body" | node \
+                    "$SOURCE_DIR/lib/render-codex-agent.js" "${render_args[@]}")
+                local dest="$dest_base/agents/${agent_name}.toml"
+                write_codex_agent "$dest" "$codex_agent" "agent" "$dest_base"
+                remove_legacy_codex_agent_skill "$agent_name" "$dest_base"
                 ;;
             opencode)
                 local new_fm
@@ -615,12 +718,12 @@ print_summary() {
     local target="$1"
     echo ""
     echo "  Summary for $target:"
-    if [[ ("$target" == "codex" || "$target" == "pi") && "$SKILLS_ONLY" != true && $AGENT_COUNT -gt 0 ]]; then
+    if [[ "$target" == "pi" && "$SKILLS_ONLY" != true && $AGENT_COUNT -gt 0 ]]; then
         echo "    Skills installed: $((SKILL_COUNT + AGENT_COUNT)) (includes $AGENT_COUNT review agents)"
     else
         echo "    Skills installed: $SKILL_COUNT"
     fi
-    if [[ "$SKILLS_ONLY" != true && "$target" != "codex" && "$target" != "pi" ]]; then
+    if [[ "$SKILLS_ONLY" != true && "$target" != "pi" ]]; then
         echo "    Agents installed: $AGENT_COUNT"
     fi
 }

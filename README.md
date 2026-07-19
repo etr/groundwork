@@ -45,11 +45,32 @@ Groundwork skills and agents can be installed into other AI coding tools using t
 
 | Target | Flag | Description |
 |--------|------|-------------|
-| [Codex CLI](https://github.com/openai/codex) | `--codex` | Agents are installed as skills with a `review-` prefix |
+| [Codex CLI](https://github.com/openai/codex) | `--codex` | Agents are installed as native custom-agent TOML files with Codex model and reasoning settings |
 | [OpenCode](https://github.com/opencode-ai/opencode) | `--opencode` | Agents are installed as standalone agent files |
 | [Kiro](https://kiro.dev) | `--kiro` | Agents use JSON config + prompt file pairs |
 | Pi | `--pi` | Agents install as `review-`prefixed skills, plus a pre-built TypeScript extension (`pi-extension/`) |
 | Claude Code | `--claude-code` | Recommends the marketplace install (no transformation needed) |
+
+##### Codex Agent Conversion
+
+Codex agents are written to `.codex/agents/*.toml` for project installs (or
+`~/.codex/agents/*.toml` globally). Claude model metadata maps as follows:
+
+| Claude agent model | Codex model override |
+|--------------------|----------------------|
+| `sonnet` | `gpt-5.6-terra` |
+| `opus[1m]` | `gpt-5.6-sol` |
+| `inherit` or absent | No override; inherit the active Codex model |
+
+Supported effort values (`low`, `medium`, `high`, and `max`) are preserved as
+`model_reasoning_effort`; an absent effort is omitted. Unsupported model or
+effort values stop the install with an explicit error so a silent fallback
+cannot select an unintended model.
+
+When installing Codex agents, the installer also removes the exact legacy
+`.codex/skills/review-<bundled-agent>/SKILL.md` file for each bundled Groundwork
+agent. It does not use a wildcard: unrelated `review-*` skills and any sidecar
+files are preserved, and an empty legacy directory is removed.
 
 #### Installation
 
