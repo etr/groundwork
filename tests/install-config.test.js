@@ -21,6 +21,13 @@ const SKILLS_DIR = path.join(PLUGIN_ROOT, 'skills');
 const AGENTS_DIR = path.join(PLUGIN_ROOT, 'agents');
 const CONFIG = path.join(PLUGIN_ROOT, 'install-config.txt');
 const INSTALLER = path.join(PLUGIN_ROOT, 'install-skills.sh');
+const RUNTIME_CONTEXT = path.join(PLUGIN_ROOT, 'lib', 'runtime-context-cli.js');
+const CODEX_STATUSLINE_BODY = path.join(
+  PLUGIN_ROOT,
+  'skills',
+  'statusline',
+  'codex-skill-body.md'
+);
 
 // Test utilities (match the convention in the other tests/*.test.js files)
 let passed = 0;
@@ -298,6 +305,74 @@ describe('exported output is free of Claude-Code-only leakage', () => {
   }
 });
 
+describe('statusline target routing', () => {
+  const targetDirs = {
+    codex: '.codex',
+    opencode: '.opencode',
+    kiro: '.kiro',
+    pi: '.pi',
+  };
+
+  for (const target of Object.keys(targetDirs)) {
+    test(`${target}: ${target === 'codex' ? 'exports' : 'omits'} groundwork-statusline`, () => {
+      const root = runInstaller(target);
+      if (root === null) return;
+      try {
+        const skill = path.join(
+          root,
+          targetDirs[target],
+          'skills',
+          'groundwork-statusline',
+          'SKILL.md'
+        );
+        assert.strictEqual(fs.existsSync(skill), target === 'codex');
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    });
+  }
+
+  test('Codex export configures and owns only the native tui.status_line field', () => {
+    const root = runInstaller('codex');
+    if (root === null) return;
+    try {
+      const skill = fs.readFileSync(
+        path.join(root, '.codex', 'skills', 'groundwork-statusline', 'SKILL.md'),
+        'utf8'
+      );
+      const expected = 'status_line = ["model-with-reasoning", "context-used", ' +
+        '"used-tokens", "five-hour-limit", "weekly-limit", "current-dir", "git-branch"]';
+
+      assert.ok(skill.includes(expected));
+      assert.ok(skill.includes('$CODEX_HOME'));
+      assert.ok(skill.includes('preserve every unrelated TOML key and table'));
+      assert.ok(skill.includes('ask the user before replacing it'));
+      assert.ok(skill.includes('already equals the exact Groundwork-owned value'));
+      assert.ok(skill.includes('remove it only when it exactly matches the Groundwork-owned value'));
+      assert.ok(!skill.includes('settings.json'));
+      assert.ok(!skill.includes('CLAUDE_PLUGIN_ROOT'));
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('Codex export uses the statusline-owned source body', () => {
+    assert.ok(fs.existsSync(CODEX_STATUSLINE_BODY));
+    const root = runInstaller('codex');
+    if (root === null) return;
+    try {
+      const exported = fs.readFileSync(
+        path.join(root, '.codex', 'skills', 'groundwork-statusline', 'SKILL.md'),
+        'utf8'
+      );
+      const body = fs.readFileSync(CODEX_STATUSLINE_BODY, 'utf8').trim();
+      assert.ok(exported.endsWith(`${body}\n`));
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('Codex model recommendations', () => {
   test('translates Claude model recommendations to Codex equivalents', () => {
     const root = runInstaller('codex');
@@ -382,6 +457,74 @@ describe('Codex model recommendations', () => {
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe('Codex runtime context resolver', () => {
+  const configCases = [
+    {
+      name: 'uses defaults when config is missing',
+      config: null,
+      model: 'unknown',
+      effort: 'default',
+    },
+    {
+      name: 'reads single-quoted top-level strings',
+      config: "model = 'gpt-5.6-sol'\nmodel_reasoning_effort = 'high'\n",
+      model: 'gpt-5.6-sol',
+      effort: 'high',
+    },
+    {
+      name: 'decodes escaped double-quoted strings',
+      config: 'model = "gpt-5.6-\\\"sol"\nmodel_reasoning_effort = "medium"\n',
+      model: 'gpt-5.6-"sol',
+      effort: 'medium',
+    },
+    {
+      name: 'ignores values after the first table boundary',
+      config: 'model = "top"\n[tui]\nmodel = "nested"\nmodel_reasoning_effort = "low"\n',
+      model: 'top',
+      effort: 'default',
+    },
+    {
+      name: 'ignores malformed string values',
+      config: 'model = "unterminated\nmodel_reasoning_effort = nope\n',
+      model: 'unknown',
+      effort: 'default',
+    },
+  ];
+
+  for (const configCase of configCases) {
+    test(configCase.name, () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-runtime-context-'));
+      try {
+        if (configCase.config !== null) {
+          fs.mkdirSync(path.join(tmp, '.codex'));
+          fs.writeFileSync(path.join(tmp, '.codex', 'config.toml'), configCase.config);
+        }
+        const resolved = JSON.parse(execFileSync(
+          'node', [RUNTIME_CONTEXT, '--harness', 'codex'],
+          {
+            env: { ...process.env, HOME: tmp, CODEX_HOME: '' },
+            encoding: 'utf8',
+          }
+        ));
+        assert.strictEqual(resolved.model, configCase.model);
+        assert.strictEqual(resolved.effort_level, configCase.effort);
+        assert.strictEqual(resolved.config_file, path.join(tmp, '.codex', 'config.toml'));
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    });
+  }
+
+  test('rejects invalid harness arguments with usage on stderr', () => {
+    const result = spawnSync('node', [RUNTIME_CONTEXT, '--harness', 'claude'], {
+      encoding: 'utf8',
+    });
+    assert.notStrictEqual(result.status, 0);
+    assert.strictEqual(result.stdout, '');
+    assert.ok(result.stderr.includes('Usage: runtime-context-cli.js --harness codex'));
   });
 });
 

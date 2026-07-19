@@ -105,6 +105,7 @@ Find the work, invoke the skill. **Dispatch tier matters:**
 |------|-------|
 | Configure repo / switch project | `setup-repo`, `select-project` (auto) |
 | Hand off work to another session | `handoff` (auto) |
+| Install or remove the optional statusline | `/groundwork:statusline [install\|uninstall]` (user runs) |
 | List skills / health-check the plugin | `/groundwork:groundwork-help`, `/groundwork:groundwork-check` (user runs) |
 
 ## Red Flags

@@ -120,6 +120,11 @@ installed_name() {
     echo "groundwork-${skill}"
 }
 
+should_export_skill() {
+    local target="$1" skill="$2"
+    [[ "$skill" != "statusline" || "$target" == "codex" ]]
+}
+
 load_config() {
     local config="$SOURCE_DIR/install-config.txt"
 
@@ -331,6 +336,10 @@ transform_frontmatter() {
 transform_body() {
     local target="$1" content="$2"
 
+    if [[ "$target" != "codex" ]]; then
+        content=$(printf '%s\n' "$content" | sed '\|/groundwork:statusline|d')
+    fi
+
     # Codex model names differ from Claude Code's. Keep source recommendations
     # native to Claude Code and translate only the Codex export.
     if [[ "$target" == "codex" ]]; then
@@ -406,6 +415,10 @@ transform_body() {
         -e 's|subagent|sub-task|g' \
         -e 's|\${CLAUDE_PLUGIN_ROOT}|the plugin directory|g' \
         -e "${BODY_SED_CMDS:-.}"
+}
+
+translate_statusline_body() {
+    cat "$SOURCE_DIR/skills/statusline/codex-skill-body.md"
 }
 
 portable_project_context_preamble() {
@@ -537,6 +550,7 @@ install_skills_for_target() {
         skill_name=$(basename "$skill_dir")
         local skill_file="$skill_dir/SKILL.md"
         [[ ! -f "$skill_file" ]] && continue
+        should_export_skill "$target" "$skill_name" || continue
 
         local installed
         installed=$(installed_name "$skill_name")
@@ -559,7 +573,11 @@ $inlined_deps"
 
         local new_fm new_body result
         new_fm=$(transform_frontmatter "$target" "skill" "$content" "$installed")
-        new_body=$(transform_body "$target" "$raw_body")
+        if [[ "$target" == "codex" && "$skill_name" == "statusline" ]]; then
+            new_body=$(translate_statusline_body)
+        else
+            new_body=$(transform_body "$target" "$raw_body")
+        fi
 
         local needs_project_runtime=false
         local needs_runtime_context=false
