@@ -305,6 +305,53 @@ describe('exported output is free of Claude-Code-only leakage', () => {
   }
 });
 
+describe('portable shared reference export', () => {
+  test('Codex bundles every shared reference beside its consuming skill or agent', () => {
+    const root = runInstaller('codex');
+    if (root === null) return;
+    try {
+      const componentFiles = [
+        ...allFiles(path.join(root, '.codex', 'skills')).filter(
+          (file) => path.basename(file) === 'SKILL.md'
+        ),
+        ...allFiles(path.join(root, '.codex', 'agents')).filter(
+          (file) => file.endsWith('.toml')
+        ),
+      ];
+      let referenceCount = 0;
+
+      for (const componentFile of componentFiles) {
+        const content = fs.readFileSync(componentFile, 'utf8');
+        assert.ok(
+          !content.includes('the plugin directory/references/'),
+          `${path.relative(root, componentFile)} retained a non-resolvable shared reference`
+        );
+        const references = content.matchAll(
+          /<(?:skill|agent)-directory>\/(references\/[A-Za-z0-9._/-]+)/g
+        );
+        for (const match of references) {
+          referenceCount++;
+          const installedReference = path.join(path.dirname(componentFile), match[1]);
+          const sourceReference = path.join(PLUGIN_ROOT, match[1]);
+          assert.ok(
+            fs.existsSync(installedReference),
+            `${path.relative(root, componentFile)} references missing ${match[1]}`
+          );
+          assert.strictEqual(
+            fs.readFileSync(installedReference, 'utf8'),
+            fs.readFileSync(sourceReference, 'utf8'),
+            `${path.relative(root, installedReference)} differs from its source`
+          );
+        }
+      }
+
+      assert.ok(referenceCount > 0, 'Codex export contained no portable shared references');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('statusline target routing', () => {
   const targetDirs = {
     codex: '.codex',

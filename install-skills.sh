@@ -334,7 +334,14 @@ transform_frontmatter() {
 
 # Apply body text transformations for non-Claude targets
 transform_body() {
-    local target="$1" content="$2"
+    local target="$1" content="$2" component="${3:-skill}"
+    local reference_root reference_sed
+    if [[ "$component" == "agent" ]]; then
+        reference_root="<agent-directory>/references"
+    else
+        reference_root="<skill-directory>/references"
+    fi
+    reference_sed='s|\${CLAUDE_PLUGIN_ROOT}/references|'"$reference_root"'|g'
 
     if [[ "$target" != "codex" ]]; then
         content=$(printf '%s\n' "$content" | sed '\|/groundwork:statusline|d')
@@ -413,6 +420,7 @@ transform_body() {
         -e 's|ExitPlanMode()|Proceed with implementation|g' \
         -e 's|context compaction|context management|g' \
         -e 's|subagent|sub-task|g' \
+        -e "$reference_sed" \
         -e 's|\${CLAUDE_PLUGIN_ROOT}|the plugin directory|g' \
         -e "${BODY_SED_CMDS:-.}"
 }
@@ -470,6 +478,35 @@ write_file() {
     mkdir -p "$(dirname "$dest")"
     printf '%s\n' "$content" > "$dest"
     echo "  [wrote] $dest ($label)"
+}
+
+# Keep portable components self-contained without copying the entire shared tree.
+write_portable_references() {
+    local content="$1" dest_dir="$2"
+    local references
+    references=$(printf '%s\n' "$content" | awk '
+        {
+            line = $0
+            marker = "${CLAUDE_PLUGIN_ROOT}/references/"
+            while ((start = index(line, marker)) > 0) {
+                line = substr(line, start + length(marker))
+                if (match(line, /^[A-Za-z0-9._\/-]+/)) {
+                    print "references/" substr(line, RSTART, RLENGTH)
+                    line = substr(line, RLENGTH + 1)
+                } else {
+                    break
+                }
+            }
+        }
+    ' | sort -u)
+
+    local reference source
+    while IFS= read -r reference; do
+        [[ -z "$reference" ]] && continue
+        source="$SOURCE_DIR/$reference"
+        [[ -f "$source" ]] || continue
+        write_file "$dest_dir/$reference" "$(<"$source")" "reference"
+    done <<< "$references"
 }
 
 write_codex_agent() {
@@ -576,7 +613,7 @@ $inlined_deps"
         if [[ "$target" == "codex" && "$skill_name" == "statusline" ]]; then
             new_body=$(translate_statusline_body)
         else
-            new_body=$(transform_body "$target" "$raw_body")
+            new_body=$(transform_body "$target" "$raw_body" "skill")
         fi
 
         local needs_project_runtime=false
@@ -612,6 +649,7 @@ $new_body"
         esac
 
         write_file "$dest" "$result" "skill"
+        write_portable_references "$raw_body" "$(dirname "$dest")"
         if [[ "$needs_project_runtime" == true ]]; then
             local runtime_dir
             runtime_dir="$(dirname "$dest")/scripts"
@@ -645,11 +683,15 @@ install_agents_for_target() {
         content=$(<"$agent_file")
         local desc
         desc=$(get_fm_value "$content" "description")
-        local new_body
-        new_body=$(transform_body "$target" "$(get_body "$content")")
+        local raw_body body_component new_body
+        raw_body=$(get_body "$content")
+        body_component="agent"
+        [[ "$target" == "pi" ]] && body_component="skill"
+        new_body=$(transform_body "$target" "$raw_body" "$body_component")
 
         local dest_base
         dest_base=$(get_dest_base "$target")
+        local portable_dir="$dest_base/agents"
 
         case "$target" in
             codex)
@@ -694,10 +736,13 @@ $new_body" "agent"
                 local new_fm
                 new_fm=$(transform_frontmatter "$target" "skill" "$content" "$installed_name")
                 local dest="$dest_base/skills/${installed_name}/SKILL.md"
+                portable_dir="$dest_base/skills/${installed_name}"
                 write_file "$dest" "$new_fm
 $new_body" "review agent"
                 ;;
         esac
+
+        write_portable_references "$raw_body" "$portable_dir"
 
         ((AGENT_COUNT++)) || true
     done
