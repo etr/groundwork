@@ -254,6 +254,36 @@ codex_effort_for_claude() {
     esac
 }
 
+codex_model_for_agent() {
+    local agent_name="$1" source_model="$2"
+    case "$agent_name" in
+        architecture-task-alignment-checker|code-quality-reviewer|code-simplifier|conventions-reviewer|design-consistency-checker|design-task-alignment-checker|housekeeper|performance-reviewer|prd-task-alignment-checker|test-quality-reviewer)
+            echo "gpt-5.6-luna"
+            ;;
+        architecture-alignment-checker|cloud-infrastructure-reviewer|prd-architecture-checker|security-reviewer|spec-alignment-checker|task-executor|validation-fixer)
+            echo "gpt-5.6-terra"
+            ;;
+        researcher)
+            echo "gpt-5.6-sol"
+            ;;
+        *)
+            codex_model_for_claude "$source_model"
+            ;;
+    esac
+}
+
+codex_effort_for_agent() {
+    local agent_name="$1" source_effort="$2"
+    case "$agent_name" in
+        architecture-alignment-checker|architecture-task-alignment-checker|cloud-infrastructure-reviewer|code-quality-reviewer|code-simplifier|conventions-reviewer|design-consistency-checker|design-task-alignment-checker|housekeeper|performance-reviewer|prd-architecture-checker|prd-task-alignment-checker|researcher|security-reviewer|spec-alignment-checker|task-executor|test-quality-reviewer|validation-fixer)
+            echo "high"
+            ;;
+        *)
+            codex_effort_for_claude "$source_effort"
+            ;;
+    esac
+}
+
 # Recursively inline required skill bodies into a parent skill.
 # Appends dependency content as appendix sections.
 # Uses _INLINE_VISITED (global within subshell) to prevent duplicates.
@@ -615,6 +645,10 @@ $inlined_deps"
         else
             new_body=$(transform_body "$target" "$raw_body" "skill")
         fi
+        if [[ "$target" == "codex" ]]; then
+            new_body=$(printf '%s\n' "$new_body" | node \
+                "$SOURCE_DIR/lib/apply-codex-skill-policy.js" --skill "$skill_name")
+        fi
 
         local needs_project_runtime=false
         local needs_runtime_context=false
@@ -698,8 +732,8 @@ install_agents_for_target() {
                 local claude_model claude_effort codex_model codex_effort
                 claude_model=$(get_fm_value "$content" "model")
                 claude_effort=$(get_fm_value "$content" "effort")
-                codex_model=$(codex_model_for_claude "$claude_model")
-                codex_effort=$(codex_effort_for_claude "$claude_effort")
+                codex_model=$(codex_model_for_agent "$agent_name" "$claude_model")
+                codex_effort=$(codex_effort_for_agent "$agent_name" "$claude_effort")
 
                 local render_args=(
                     --name "$agent_name"

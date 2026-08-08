@@ -29,6 +29,27 @@ const CODEX_STATUSLINE_BODY = path.join(
   'codex-skill-body.md'
 );
 
+const CODEX_AGENT_POLICY = {
+  'architecture-alignment-checker': ['gpt-5.6-terra', 'high'],
+  'architecture-task-alignment-checker': ['gpt-5.6-luna', 'high'],
+  'cloud-infrastructure-reviewer': ['gpt-5.6-terra', 'high'],
+  'code-quality-reviewer': ['gpt-5.6-luna', 'high'],
+  'code-simplifier': ['gpt-5.6-luna', 'high'],
+  'conventions-reviewer': ['gpt-5.6-luna', 'high'],
+  'design-consistency-checker': ['gpt-5.6-luna', 'high'],
+  'design-task-alignment-checker': ['gpt-5.6-luna', 'high'],
+  housekeeper: ['gpt-5.6-luna', 'high'],
+  'performance-reviewer': ['gpt-5.6-luna', 'high'],
+  'prd-architecture-checker': ['gpt-5.6-terra', 'high'],
+  'prd-task-alignment-checker': ['gpt-5.6-luna', 'high'],
+  researcher: ['gpt-5.6-sol', 'high'],
+  'security-reviewer': ['gpt-5.6-terra', 'high'],
+  'spec-alignment-checker': ['gpt-5.6-terra', 'high'],
+  'task-executor': ['gpt-5.6-terra', 'high'],
+  'test-quality-reviewer': ['gpt-5.6-luna', 'high'],
+  'validation-fixer': ['gpt-5.6-terra', 'high'],
+};
+
 // Test utilities (match the convention in the other tests/*.test.js files)
 let passed = 0;
 let failed = 0;
@@ -438,9 +459,9 @@ describe('Codex model recommendations', () => {
         path.join(root, '.codex', 'skills', 'groundwork-work-on', 'SKILL.md'),
         'utf8'
       );
-      assert.ok(workOn.includes('Terra or Sol at high effort'));
-      assert.ok(workOn.includes('/model terra'));
-      assert.ok(workOn.includes('if on Luna'));
+      assert.ok(workOn.includes('Use Terra/medium for routine orchestration'));
+      assert.ok(!workOn.includes('Terra or Sol at high effort'));
+      assert.ok(!workOn.includes('If effort is `low` or `medium`'));
       assert.ok(!workOn.includes('Sonnet or Opus'));
       assert.ok(!workOn.includes('/model sonnet'));
       assert.ok(!workOn.includes('Haiku'));
@@ -666,7 +687,7 @@ describe('exported project context runtime', () => {
 });
 
 describe('Codex native agent export', () => {
-  test('exports every Claude agent exactly once as valid Codex TOML', () => {
+  test('exports every Claude agent exactly once with the Codex utilization policy', () => {
     const root = runInstaller('codex');
     if (root === null) return;
     try {
@@ -678,18 +699,11 @@ describe('Codex native agent export', () => {
         .sort();
       assert.deepStrictEqual(actualNames, expectedNames);
 
-      const modelMap = {
-        sonnet: 'gpt-5.6-terra',
-        'opus[1m]': 'gpt-5.6-sol',
-      };
       for (const name of expectedNames) {
         const source = fs.readFileSync(path.join(AGENTS_DIR, name, 'AGENT.md'), 'utf8');
         const parsed = parseCodexAgentToml(
           fs.readFileSync(path.join(agentsDir, `${name}.toml`), 'utf8')
         );
-        const claudeModel = frontmatterValue(source, 'model');
-        const effort = frontmatterValue(source, 'effort');
-
         assert.strictEqual(parsed.name, name);
         assert.strictEqual(parsed.description, frontmatterValue(source, 'description'));
         const sourceHeading = source.replace(/^---\n[\s\S]*?\n---\n?/, '').split('\n')[0];
@@ -698,13 +712,11 @@ describe('Codex native agent export', () => {
           `${name}: transformed developer instructions lost their source heading`
         );
         assert.ok(parsed.developer_instructions.length > sourceHeading.length);
-        if (claudeModel && claudeModel !== 'inherit') {
-          assert.strictEqual(parsed.model, modelMap[claudeModel]);
-        } else {
-          assert.ok(!('model' in parsed), `${name}: inherited model must be omitted`);
-        }
-        if (effort) assert.strictEqual(parsed.model_reasoning_effort, effort);
-        else assert.ok(!('model_reasoning_effort' in parsed), `${name}: absent effort must be omitted`);
+        assert.deepStrictEqual(
+          [parsed.model, parsed.model_reasoning_effort],
+          CODEX_AGENT_POLICY[name],
+          `${name}: unexpected Codex model/effort policy`
+        );
 
         assert.strictEqual(
           fs.existsSync(path.join(root, '.codex', 'skills', `review-${name}`)),
@@ -715,6 +727,14 @@ describe('Codex native agent export', () => {
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  test('rewrites bounded Codex agent calls to use fresh context', () => {
+    const transformed = transformAgents(
+      '    Agent(subagent_type="groundwork:researcher:researcher", description="Research", prompt="Read /tmp/brief.md")'
+    );
+    assert.ok(transformed.includes('`fork_turns="none"`'));
+    assert.ok(transformed.includes('Read /tmp/brief.md'));
   });
 
   test('removes only exact legacy Groundwork agent skill files during migration', () => {
@@ -992,7 +1012,7 @@ describe('Codex native agent export', () => {
       );
 
       assert.ok(architecture.includes('Spawn the `researcher` custom agent'));
-      assert.ok(justDoIt.includes('Spawn these custom agents in parallel:'));
+      assert.ok(justDoIt.includes('Spawn these custom agents in parallel, each with `fork_turns="none"`:'));
       assert.ok(justDoIt.includes('(custom agent: `code-quality-reviewer`)'));
       assert.ok(!justDoIt.includes('(skill: `review-code-quality-reviewer`)'));
     } finally {
@@ -1005,7 +1025,7 @@ describe('Codex native agent export', () => {
       '    Agent(subagent_type="groundwork:researcher:researcher", description="Research", prompt="Check \\"quoted\\" path C:\\\\tmp")'
     );
     assert.strictEqual(single, [
-      '> Spawn the `researcher` custom agent for **Research** with this task:',
+      '> Spawn the `researcher` custom agent for **Research** with `fork_turns="none"` and this task:',
       '>',
       '> Check "quoted" path C:\\tmp',
       '',
@@ -1021,13 +1041,69 @@ describe('Codex native agent export', () => {
       '    )',
     ].join('\n'));
     assert.strictEqual(multiline, [
-      '> Spawn the `researcher` custom agent for **Research** with this task:',
+      '> Spawn the `researcher` custom agent for **Research** with `fork_turns="none"` and this task:',
       '>',
       '> First line',
       '>',
       '> Second "quoted" line',
       '',
     ].join('\n'));
+  });
+});
+
+describe('Codex consumption guardrails', () => {
+  test('caps validation and reruns only requesting or impacted reviewers', () => {
+    const root = runInstaller('codex');
+    if (root === null) return;
+    try {
+      const validate = fs.readFileSync(
+        path.join(root, '.codex', 'skills', 'groundwork-validate', 'SKILL.md'),
+        'utf8'
+      );
+      assert.ok(validate.includes('max_validation_iterations = 3'));
+      assert.ok(validate.includes('Do not rerun the full reviewer suite'));
+      assert.ok(validate.includes('request-changes` or whose owned files/domains changed'));
+      assert.ok(validate.includes('`fork_turns="none"`'));
+      assert.ok(!validate.includes('Always re-launch the code-simplifier and quality-reviewer'));
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('isolates work-on phases without pretending a skill can invoke compact', () => {
+    const root = runInstaller('codex');
+    if (root === null) return;
+    try {
+      const workOn = fs.readFileSync(
+        path.join(root, '.codex', 'skills', 'groundwork-work-on', 'SKILL.md'),
+        'utf8'
+      );
+      assert.ok(workOn.includes('Codex Phase Isolation'));
+      assert.ok(workOn.includes('fresh validation coordinator'));
+      assert.ok(workOn.includes('`fork_turns="none"`'));
+      assert.ok(workOn.includes('model `gpt-5.6-terra` at `medium` effort'));
+      assert.ok(!workOn.includes('Optional Context Clear Pause'));
+      assert.ok(!workOn.includes('run `/compact`'));
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('exports isolated low-cost deployment monitoring guidance', () => {
+    const root = runInstaller('codex');
+    if (root === null) return;
+    try {
+      const ship = fs.readFileSync(
+        path.join(root, '.codex', 'skills', 'groundwork-ship', 'SKILL.md'),
+        'utf8'
+      );
+      assert.ok(ship.includes('Codex Deployment Monitoring'));
+      assert.ok(ship.includes('model `gpt-5.6-luna` at `low` effort'));
+      assert.ok(ship.includes('one long-lived native watch command'));
+      assert.ok(ship.includes('`fork_turns="none"`'));
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 
