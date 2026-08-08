@@ -43,7 +43,7 @@ const CODEX_AGENT_POLICY = {
   'prd-architecture-checker': ['gpt-5.6-terra', 'high'],
   'prd-task-alignment-checker': ['gpt-5.6-luna', 'high'],
   researcher: ['gpt-5.6-sol', 'high'],
-  'security-reviewer': ['gpt-5.6-terra', 'high'],
+  'security-reviewer': ['gpt-5.6-sol', 'high'],
   'spec-alignment-checker': ['gpt-5.6-terra', 'high'],
   'task-executor': ['gpt-5.6-terra', 'high'],
   'test-quality-reviewer': ['gpt-5.6-luna', 'high'],
@@ -737,6 +737,30 @@ describe('Codex native agent export', () => {
     assert.ok(transformed.includes('Read /tmp/brief.md'));
   });
 
+  test('runs planning subagents on Terra at high effort', () => {
+    const transformed = transformAgents(
+      '    Agent(subagent_type="Plan", description="Plan TASK-001", prompt="Create the plan")'
+    );
+    assert.ok(transformed.includes('model `gpt-5.6-terra` at `high` effort'));
+
+    const root = runInstaller('codex');
+    if (root === null) return;
+    try {
+      for (const skill of ['plan-task', 'just-do-it']) {
+        const exported = fs.readFileSync(
+          path.join(root, '.codex', 'skills', `groundwork-${skill}`, 'SKILL.md'),
+          'utf8'
+        );
+        assert.ok(
+          exported.includes('model `gpt-5.6-terra` at `high` effort'),
+          `${skill}: planning subagent lacks an explicit Codex model/effort`
+        );
+      }
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('removes only exact legacy Groundwork agent skill files during migration', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-migrate-'));
     const names = agentDirs();
@@ -1052,6 +1076,44 @@ describe('Codex native agent export', () => {
 });
 
 describe('Codex consumption guardrails', () => {
+  test('uses routine coordinator policy for every orchestration-only skill', () => {
+    const root = runInstaller('codex');
+    if (root === null) return;
+    try {
+      for (const skill of ['build-unplanned', 'review-pr', 'task-validation-loop']) {
+        const exported = fs.readFileSync(
+          path.join(root, '.codex', 'skills', `groundwork-${skill}`, 'SKILL.md'),
+          'utf8'
+        );
+        assert.ok(
+          exported.includes('Use Terra/medium for routine orchestration'),
+          `${skill}: missing routine coordinator model policy`
+        );
+        assert.ok(!exported.includes('Terra or Sol at high effort'));
+        assert.ok(!exported.includes('If effort is `low` or `medium`'));
+      }
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('exports explicit Codex teammate models and effort for swarming', () => {
+    const root = runInstaller('codex');
+    if (root === null) return;
+    try {
+      const swarming = fs.readFileSync(
+        path.join(root, '.codex', 'skills', 'groundwork-just-do-it-swarming', 'SKILL.md'),
+        'utf8'
+      );
+      assert.ok(swarming.includes('model: "gpt-5.6-terra"'));
+      assert.ok(swarming.includes('reasoning_effort: "high"'));
+      assert.ok(swarming.includes('gpt-5.6-sol'));
+      assert.ok(!swarming.includes('model: "sol"'));
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('caps validation and reruns only requesting or impacted reviewers', () => {
     const root = runInstaller('codex');
     if (root === null) return;

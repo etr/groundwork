@@ -260,10 +260,10 @@ codex_model_for_agent() {
         architecture-task-alignment-checker|code-quality-reviewer|code-simplifier|conventions-reviewer|design-consistency-checker|design-task-alignment-checker|housekeeper|performance-reviewer|prd-task-alignment-checker|test-quality-reviewer)
             echo "gpt-5.6-luna"
             ;;
-        architecture-alignment-checker|cloud-infrastructure-reviewer|prd-architecture-checker|security-reviewer|spec-alignment-checker|task-executor|validation-fixer)
+        architecture-alignment-checker|cloud-infrastructure-reviewer|prd-architecture-checker|spec-alignment-checker|task-executor|validation-fixer)
             echo "gpt-5.6-terra"
             ;;
-        researcher)
+        researcher|security-reviewer)
             echo "gpt-5.6-sol"
             ;;
         *)
