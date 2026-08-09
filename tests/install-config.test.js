@@ -1114,7 +1114,7 @@ describe('Codex consumption guardrails', () => {
     }
   });
 
-  test('caps validation and reruns only requesting or impacted reviewers', () => {
+  test('leaves validation uncapped and reruns only requesting or impacted reviewers', () => {
     const root = runInstaller('codex');
     if (root === null) return;
     try {
@@ -1122,7 +1122,9 @@ describe('Codex consumption guardrails', () => {
         path.join(root, '.codex', 'skills', 'groundwork-validate', 'SKILL.md'),
         'utf8'
       );
-      assert.ok(validate.includes('max_validation_iterations = 3'));
+      assert.ok(!validate.includes('max_validation_iterations'));
+      assert.ok(!validate.includes('iteration cap reached'));
+      assert.ok(validate.includes('until ALL agents return `approve`'));
       assert.ok(validate.includes('Do not rerun the full reviewer suite'));
       assert.ok(validate.includes('request-changes` or whose owned files/domains changed'));
       assert.ok(validate.includes('`fork_turns="none"`'));

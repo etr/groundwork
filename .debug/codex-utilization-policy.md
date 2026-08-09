@@ -5,7 +5,7 @@ Resolved
 
 ## User Expectations Checked
 - Validation should run one comprehensive pass, then only impacted reviewers.
-- Autonomous validation should have a hard cap.
+- Autonomous validation should continue until all agents approve.
 - Review and implementation agents should not inherit the full root transcript.
 - Codex phase boundaries should compact or otherwise isolate context automatically.
 - Deployment monitoring should avoid repeated expensive root-context polls.
@@ -41,7 +41,7 @@ generated `work-on` workflow explicitly runs validation in the main conversation
 - Research defaults to Sol/high; routine review defaults to Luna/high.
 - Task execution defaults to Terra/high rather than inheriting the root model.
 - Every bounded agent gets `fork_turns="none"` plus paths/metadata in its prompt.
-- Validation stops after three total iterations and reruns only requesting or impacted reviewers.
+- Validation remains uncapped and reruns only requesting or impacted reviewers.
 - `work-on` starts validation in a fresh coordinator context instead of asking for a manual clear.
 - Deployment monitoring runs in a fresh Luna/low monitor using one long-lived watch command.
 
@@ -78,7 +78,7 @@ and phase isolation remain implicit or inherit root-session behavior.
 
 ## Fix Direction
 Add a tested Codex-only export policy: explicit per-role model/effort overrides, fresh agent forks,
-a three-iteration targeted validation policy, fresh validation coordination, and isolated deployment
+an uncapped targeted validation policy, fresh validation coordination, and isolated deployment
 monitoring. Keep Claude-source workflows unchanged.
 
 ## Fix Applied
@@ -89,7 +89,7 @@ monitoring. Keep Claude-source workflows unchanged.
 - Set routine orchestration guidance to Terra/medium.
 - Added `fork_turns="none"` to converted agent dispatches.
 - Replaced the manual pre-validation clear pause with a fresh Terra/medium validation coordinator.
-- Capped validation at three total iterations and removed blanket reviewer reruns.
+- Kept validation uncapped and removed blanket reviewer reruns.
 - Added fresh Luna/low monitoring guidance using one long-lived native watch command.
 
 ## Verification
