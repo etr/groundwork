@@ -257,10 +257,10 @@ codex_effort_for_claude() {
 codex_model_for_agent() {
     local agent_name="$1" source_model="$2"
     case "$agent_name" in
-        architecture-task-alignment-checker|code-quality-reviewer|code-simplifier|conventions-reviewer|design-consistency-checker|design-task-alignment-checker|housekeeper|performance-reviewer|prd-task-alignment-checker|test-quality-reviewer)
+        architecture-task-alignment-checker|code-simplifier|conventions-reviewer|design-task-alignment-checker|housekeeper|prd-task-alignment-checker)
             echo "gpt-5.6-luna"
             ;;
-        architecture-alignment-checker|cloud-infrastructure-reviewer|prd-architecture-checker|spec-alignment-checker|task-executor|validation-fixer)
+        architecture-alignment-checker|cloud-infrastructure-reviewer|code-quality-reviewer|design-consistency-checker|performance-reviewer|prd-architecture-checker|spec-alignment-checker|task-executor|test-quality-reviewer|validation-fixer)
             echo "gpt-5.6-terra"
             ;;
         researcher|security-reviewer)
@@ -652,7 +652,7 @@ $inlined_deps"
 
         local needs_project_runtime=false
         local needs_runtime_context=false
-        if [[ "$target" == "codex" && "$raw_body" == *'{{effort_level}}'* ]]; then
+        if [[ "$target" == "codex" && ( "$raw_body" == *'{{effort_level}}'* || "$skill_name" == "validate" ) ]]; then
             needs_runtime_context=true
             new_body="$(portable_runtime_context_preamble)
 
@@ -695,6 +695,11 @@ $new_body"
             runtime_dir="$(dirname "$dest")/scripts"
             write_file "$runtime_dir/runtime-context-cli.js" "$(<"$SOURCE_DIR/lib/runtime-context-cli.js")" "runtime context resolver"
         fi
+        if [[ "$target" == "codex" && "$skill_name" == "validate" ]]; then
+            local validator_dir
+            validator_dir="$(dirname "$dest")/scripts"
+            write_file "$validator_dir/validate-fixer-result.js" "$(<"$SOURCE_DIR/lib/validate-fixer-result.js")" "fixer result validator"
+        fi
         ((SKILL_COUNT++)) || true
     done
 }
@@ -723,6 +728,11 @@ install_agents_for_target() {
         [[ "$target" == "pi" ]] && body_component="skill"
         new_body=$(transform_body "$target" "$raw_body" "$body_component")
 
+        if [[ "$target" == "codex" ]]; then
+            new_body=$(printf '%s\n' "$new_body" | node \
+                "$SOURCE_DIR/lib/apply-codex-skill-policy.js" --agent "$agent_name")
+        fi
+
         local dest_base
         dest_base=$(get_dest_base "$target")
         local portable_dir="$dest_base/agents"
@@ -747,6 +757,10 @@ install_agents_for_target() {
                     "$SOURCE_DIR/lib/render-codex-agent.js" "${render_args[@]}")
                 local dest="$dest_base/agents/${agent_name}.toml"
                 write_codex_agent "$dest" "$codex_agent" "agent" "$dest_base"
+                if [[ "$agent_name" == "validation-fixer" ]]; then
+                    write_file "$dest_base/agents/$agent_name/scripts/validate-fixer-result.js" \
+                        "$(<"$SOURCE_DIR/lib/validate-fixer-result.js")" "fixer result validator"
+                fi
                 remove_legacy_codex_agent_skill "$agent_name" "$dest_base"
                 ;;
             opencode)

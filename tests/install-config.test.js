@@ -33,20 +33,20 @@ const CODEX_AGENT_POLICY = {
   'architecture-alignment-checker': ['gpt-5.6-terra', 'high'],
   'architecture-task-alignment-checker': ['gpt-5.6-luna', 'high'],
   'cloud-infrastructure-reviewer': ['gpt-5.6-terra', 'high'],
-  'code-quality-reviewer': ['gpt-5.6-luna', 'high'],
+  'code-quality-reviewer': ['gpt-5.6-terra', 'high'],
   'code-simplifier': ['gpt-5.6-luna', 'high'],
   'conventions-reviewer': ['gpt-5.6-luna', 'high'],
-  'design-consistency-checker': ['gpt-5.6-luna', 'high'],
+  'design-consistency-checker': ['gpt-5.6-terra', 'high'],
   'design-task-alignment-checker': ['gpt-5.6-luna', 'high'],
   housekeeper: ['gpt-5.6-luna', 'high'],
-  'performance-reviewer': ['gpt-5.6-luna', 'high'],
+  'performance-reviewer': ['gpt-5.6-terra', 'high'],
   'prd-architecture-checker': ['gpt-5.6-terra', 'high'],
   'prd-task-alignment-checker': ['gpt-5.6-luna', 'high'],
   researcher: ['gpt-5.6-sol', 'high'],
   'security-reviewer': ['gpt-5.6-sol', 'high'],
   'spec-alignment-checker': ['gpt-5.6-terra', 'high'],
   'task-executor': ['gpt-5.6-terra', 'high'],
-  'test-quality-reviewer': ['gpt-5.6-luna', 'high'],
+  'test-quality-reviewer': ['gpt-5.6-terra', 'high'],
   'validation-fixer': ['gpt-5.6-terra', 'high'],
 };
 
@@ -265,6 +265,7 @@ function createAgentFixture(agentMarkdown) {
     'render-codex-agent.js',
     'write-codex-agent.js',
     'remove-legacy-codex-agent-skill.js',
+    'apply-codex-skill-policy.js',
   ]) {
     const original = path.join(PLUGIN_ROOT, 'lib', file);
     if (fs.existsSync(original)) fs.copyFileSync(original, path.join(source, 'lib', file));
@@ -594,6 +595,49 @@ describe('Codex runtime context resolver', () => {
     assert.strictEqual(result.stdout, '');
     assert.ok(result.stderr.includes('Usage: runtime-context-cli.js --harness codex'));
   });
+
+  const concurrencyCases = [
+    {
+      name: 'recommends twelve opt-in agent slots when agents configuration is absent',
+      config: 'model = "gpt-5.6-terra"\n',
+      configured: null,
+      recommendation: 'Configure [agents].max_concurrency = 12 to opt into parallel validation capacity.',
+    },
+    {
+      name: 'recommends twelve opt-in agent slots when configured capacity is insufficient',
+      config: '[agents]\nmax_concurrency = 4\n',
+      configured: 4,
+      recommendation: 'Configure [agents].max_concurrency = 12 to opt into parallel validation capacity.',
+    },
+    {
+      name: 'recognizes twelve configured agent slots without asking to modify configuration',
+      config: '[agents]\nmax_concurrency = 12\n',
+      configured: 12,
+      recommendation: 'Agent concurrency already meets the recommended twelve slots.',
+    },
+  ];
+
+  for (const configCase of concurrencyCases) {
+    test(configCase.name, () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-runtime-concurrency-'));
+      try {
+        fs.mkdirSync(path.join(tmp, '.codex'));
+        fs.writeFileSync(path.join(tmp, '.codex', 'config.toml'), configCase.config);
+        const resolved = JSON.parse(execFileSync(
+          'node', [RUNTIME_CONTEXT, '--harness', 'codex'],
+          {
+            env: { ...process.env, HOME: tmp, CODEX_HOME: '' },
+            encoding: 'utf8',
+          }
+        ));
+        assert.strictEqual(resolved.agent_concurrency, configCase.configured);
+        assert.strictEqual(resolved.recommended_agent_concurrency, 12);
+        assert.strictEqual(resolved.concurrency_recommendation, configCase.recommendation);
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    });
+  }
 });
 
 describe('exported project context runtime', () => {
@@ -1165,6 +1209,39 @@ describe('Codex consumption guardrails', () => {
       assert.ok(ship.includes('model `gpt-5.6-luna` at `low` effort'));
       assert.ok(ship.includes('one long-lived native watch command'));
       assert.ok(ship.includes('`fork_turns="none"`'));
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('exports the Codex validation continuity and structured-fixer contract', () => {
+    const root = runInstaller('codex');
+    if (root === null) return;
+    try {
+      const validateDir = path.join(root, '.codex', 'skills', 'groundwork-validate');
+      const validate = fs.readFileSync(path.join(validateDir, 'SKILL.md'), 'utf8');
+      const fixerDir = path.join(root, '.codex', 'agents', 'validation-fixer');
+      const fixer = parseCodexAgentToml(
+        fs.readFileSync(path.join(root, '.codex', 'agents', 'validation-fixer.toml'), 'utf8')
+      ).developer_instructions;
+
+      assert.ok(validate.includes('original global ID'));
+      assert.ok(validate.includes('`resolved`, `persists`, or `regressed`'));
+      assert.ok(validate.includes('lightweight fingerprint only for unmatched new findings'));
+      assert.ok(validate.includes('prior findings, the structured fixer result, files_touched, and scoped post-fix evidence'));
+      assert.ok(validate.includes('Create `fixer_result_file` for each fixer pass'));
+      assert.ok(validate.includes('notification-driven long waits'));
+      assert.ok(!validate.includes('one-minute polling'));
+      assert.ok(validate.includes('recommended twelve slots'));
+      assert.ok(validate.includes('Do not modify `~/.codex/config.toml`'));
+      assert.ok(validate.includes('gpt-5.6-sol` at `high` effort for an elevated fixer batch'));
+      assert.ok(!validate.includes('max_validation_iterations'));
+
+      assert.ok(fixer.includes('explicitly load the `groundwork-test-driven-development` skill'));
+      assert.ok(!fixer.includes('you have all skills preloaded'));
+      assert.ok(fixer.includes('fixer_result_file'));
+      assert.ok(fixer.includes('validate-fixer-result.js'));
+      assert.ok(fs.existsSync(path.join(fixerDir, 'scripts', 'validate-fixer-result.js')));
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
