@@ -190,6 +190,130 @@ test('accepts reviewer findings with nullable file and line metadata', () => {
   }
 });
 
+test('accepts an approve verdict with major findings', () => {
+  const reviews = defaultReviews();
+  reviews[0].verdict = 'approve';
+  const artifacts = createArtifacts({ reviews });
+  try {
+    const result = validate(artifacts, ['--check-findings']);
+    assert.strictEqual(result.status, 0, result.stderr);
+    assert.deepStrictEqual(JSON.parse(result.stdout).finding_ids, [
+      'security-reviewer-iter1-3',
+    ]);
+  } finally {
+    fs.rmSync(artifacts.dir, { recursive: true, force: true });
+  }
+});
+
+test('retains approved major findings as unrequested ledger references', () => {
+  const reviews = defaultReviews();
+  reviews[0].verdict = 'approve';
+  reviews[0].findings[1].severity = 'major';
+  const artifacts = createArtifacts({ reviews: [reviews[0]] });
+  try {
+    const output = JSON.parse(validate(artifacts, ['--check-findings']).stdout);
+    assert.deepStrictEqual(output.finding_ids, []);
+    assert.deepStrictEqual(
+      output.finding_refs.map(({ id, severity, verdict, requested }) => ({
+        id, severity, verdict, requested,
+      })),
+      [
+        {
+          id: 'code-quality-reviewer-iter1-1',
+          severity: 'major',
+          verdict: 'approve',
+          requested: false,
+        },
+        {
+          id: 'code-quality-reviewer-iter1-2',
+          severity: 'major',
+          verdict: 'approve',
+          requested: false,
+        },
+      ]
+    );
+  } finally {
+    fs.rmSync(artifacts.dir, { recursive: true, force: true });
+  }
+});
+
+test('rejects an approve verdict with a critical finding', () => {
+  const reviews = defaultReviews();
+  reviews[1].verdict = 'approve';
+  const artifacts = createArtifacts({ reviews });
+  try {
+    expectRejected(
+      validate(artifacts, ['--check-findings']),
+      'approve review cannot contain critical findings'
+    );
+  } finally {
+    fs.rmSync(artifacts.dir, { recursive: true, force: true });
+  }
+});
+
+test('rejects a request-changes verdict without an actionable finding', () => {
+  const reviews = defaultReviews();
+  reviews[0].findings = [reviews[0].findings[1]];
+  const artifacts = createArtifacts({ reviews });
+  try {
+    expectRejected(
+      validate(artifacts, ['--check-findings']),
+      'request-changes review requires a critical or major finding'
+    );
+  } finally {
+    fs.rmSync(artifacts.dir, { recursive: true, force: true });
+  }
+});
+
+test('emits a stable finding fingerprint across iterations and line shifts', () => {
+  const firstReviews = defaultReviews();
+  const secondReviews = defaultReviews().map((review) => ({
+    ...review,
+    iteration: 2,
+    findings: review.findings.map((finding) => ({ ...finding, line: finding.line + 20 })),
+  }));
+  const first = createArtifacts({ reviews: firstReviews });
+  const second = createArtifacts({ iteration: 2, reviews: secondReviews });
+  try {
+    const firstResult = JSON.parse(validate(first, ['--check-findings']).stdout);
+    const secondResult = JSON.parse(validate(second, ['--check-findings']).stdout);
+    assert.match(firstResult.finding_refs[0].fingerprint, /^finding:[a-f0-9]{16}$/);
+    assert.strictEqual(
+      firstResult.finding_refs[0].fingerprint,
+      secondResult.finding_refs[0].fingerprint
+    );
+    assert.notStrictEqual(firstResult.finding_refs[0].id, secondResult.finding_refs[0].id);
+  } finally {
+    fs.rmSync(first.dir, { recursive: true, force: true });
+    fs.rmSync(second.dir, { recursive: true, force: true });
+  }
+});
+
+test('fingerprint distinguishes every identity input', () => {
+  const base = defaultReviews()[0];
+  const variants = [
+    { ...base, agent: 'test-quality-reviewer' },
+    { ...base, findings: [{ ...base.findings[0], category: 'security' }] },
+    { ...base, findings: [{ ...base.findings[0], file: 'lib/other.js' }] },
+    { ...base, findings: [{ ...base.findings[0], finding: 'A different defect.' }] },
+  ];
+
+  function firstFingerprint(review) {
+    const artifacts = createArtifacts({ reviews: [{ ...review, findings: [review.findings[0]] }] });
+    try {
+      return JSON.parse(validate(artifacts, ['--check-findings']).stdout)
+        .finding_refs[0].fingerprint;
+    } finally {
+      fs.rmSync(artifacts.dir, { recursive: true, force: true });
+    }
+  }
+
+  const baseFingerprint = firstFingerprint({ ...base, findings: [base.findings[0]] });
+  for (const variant of variants) {
+    assert.notStrictEqual(firstFingerprint(variant), baseFingerprint);
+  }
+});
+
 test('accepts a partial result with a reason for each skipped finding', () => {
   withArtifacts({
     result: {

@@ -1375,9 +1375,13 @@ describe('Codex consumption guardrails', () => {
       ).developer_instructions;
 
       assert.ok(validate.includes('original global ID'));
+      assert.ok(validate.includes('artifact validator\'s `finding_refs`'));
       assert.ok(validate.includes('`resolved`, `persists`, or `regressed`'));
-      assert.ok(validate.includes('lightweight fingerprint only for unmatched new findings'));
-      assert.ok(validate.includes('prior findings, the structured fixer result, files_touched, and scoped post-fix evidence'));
+      assert.ok(validate.includes('prior stable fingerprint'));
+      assert.ok(validate.includes('prior finding IDs and status'));
+      assert.ok(validate.includes('validated fixer result'));
+      assert.ok(validate.includes('post-fix changed paths and diff stat'));
+      assert.ok(validate.includes('current project-gate result'));
       assert.ok(validate.includes('Create `fixer_result_file` for each fixer pass'));
       assert.ok(validate.includes('coordinator-owned manifest'));
       assert.ok(validate.includes('Ignore the reviewer-returned `findings_file` value'));
@@ -1387,13 +1391,20 @@ describe('Codex consumption guardrails', () => {
       assert.ok(!validate.includes('--finding-ids'));
       assert.ok(validate.includes('notification-driven long waits'));
       assert.ok(!validate.includes('one-minute polling'));
+      assert.ok(validate.includes('Never issue fixed-interval status polls'));
+      assert.ok(validate.includes('Never pipe gate output through `tail`'));
+      assert.ok(validate.includes('findings-project-gates-iter<N>.json'));
+      assert.ok(validate.includes('same unchanged worktree state'));
+      assert.ok(validate.includes('Emit every independent reviewer `spawn_agent` call in one batch'));
       assert.ok(validate.includes('recommended twelve slots'));
       assert.ok(validate.includes('max_concurrent_threads_per_session = 12'));
       assert.ok(validate.includes('Do not modify `~/.codex/config.toml`'));
       assert.ok(validate.includes('Use Sol/high for the validation coordinator'));
       assert.ok(!validate.includes('Terra at medium effort is the default coordinator'));
       assert.ok(!validate.includes('Use Terra/medium for routine orchestration'));
-      assert.ok(validate.includes('gpt-5.6-sol` at `high` effort for an elevated fixer batch'));
+      assert.ok(validate.includes('two or more reviewer domains'));
+      assert.ok(validate.includes('model `gpt-5.6-sol`'));
+      assert.ok(validate.includes('`reasoning_effort: "high"`'));
       assert.ok(!validate.includes('max_validation_iterations'));
 
       assert.ok(fixer.includes('explicitly load the `groundwork-test-driven-development` skill'));
@@ -1454,6 +1465,10 @@ describe('Codex consumption guardrails', () => {
         assert.deepStrictEqual(JSON.parse(validation.stdout).finding_ids, [
           'security-reviewer-iter1-1',
         ]);
+        assert.match(
+          JSON.parse(validation.stdout).finding_refs[0].fingerprint,
+          /^finding:[a-f0-9]{16}$/
+        );
       } finally {
         fs.rmSync(findingsDir, { recursive: true, force: true });
       }
