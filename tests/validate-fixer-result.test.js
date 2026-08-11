@@ -172,6 +172,24 @@ test('validates findings independently before fixer use', () => {
   }
 });
 
+test('accepts reviewer findings with nullable file and line metadata', () => {
+  const reviews = defaultReviews();
+  reviews[0].findings[0].file = null;
+  reviews[0].findings[0].line = null;
+  reviews[1].findings[0].line = null;
+  const artifacts = createArtifacts({ reviews });
+  try {
+    const result = validate(artifacts, ['--check-findings']);
+    assert.strictEqual(result.status, 0, result.stderr);
+    assert.deepStrictEqual(JSON.parse(result.stdout).finding_ids, [
+      'code-quality-reviewer-iter1-1',
+      'security-reviewer-iter1-3',
+    ]);
+  } finally {
+    fs.rmSync(artifacts.dir, { recursive: true, force: true });
+  }
+});
+
 test('accepts a partial result with a reason for each skipped finding', () => {
   withArtifacts({
     result: {
