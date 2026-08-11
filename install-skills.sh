@@ -687,18 +687,23 @@ $new_body"
         if [[ "$needs_project_runtime" == true ]]; then
             local runtime_dir
             runtime_dir="$(dirname "$dest")/scripts"
-            write_file "$runtime_dir/project-context-cli.js" "$(<"$SOURCE_DIR/lib/project-context-cli.js")" "project context runtime"
-            write_file "$runtime_dir/project-context.js" "$(<"$SOURCE_DIR/lib/project-context.js")" "project context runtime"
+            if [[ "$target" == "codex" ]]; then
+                write_codex_agent "$runtime_dir/project-context-cli.js" "$(<"$SOURCE_DIR/lib/project-context-cli.js")" "project context runtime" "$dest_base"
+                write_codex_agent "$runtime_dir/project-context.js" "$(<"$SOURCE_DIR/lib/project-context.js")" "project context runtime" "$dest_base"
+            else
+                write_file "$runtime_dir/project-context-cli.js" "$(<"$SOURCE_DIR/lib/project-context-cli.js")" "project context runtime"
+                write_file "$runtime_dir/project-context.js" "$(<"$SOURCE_DIR/lib/project-context.js")" "project context runtime"
+            fi
         fi
         if [[ "$needs_runtime_context" == true ]]; then
             local runtime_dir
             runtime_dir="$(dirname "$dest")/scripts"
-            write_file "$runtime_dir/runtime-context-cli.js" "$(<"$SOURCE_DIR/lib/runtime-context-cli.js")" "runtime context resolver"
+            write_codex_agent "$runtime_dir/runtime-context-cli.js" "$(<"$SOURCE_DIR/lib/runtime-context-cli.js")" "runtime context resolver" "$dest_base"
         fi
         if [[ "$target" == "codex" && "$skill_name" == "validate" ]]; then
             local validator_dir
             validator_dir="$(dirname "$dest")/scripts"
-            write_file "$validator_dir/validate-fixer-result.js" "$(<"$SOURCE_DIR/lib/validate-fixer-result.js")" "fixer result validator"
+            write_codex_agent "$validator_dir/validate-fixer-result.js" "$(<"$SOURCE_DIR/lib/validate-fixer-result.js")" "fixer result validator" "$dest_base"
         fi
         ((SKILL_COUNT++)) || true
     done
@@ -758,8 +763,8 @@ install_agents_for_target() {
                 local dest="$dest_base/agents/${agent_name}.toml"
                 write_codex_agent "$dest" "$codex_agent" "agent" "$dest_base"
                 if [[ "$agent_name" == "validation-fixer" ]]; then
-                    write_file "$dest_base/agents/$agent_name/scripts/validate-fixer-result.js" \
-                        "$(<"$SOURCE_DIR/lib/validate-fixer-result.js")" "fixer result validator"
+                    write_codex_agent "$dest_base/agents/$agent_name/scripts/validate-fixer-result.js" \
+                        "$(<"$SOURCE_DIR/lib/validate-fixer-result.js")" "fixer result validator" "$dest_base"
                 fi
                 remove_legacy_codex_agent_skill "$agent_name" "$dest_base"
                 ;;

@@ -596,22 +596,71 @@ describe('Codex runtime context resolver', () => {
     assert.ok(result.stderr.includes('Usage: runtime-context-cli.js --harness codex'));
   });
 
+  const concurrencyRecommendation =
+    'Configure [agents].max_concurrent_threads_per_session = 12 to opt into parallel validation capacity.';
+
+  function resolveConcurrency(config) {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-runtime-concurrency-negative-'));
+    try {
+      const codexDir = path.join(tmp, '.codex');
+      const configFile = path.join(codexDir, 'config.toml');
+      fs.mkdirSync(codexDir);
+      fs.writeFileSync(configFile, config);
+      const before = fs.readFileSync(configFile);
+      const resolved = JSON.parse(execFileSync(
+        'node', [RUNTIME_CONTEXT, '--harness', 'codex'],
+        {
+          env: { ...process.env, HOME: tmp, CODEX_HOME: '' },
+          encoding: 'utf8',
+        }
+      ));
+      assert.deepStrictEqual(fs.readFileSync(configFile), before);
+      return resolved;
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+
+  test('ignores deprecated max_concurrency and recommends the official key without rewriting config', () => {
+    const resolved = resolveConcurrency('[agents]\nmax_concurrency = 12\n');
+    assert.strictEqual(resolved.agent_concurrency, null);
+    assert.strictEqual(resolved.concurrency_recommendation, concurrencyRecommendation);
+  });
+
+  test('ignores the concurrency key in the wrong TOML table without rewriting config', () => {
+    const resolved = resolveConcurrency('[tui]\nmax_concurrent_threads_per_session = 12\n');
+    assert.strictEqual(resolved.agent_concurrency, null);
+    assert.strictEqual(resolved.concurrency_recommendation, concurrencyRecommendation);
+  });
+
+  test('rejects zero concurrency without rewriting config', () => {
+    const resolved = resolveConcurrency('[agents]\nmax_concurrent_threads_per_session = 0\n');
+    assert.strictEqual(resolved.agent_concurrency, null);
+    assert.strictEqual(resolved.concurrency_recommendation, concurrencyRecommendation);
+  });
+
+  test('rejects invalid concurrency syntax without rewriting config', () => {
+    const resolved = resolveConcurrency('[agents]\nmax_concurrent_threads_per_session = "twelve"\n');
+    assert.strictEqual(resolved.agent_concurrency, null);
+    assert.strictEqual(resolved.concurrency_recommendation, concurrencyRecommendation);
+  });
+
   const concurrencyCases = [
     {
       name: 'recommends twelve opt-in agent slots when agents configuration is absent',
       config: 'model = "gpt-5.6-terra"\n',
       configured: null,
-      recommendation: 'Configure [agents].max_concurrency = 12 to opt into parallel validation capacity.',
+      recommendation: 'Configure [agents].max_concurrent_threads_per_session = 12 to opt into parallel validation capacity.',
     },
     {
       name: 'recommends twelve opt-in agent slots when configured capacity is insufficient',
-      config: '[agents]\nmax_concurrency = 4\n',
+      config: '[agents]\nmax_concurrent_threads_per_session = 4\n',
       configured: 4,
-      recommendation: 'Configure [agents].max_concurrency = 12 to opt into parallel validation capacity.',
+      recommendation: 'Configure [agents].max_concurrent_threads_per_session = 12 to opt into parallel validation capacity.',
     },
     {
       name: 'recognizes twelve configured agent slots without asking to modify configuration',
-      config: '[agents]\nmax_concurrency = 12\n',
+      config: '[agents]\nmax_concurrent_threads_per_session = 12\n',
       configured: 12,
       recommendation: 'Agent concurrency already meets the recommended twelve slots.',
     },
@@ -1066,6 +1115,64 @@ describe('Codex native agent export', () => {
     }
   });
 
+  for (const helperCase of [
+    {
+      name: 'validate-skill final helper symlink',
+      parent: ['.codex', 'skills', 'groundwork-validate', 'scripts'],
+      final: true,
+    },
+    {
+      name: 'validate-skill helper ancestor symlink',
+      parent: ['.codex', 'skills', 'groundwork-validate', 'scripts'],
+      final: false,
+    },
+    {
+      name: 'validation-fixer final helper symlink',
+      parent: ['.codex', 'agents', 'validation-fixer', 'scripts'],
+      final: true,
+    },
+    {
+      name: 'validation-fixer helper ancestor symlink',
+      parent: ['.codex', 'agents', 'validation-fixer', 'scripts'],
+      final: false,
+    },
+  ]) {
+    test(`refuses ${helperCase.name}`, () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-helper-symlink-'));
+      const external = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-helper-external-'));
+      const marker = path.join(external, 'marker');
+      fs.writeFileSync(marker, 'unchanged');
+      const parent = path.join(root, ...helperCase.parent);
+      if (helperCase.final) {
+        fs.mkdirSync(parent, { recursive: true });
+        fs.symlinkSync(marker, path.join(parent, 'validate-fixer-result.js'));
+      } else {
+        fs.mkdirSync(path.dirname(parent), { recursive: true });
+        fs.symlinkSync(external, parent);
+      }
+
+      try {
+        const result = spawnSync(
+          'bash',
+          [INSTALLER, '--codex', '--project', '--force', '--source', PLUGIN_ROOT],
+          { cwd: root, encoding: 'utf8' }
+        );
+        assert.notStrictEqual(result.status, 0, `${helperCase.name} was followed`);
+        const expectedError = helperCase.final
+          ? 'Refusing symlink at Codex agent destination:'
+          : 'Refusing symlink in Codex agent path:';
+        assert.ok(
+          result.stderr.includes(expectedError),
+          `${helperCase.name} failed for an unrelated reason:\n${result.stderr}`
+        );
+        assert.strictEqual(fs.readFileSync(marker, 'utf8'), 'unchanged');
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+        fs.rmSync(external, { recursive: true, force: true });
+      }
+    });
+  }
+
   test('rewrites Codex Agent calls to name the installed custom agents', () => {
     const root = runInstaller('codex');
     if (root === null) return;
@@ -1189,7 +1296,8 @@ describe('Codex consumption guardrails', () => {
       assert.ok(workOn.includes('Codex Phase Isolation'));
       assert.ok(workOn.includes('fresh validation coordinator'));
       assert.ok(workOn.includes('`fork_turns="none"`'));
-      assert.ok(workOn.includes('model `gpt-5.6-terra` at `medium` effort'));
+      assert.ok(workOn.includes('model `gpt-5.6-sol` at `high` effort'));
+      assert.ok(!workOn.includes('model `gpt-5.6-terra` at `medium` effort'));
       assert.ok(!workOn.includes('Optional Context Clear Pause'));
       assert.ok(!workOn.includes('run `/compact`'));
     } finally {
@@ -1230,10 +1338,20 @@ describe('Codex consumption guardrails', () => {
       assert.ok(validate.includes('lightweight fingerprint only for unmatched new findings'));
       assert.ok(validate.includes('prior findings, the structured fixer result, files_touched, and scoped post-fix evidence'));
       assert.ok(validate.includes('Create `fixer_result_file` for each fixer pass'));
+      assert.ok(validate.includes('coordinator-owned manifest'));
+      assert.ok(validate.includes('Ignore the reviewer-returned `findings_file` value'));
+      assert.ok(validate.includes('Parse only the compact response metadata'));
+      assert.ok(!validate.includes('Read **only** these fields: `verdict`, `score`, `summary`, `counts.critical`, `counts.major`, `counts.minor`, and `findings_file`'));
+      assert.ok(validate.includes('--manifest "fixer-manifest-iter<N>.json"'));
+      assert.ok(!validate.includes('--finding-ids'));
       assert.ok(validate.includes('notification-driven long waits'));
       assert.ok(!validate.includes('one-minute polling'));
       assert.ok(validate.includes('recommended twelve slots'));
+      assert.ok(validate.includes('max_concurrent_threads_per_session = 12'));
       assert.ok(validate.includes('Do not modify `~/.codex/config.toml`'));
+      assert.ok(validate.includes('Use Sol/high for the validation coordinator'));
+      assert.ok(!validate.includes('Terra at medium effort is the default coordinator'));
+      assert.ok(!validate.includes('Use Terra/medium for routine orchestration'));
       assert.ok(validate.includes('gpt-5.6-sol` at `high` effort for an elevated fixer batch'));
       assert.ok(!validate.includes('max_validation_iterations'));
 
@@ -1241,7 +1359,63 @@ describe('Codex consumption guardrails', () => {
       assert.ok(!fixer.includes('you have all skills preloaded'));
       assert.ok(fixer.includes('fixer_result_file'));
       assert.ok(fixer.includes('validate-fixer-result.js'));
+      assert.ok(fixer.includes('coordinator-owned manifest'));
+      assert.ok(!fixer.includes('--finding-ids'));
+      assert.ok(!fixer.includes('FINDINGS FILES:'));
       assert.ok(fs.existsSync(path.join(fixerDir, 'scripts', 'validate-fixer-result.js')));
+
+      const findingsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'groundwork-validation-'));
+      try {
+        const review = {
+          agent: 'security-reviewer',
+          iteration: 1,
+          summary: 'One critical issue',
+          score: 50,
+          verdict: 'request-changes',
+          findings: [{
+            id: 1,
+            severity: 'critical',
+            category: 'injection',
+            file: 'lib/example.js',
+            line: 1,
+            finding: 'Unsafe data reaches a shell.',
+            recommendation: 'Remove the shell data path.',
+          }],
+        };
+        fs.writeFileSync(
+          path.join(findingsDir, 'findings-security-reviewer-iter1.json'),
+          JSON.stringify(review)
+        );
+        fs.writeFileSync(
+          path.join(findingsDir, 'fixer-manifest-iter1.json'),
+          JSON.stringify({
+            iteration: 1,
+            result_file: 'fixer-result-iter1.json',
+            reviews: [{
+              file: 'findings-security-reviewer-iter1.json',
+              agent: 'security-reviewer',
+              iteration: 1,
+              summary: review.summary,
+              score: review.score,
+              verdict: review.verdict,
+              counts: { critical: 1, major: 0, minor: 0 },
+            }],
+          })
+        );
+        const installedValidator = path.join(validateDir, 'scripts', 'validate-fixer-result.js');
+        const validation = spawnSync('node', [
+          installedValidator,
+          '--findings-dir', findingsDir,
+          '--manifest', 'fixer-manifest-iter1.json',
+          '--check-findings',
+        ], { encoding: 'utf8' });
+        assert.strictEqual(validation.status, 0, validation.stderr);
+        assert.deepStrictEqual(JSON.parse(validation.stdout).finding_ids, [
+          'security-reviewer-iter1-1',
+        ]);
+      } finally {
+        fs.rmSync(findingsDir, { recursive: true, force: true });
+      }
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
