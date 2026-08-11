@@ -40,7 +40,7 @@ Persist the selection and use the returned project/root values as the active con
    ```bash
    node ${CLAUDE_PLUGIN_ROOT}/lib/persist-project.js "<selected-name>"
    ```
-The script resolves its own terminal-pane identity internally — no env vars required.
+The script resolves its own harness-specific selection scope internally — no env vars required.
 
 Confirm: "Switched to project **<name>**. Specs at `<path>/specs/`."
 

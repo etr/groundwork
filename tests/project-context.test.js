@@ -51,7 +51,8 @@ function cleanEnv(home) {
   const env = { ...process.env, HOME: home };
   for (const name of [
     'CODEX_HOME', 'CLAUDE_CONFIG_DIR', 'OPENCODE_CONFIG_DIR',
-    'XDG_CONFIG_HOME', 'KIRO_HOME', 'PI_HOME', 'TMUX_PANE'
+    'XDG_CONFIG_HOME', 'KIRO_HOME', 'PI_HOME', 'TMUX', 'TMUX_PANE',
+    'TERM_SESSION_ID', 'CODEX_THREAD_ID'
   ]) delete env[name];
   return env;
 }
@@ -157,6 +158,54 @@ describe('project context CLI', () => {
       assert.notStrictEqual(codex.state_file, claude.state_file);
       assert.ok(fs.existsSync(codex.state_file));
       assert.ok(fs.existsSync(claude.state_file));
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  test('Codex selection survives cwd changes within the same tmux pane', () => {
+    const repo = makeMonorepo();
+    const home = path.join(repo, 'home');
+    fs.mkdirSync(home);
+    const env = cleanEnv(home);
+    env.TMUX = '/tmp/tmux-test/default,123,0';
+    env.TMUX_PANE = '%1';
+
+    try {
+      const selected = runCli(repo, env, 'select', 'web', '--harness', 'codex');
+      const resolved = runCli(
+        path.join(repo, 'apps', 'web'),
+        env,
+        'resolve',
+        '--harness',
+        'codex'
+      );
+
+      assert.strictEqual(resolved.selection_required, false);
+      assert.strictEqual(resolved.project_name, 'web');
+      assert.strictEqual(resolved.project_root, 'apps/web');
+      assert.strictEqual(resolved.state_file, selected.state_file);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  test('Codex selections do not cross tmux panes', () => {
+    const repo = makeMonorepo();
+    const home = path.join(repo, 'home');
+    fs.mkdirSync(home);
+    const firstPane = cleanEnv(home);
+    firstPane.TMUX = '/tmp/tmux-test/default,123,0';
+    firstPane.TMUX_PANE = '%1';
+    const secondPane = { ...firstPane, TMUX_PANE: '%2' };
+
+    try {
+      const selected = runCli(repo, firstPane, 'select', 'web', '--harness', 'codex');
+      const resolved = runCli(repo, secondPane, 'resolve', '--harness', 'codex');
+
+      assert.strictEqual(resolved.selection_required, true);
+      assert.strictEqual(resolved.project_name, '');
+      assert.notStrictEqual(resolved.state_file, selected.state_file);
     } finally {
       fs.rmSync(repo, { recursive: true, force: true });
     }

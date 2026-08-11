@@ -473,7 +473,7 @@ You can also pass a project name directly: `/groundwork:select-project api-serve
 
 - Specs are stored per-project: `<project-path>/specs/`
 - All planning, implementation, and sync skills are monorepo-aware
-- Project selection persists per terminal pane in the active harness's state directory (for example, `$CODEX_HOME/groundwork-state` or the corresponding Claude, OpenCode, Kiro, or Pi home)
+- Project selection persists per terminal pane in the active harness's state directory (for example, `$CODEX_HOME/groundwork-state` or the corresponding Claude, OpenCode, Kiro, or Pi home). Tmux identity comes from stable environment metadata, so Codex keeps tabs isolated even when its sandbox cannot access the tmux server socket.
 - Exported skills use their bundled resolver to derive the active project name, project root, and specs directory from that harness-scoped selection
 
 ## Internals
