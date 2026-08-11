@@ -410,16 +410,57 @@ describe('statusline target routing', () => {
         'utf8'
       );
       const expected = 'status_line = ["model-with-reasoning", "context-used", ' +
-        '"used-tokens", "five-hour-limit", "weekly-limit", "current-dir", "git-branch"]';
+        '"five-hour-limit", "weekly-limit", "current-dir", "git-branch"]';
+      const currentSetting = skill.match(
+        /The current Groundwork-owned native setting is:\n\n```toml\n([\s\S]*?)```/
+      );
 
       assert.ok(skill.includes(expected));
+      assert.ok(currentSetting);
+      assert.ok(!currentSetting[1].includes('"used-tokens"'));
       assert.ok(skill.includes('$CODEX_HOME'));
       assert.ok(skill.includes('preserve every unrelated TOML key and table'));
       assert.ok(skill.includes('ask the user before replacing it'));
-      assert.ok(skill.includes('already equals the exact Groundwork-owned value'));
-      assert.ok(skill.includes('remove it only when it exactly matches the Groundwork-owned value'));
+      assert.ok(skill.includes('already equals the current Groundwork-owned value'));
+      assert.ok(skill.includes('remove it only when it exactly matches either the current or legacy'));
       assert.ok(!skill.includes('settings.json'));
       assert.ok(!skill.includes('CLAUDE_PLUGIN_ROOT'));
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('Codex install reports the native Groundwork-project limitation', () => {
+    const root = runInstaller('codex');
+    if (root === null) return;
+    try {
+      const skill = fs.readFileSync(
+        path.join(root, '.codex', 'skills', 'groundwork-statusline', 'SKILL.md'),
+        'utf8'
+      );
+
+      assert.ok(skill.includes('cannot display the selected Groundwork monorepo project'));
+      assert.ok(skill.includes('Codex supports only fixed native statusline fields'));
+      assert.ok(!skill.includes('"project-name"'));
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('Codex install migrates and uninstalls the cumulative-token legacy value', () => {
+    const root = runInstaller('codex');
+    if (root === null) return;
+    try {
+      const skill = fs.readFileSync(
+        path.join(root, '.codex', 'skills', 'groundwork-statusline', 'SKILL.md'),
+        'utf8'
+      );
+      const legacy = 'status_line = ["model-with-reasoning", "context-used", ' +
+        '"used-tokens", "five-hour-limit", "weekly-limit", "current-dir", "git-branch"]';
+
+      assert.ok(skill.includes(legacy));
+      assert.ok(skill.includes('replace it with the current value without asking'));
+      assert.ok(skill.includes('matches either the current or legacy Groundwork-owned value'));
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

@@ -103,7 +103,7 @@ Groundwork includes an opt-in statusline workflow. Installing the plugin does no
 /groundwork:statusline install
 ```
 
-On Claude Code this installs Groundwork's three-line renderer. On Codex it configures the native statusline fields. Run `/groundwork:statusline uninstall` to remove only the configuration owned by Groundwork. No separate `groundwork-statusline` plugin is needed.
+On Claude Code this installs Groundwork's three-line renderer. On Codex it configures native fields and omits cumulative session-token usage so the context display remains scoped to the current context. Codex does not yet support custom statusline fields, so its statusline cannot show the selected Groundwork project within a monorepo. Run `/groundwork:statusline uninstall` to remove only the configuration owned by Groundwork. No separate `groundwork-statusline` plugin is needed.
 
 The Claude Code renderer requires `jq` and `curl`. The `gh` CLI is optional and adds the current pull-request number when available. Python 3 and Git are already Groundwork prerequisites.
 
