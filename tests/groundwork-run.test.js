@@ -445,34 +445,6 @@ describe('filesystem safety', () => {
     }
   });
 
-  test('rejects ignored base-file changes made by a phase', () => {
-    const { runTasks } = require(RUNNER);
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-ignored-base-'));
-    try {
-      initRepo(root);
-      fs.appendFileSync(path.join(root, '.gitignore'), 'scratch.log\n');
-      git(root, 'add', '.gitignore');
-      git(root, 'commit', '-m', 'ignore scratch log');
-      write(path.join(root, 'scratch.log'), 'before\n');
-      assert.throws(
-        () => runTasks(
-          { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
-          {
-            log: () => {},
-            invokePhase() {
-              write(path.join(root, '.groundwork-plans', 'TASK-004-plan.md'), '# Plan\n');
-              write(path.join(root, 'scratch.log'), 'after\n');
-              return 'RESULT: PLANNED | plan_file_path=.groundwork-plans/TASK-004-plan.md | identifier=TASK-004 | branch_prefix=task';
-            },
-          }
-        ),
-        /Ignored files in the base worktree changed/
-      );
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
   test('rejects unrelated ref changes made by a phase', () => {
     const { runTasks } = require(RUNNER);
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-unrelated-ref-'));
@@ -492,37 +464,6 @@ describe('filesystem safety', () => {
           }
         ),
         /refs outside/
-      );
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  test('rejects ignored-file changes in another registered worktree', () => {
-    const { runTasks } = require(RUNNER);
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-other-worktree-'));
-    const other = path.join(root, '.worktrees', 'OTHER');
-    try {
-      initRepo(root);
-      git(root, 'worktree', 'add', '-b', 'task/OTHER', other);
-      write(path.join(other, 'scratch.log'), 'before\n');
-      fs.appendFileSync(path.join(root, '.gitignore'), 'scratch.log\n');
-      git(root, 'add', '.gitignore');
-      git(root, 'commit', '-m', 'ignore scratch');
-      git(other, 'merge', 'main', '--ff-only');
-      assert.throws(
-        () => runTasks(
-          { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
-          {
-            log: () => {},
-            invokePhase() {
-              write(path.join(root, '.groundwork-plans', 'TASK-004-plan.md'), '# Plan\n');
-              write(path.join(other, 'scratch.log'), 'after\n');
-              return 'RESULT: PLANNED | plan_file_path=.groundwork-plans/TASK-004-plan.md | identifier=TASK-004 | branch_prefix=task';
-            },
-          }
-        ),
-        /unrelated worktree changed/
       );
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
@@ -564,42 +505,7 @@ describe('filesystem safety', () => {
     }
   });
 
-  test('rejects ignored-file changes inside an initialized submodule', () => {
-    const { runTasks } = require(RUNNER);
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-submodule-ignored-'));
-    const submodule = path.join(root, 'vendor', 'sub');
-    try {
-      initRepo(root);
-      fs.mkdirSync(submodule, { recursive: true });
-      git(submodule, 'init', '-b', 'main');
-      git(submodule, 'config', 'user.email', 'test@example.com');
-      git(submodule, 'config', 'user.name', 'Test User');
-      write(path.join(submodule, '.gitignore'), 'scratch.log\n');
-      git(submodule, 'add', '.');
-      git(submodule, 'commit', '-m', 'submodule base');
-      write(path.join(submodule, 'scratch.log'), 'before\n');
-      git(root, 'add', 'vendor/sub');
-      git(root, 'commit', '-m', 'add embedded submodule');
-      assert.throws(
-        () => runTasks(
-          { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
-          {
-            log: () => {},
-            invokePhase() {
-              write(path.join(root, '.groundwork-plans', 'TASK-004-plan.md'), '# Plan\n');
-              write(path.join(submodule, 'scratch.log'), 'after\n');
-              return 'RESULT: PLANNED | plan_file_path=.groundwork-plans/TASK-004-plan.md | identifier=TASK-004 | branch_prefix=task';
-            },
-          }
-        ),
-        /Ignored files in the base worktree changed/
-      );
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  test('rejects an ignored symlink that resolves outside the repository', () => {
+  test('allows an ignored virtualenv interpreter symlink to an external file', () => {
     const { runTasks } = require(RUNNER);
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-ignored-link-'));
     const external = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-link-target-')), 'target');
@@ -613,13 +519,38 @@ describe('filesystem safety', () => {
       assert.throws(
         () => runTasks(
           { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
-          { log: () => {}, invokePhase: () => { throw new Error('phase should not run'); } }
+          { log: () => {}, invokePhase: () => { throw new Error('phase reached'); } }
         ),
-        /Ignored symlink resolves outside/
+        /phase reached/
       );
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
       fs.rmSync(path.dirname(external), { recursive: true, force: true });
+    }
+  });
+
+  test('does not read contents of ignored cache files during preflight', () => {
+    const { runTasks } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-ignored-cache-'));
+    const cache = path.join(root, '.cache', 'opaque.bin');
+    try {
+      initRepo(root);
+      fs.appendFileSync(path.join(root, '.gitignore'), '.cache/\n');
+      git(root, 'add', '.gitignore');
+      git(root, 'commit', '-m', 'ignore cache');
+      write(cache, 'opaque\n');
+      fs.chmodSync(cache, 0o000);
+
+      assert.throws(
+        () => runTasks(
+          { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
+          { log: () => {}, invokePhase: () => { throw new Error('phase reached'); } }
+        ),
+        /phase reached/
+      );
+    } finally {
+      if (fs.existsSync(cache)) fs.chmodSync(cache, 0o600);
+      fs.rmSync(root, { recursive: true, force: true });
     }
   });
 });

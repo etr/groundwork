@@ -344,12 +344,8 @@ function assertNoCommandGitConfig(repoRoot) {
   }
 }
 
-function snapshotIgnoredFiles(repoRoot, excludedRoots, seen = new Set()) {
-  const canonicalRoot = fs.realpathSync(repoRoot);
-  if (seen.has(canonicalRoot)) throw new Error(`Recursive repository or submodule path: ${repoRoot}`);
-  seen.add(canonicalRoot);
+function snapshotIgnoredPaths(repoRoot, excludedRoots) {
   const hash = crypto.createHash('sha256');
-  const chunk = Buffer.allocUnsafe(64 * 1024);
   forEachGitRecord(
     repoRoot,
     ['ls-files', '--others', '--ignored', '--exclude-standard', '-z'],
@@ -357,44 +353,15 @@ function snapshotIgnoredFiles(repoRoot, excludedRoots, seen = new Set()) {
       const absolute = path.resolve(repoRoot, relative);
       if (!isContained(repoRoot, absolute)) throw new Error(`Ignored path escapes repository: ${relative}`);
       if (excludedRoots.some((root) => isContained(root, absolute))) return;
-      const stat = fs.lstatSync(absolute);
-      hash.update(`${relative}\0${stat.mode}\0`);
-      if (stat.isSymbolicLink()) {
-        const target = fs.realpathSync(absolute);
-        if (!isContained(canonicalRoot, target)) {
-          throw new Error(`Ignored symlink resolves outside its worktree: ${absolute}`);
-        }
-        hash.update(`link\0${fs.readlinkSync(absolute)}\0${target}\0`);
-        const targetStat = fs.statSync(target);
-        if (targetStat.isFile()) hash.update(fs.readFileSync(target));
-      } else if (stat.isFile()) {
-        hash.update(`file\0${stat.size}\0`);
-        const fd = fs.openSync(absolute, 'r');
-        try {
-          let read;
-          while ((read = fs.readSync(fd, chunk, 0, chunk.length, null)) > 0) {
-            hash.update(chunk.subarray(0, read));
-          }
-        } finally {
-          fs.closeSync(fd);
-        }
-      } else {
-        hash.update(`${stat.isDirectory() ? 'directory' : 'special'}\0`);
-      }
+      hash.update(`${relative}\0`);
     },
   );
-  for (const relative of initializedSubmodules(repoRoot)) {
-    const absolute = path.join(repoRoot, relative);
-    assertNoSymlinkComponents(repoRoot, absolute, 'Ignored-content submodule');
-    hash.update(`submodule\0${relative}\0${snapshotIgnoredFiles(absolute, [], seen)}\0`);
-  }
-  seen.delete(canonicalRoot);
   return hash.digest('hex');
 }
 
-function assertIgnoredFiles(repoRoot, excludedRoots, expected) {
-  if (snapshotIgnoredFiles(repoRoot, excludedRoots) !== expected) {
-    throw new Error('Ignored files in the base worktree changed during a model phase');
+function assertIgnoredPaths(repoRoot, excludedRoots, expected) {
+  if (snapshotIgnoredPaths(repoRoot, excludedRoots) !== expected) {
+    throw new Error('The ignored path set in the base worktree changed during a model phase');
   }
 }
 
@@ -440,7 +407,7 @@ function snapshotUnrelatedWorktrees(repoRoot, taskWorktree) {
     .filter((entry) => entry.path !== repoRoot && entry.path !== taskWorktree)
     .map((entry) => {
       assertClean(entry.path, `Unrelated worktree ${entry.path}`);
-      return `${entry.path}\0${execGit(entry.path, ['rev-parse', 'HEAD'])}\0${snapshotIgnoredFiles(entry.path, [])}`;
+      return `${entry.path}\0${execGit(entry.path, ['rev-parse', 'HEAD'])}\0${snapshotIgnoredPaths(entry.path, [])}`;
     })
     .join('\n');
 }
@@ -961,7 +928,7 @@ function runTasks(options, dependencies = {}) {
     path.join(repoRoot, '.worktrees'),
     path.join(projectRoot, '.groundwork-plans'),
   ];
-  const ignoredFiles = snapshotIgnoredFiles(repoRoot, ignoredExclusions);
+  const ignoredPaths = snapshotIgnoredPaths(repoRoot, ignoredExclusions);
 
   const callPhase = dependencies.invokePhase || invokePhase;
   function invokeChecked(input) {
@@ -977,7 +944,7 @@ function runTasks(options, dependencies = {}) {
     } finally {
       assertGitControls(commonDir, gitControls);
       assertPlanTree(projectRoot);
-      assertIgnoredFiles(repoRoot, ignoredExclusions, ignoredFiles);
+      assertIgnoredPaths(repoRoot, ignoredExclusions, ignoredPaths);
       assertRepositoryTransition(repoRoot, repositoryState, input);
       if (snapshotUnrelatedWorktrees(repoRoot, taskWorktree) !== repositoryState.unrelated) {
         throw new Error(`An unrelated worktree changed during ${input.phase}`);
