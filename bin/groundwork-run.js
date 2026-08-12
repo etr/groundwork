@@ -146,6 +146,63 @@ function execGit(cwd, args, options = {}) {
   return options.raw ? output : output.trim();
 }
 
+function forEachGitRecord(cwd, args, visit) {
+  const safeArgs = [
+    '-c', 'core.hooksPath=/dev/null',
+    '-c', 'core.fsmonitor=false',
+    '-c', 'commit.gpgsign=false',
+    ...args,
+  ];
+  const env = { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' };
+  delete env.GIT_DIR;
+  delete env.GIT_WORK_TREE;
+
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'groundwork-git-'));
+  const outputPath = path.join(tempDir, 'records');
+  let outputFd;
+  try {
+    outputFd = fs.openSync(outputPath, 'wx', 0o600);
+    const result = spawnSync('git', safeArgs, {
+      cwd,
+      encoding: 'utf8',
+      stdio: ['ignore', outputFd, 'pipe'],
+      env,
+    });
+    fs.closeSync(outputFd);
+    outputFd = undefined;
+    if (result.error) throw result.error;
+    if (result.status !== 0) {
+      throw new Error((result.stderr || '').trim() || `git exited with status ${result.status}`);
+    }
+
+    const inputFd = fs.openSync(outputPath, 'r');
+    const chunk = Buffer.allocUnsafe(64 * 1024);
+    let pending = Buffer.alloc(0);
+    try {
+      let bytesRead;
+      while ((bytesRead = fs.readSync(inputFd, chunk, 0, chunk.length, null)) > 0) {
+        const data = pending.length
+          ? Buffer.concat([pending, chunk.subarray(0, bytesRead)])
+          : chunk.subarray(0, bytesRead);
+        let start = 0;
+        let separator;
+        while ((separator = data.indexOf(0, start)) !== -1) {
+          if (separator > start) visit(data.subarray(start, separator).toString('utf8'));
+          start = separator + 1;
+        }
+        pending = Buffer.from(data.subarray(start));
+      }
+      if (pending.length) throw new Error('Git record output was not NUL-terminated');
+    } finally {
+      fs.closeSync(inputFd);
+    }
+  } finally {
+    if (outputFd !== undefined) fs.closeSync(outputFd);
+    if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
+    fs.rmdirSync(tempDir);
+  }
+}
+
 function isContained(parent, child) {
   const relative = path.relative(parent, child);
   return relative === '' || (!relative.startsWith('..' + path.sep) && relative !== '..' && !path.isAbsolute(relative));
@@ -292,42 +349,40 @@ function snapshotIgnoredFiles(repoRoot, excludedRoots, seen = new Set()) {
   if (seen.has(canonicalRoot)) throw new Error(`Recursive repository or submodule path: ${repoRoot}`);
   seen.add(canonicalRoot);
   const hash = crypto.createHash('sha256');
-  const ignored = execGit(
+  const chunk = Buffer.allocUnsafe(64 * 1024);
+  forEachGitRecord(
     repoRoot,
     ['ls-files', '--others', '--ignored', '--exclude-standard', '-z'],
-    { raw: true }
-  ).split('\0').filter(Boolean).sort();
-  const chunk = Buffer.allocUnsafe(64 * 1024);
-
-  for (const relative of ignored) {
-    const absolute = path.resolve(repoRoot, relative);
-    if (!isContained(repoRoot, absolute)) throw new Error(`Ignored path escapes repository: ${relative}`);
-    if (excludedRoots.some((root) => isContained(root, absolute))) continue;
-    const stat = fs.lstatSync(absolute);
-    hash.update(`${relative}\0${stat.mode}\0`);
-    if (stat.isSymbolicLink()) {
-      const target = fs.realpathSync(absolute);
-      if (!isContained(canonicalRoot, target)) {
-        throw new Error(`Ignored symlink resolves outside its worktree: ${absolute}`);
-      }
-      hash.update(`link\0${fs.readlinkSync(absolute)}\0${target}\0`);
-      const targetStat = fs.statSync(target);
-      if (targetStat.isFile()) hash.update(fs.readFileSync(target));
-    } else if (stat.isFile()) {
-      hash.update(`file\0${stat.size}\0`);
-      const fd = fs.openSync(absolute, 'r');
-      try {
-        let read;
-        while ((read = fs.readSync(fd, chunk, 0, chunk.length, null)) > 0) {
-          hash.update(chunk.subarray(0, read));
+    (relative) => {
+      const absolute = path.resolve(repoRoot, relative);
+      if (!isContained(repoRoot, absolute)) throw new Error(`Ignored path escapes repository: ${relative}`);
+      if (excludedRoots.some((root) => isContained(root, absolute))) return;
+      const stat = fs.lstatSync(absolute);
+      hash.update(`${relative}\0${stat.mode}\0`);
+      if (stat.isSymbolicLink()) {
+        const target = fs.realpathSync(absolute);
+        if (!isContained(canonicalRoot, target)) {
+          throw new Error(`Ignored symlink resolves outside its worktree: ${absolute}`);
         }
-      } finally {
-        fs.closeSync(fd);
+        hash.update(`link\0${fs.readlinkSync(absolute)}\0${target}\0`);
+        const targetStat = fs.statSync(target);
+        if (targetStat.isFile()) hash.update(fs.readFileSync(target));
+      } else if (stat.isFile()) {
+        hash.update(`file\0${stat.size}\0`);
+        const fd = fs.openSync(absolute, 'r');
+        try {
+          let read;
+          while ((read = fs.readSync(fd, chunk, 0, chunk.length, null)) > 0) {
+            hash.update(chunk.subarray(0, read));
+          }
+        } finally {
+          fs.closeSync(fd);
+        }
+      } else {
+        hash.update(`${stat.isDirectory() ? 'directory' : 'special'}\0`);
       }
-    } else {
-      hash.update(`${stat.isDirectory() ? 'directory' : 'special'}\0`);
-    }
-  }
+    },
+  );
   for (const relative of initializedSubmodules(repoRoot)) {
     const absolute = path.join(repoRoot, relative);
     assertNoSymlinkComponents(repoRoot, absolute, 'Ignored-content submodule');
@@ -1159,6 +1214,7 @@ module.exports = {
   parseFinalizeResult,
   buildInvocation,
   buildChildEnv,
+  forEachGitRecord,
   invokePhase,
   assertRegisteredWorktree,
   resolveProject,

@@ -200,6 +200,33 @@ describe('task catalog', () => {
 });
 
 describe('fresh harness adapters', () => {
+  test('streams Git record output larger than the synchronous child-process buffer', () => {
+    const { forEachGitRecord } = require(RUNNER);
+    const fakeBin = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-large-git-'));
+    const fakeGit = path.join(fakeBin, 'git');
+    const originalPath = process.env.PATH;
+    try {
+      write(fakeGit, `#!/usr/bin/env node
+const fs = require('fs');
+const record = Buffer.from('ignored.txt\\0');
+for (let index = 0; index < 100000; index++) fs.writeSync(1, record);
+`);
+      fs.chmodSync(fakeGit, 0o755);
+      process.env.PATH = `${fakeBin}${path.delimiter}${originalPath}`;
+
+      let records = 0;
+      forEachGitRecord(fakeBin, ['ls-files', '-z'], (record) => {
+        assert.strictEqual(record, 'ignored.txt');
+        records++;
+      });
+
+      assert.strictEqual(records, 100000);
+    } finally {
+      process.env.PATH = originalPath;
+      fs.rmSync(fakeBin, { recursive: true, force: true });
+    }
+  });
+
   test('never resumes Claude or Codex sessions', () => {
     const { buildInvocation } = require(RUNNER);
     const claude = buildInvocation({
