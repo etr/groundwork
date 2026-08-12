@@ -709,6 +709,15 @@ $new_body"
     done
 }
 
+install_external_runner() {
+    local target="$1"
+    [[ "$target" != "codex" ]] && return 0
+
+    local dest_base
+    dest_base=$(get_dest_base "$target")
+    write_codex_agent "$dest_base/groundwork-run.js" "$(<"$SOURCE_DIR/bin/groundwork-run.js")" "external task runner" "$dest_base"
+}
+
 # ============================================================
 # Install: Agents
 # ============================================================
@@ -887,6 +896,7 @@ main() {
         fi
 
         install_skills_for_target "$target"
+        install_external_runner "$target"
 
         if [[ "$SKILLS_ONLY" != true ]]; then
             install_agents_for_target "$target"

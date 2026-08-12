@@ -63,6 +63,17 @@ Generates implementation tasks from architecture.
 ```
 Identifies and works on the next unblocked task.
 
+For context isolation across every phase, run the external harness from a terminal:
+
+```bash
+node /path/to/groundwork/bin/groundwork-run.js task TASK-004 --harness claude
+node /path/to/groundwork/bin/groundwork-run.js all --harness codex --project api
+```
+
+It invokes `plan-task`, `implement-task`, `validate`, and `finalize-task` in four fresh processes per task. Use those same skills directly when stepping through the workflow manually.
+
+The final phase prepares task bookkeeping, handles a moved base, and chooses the merge message. The harness verifies that prepared state before it performs the outward merge and cleanup.
+
 ### Skill Categories
 
 1. **Planning & Design** - Start here for new work

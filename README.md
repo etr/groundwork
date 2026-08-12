@@ -231,7 +231,7 @@ Execute tasks and build features.
 | `/groundwork:work-on-next-task` | — | Execute the next unblocked task automatically | Working through tasks sequentially |
 | `/groundwork:plan-task` | `[task-number-or-description]` | Plan a task or feature without implementing | Want to review a plan before committing to implementation |
 | `/groundwork:implement-task` | `[task-number-or-plan-path]` | Implement a previously planned task | Resume implementation after reviewing a plan |
-| `/groundwork:just-do-it` | — | Execute all remaining tasks in dependency order | Want batch execution of all remaining work |
+| `/groundwork:just-do-it` | — | Execute all remaining tasks in dependency order | Want batch execution inside the current session |
 | `/groundwork:just-do-it-swarming` | `[--parallel]` | Execute all tasks using agent teams for context isolation | Large batches where context accumulation is a concern |
 | `/groundwork:build-unplanned` | `[description]` | Build feature from description — no task definitions needed | Quick feature without formal planning |
 | `/groundwork:select-project` | `[project-name]` | Switch to a different project in a monorepo | Working across multiple projects |
@@ -252,6 +252,7 @@ Validate code quality and spec alignment.
 | Skill | Args | Description | When to Use |
 |---------|------|-------------|-------------|
 | `/groundwork:validate` | — | Re-run 9-agent verification on current changes | Verify code quality after manual changes |
+| `/groundwork:finalize-task` | `[task-id] [--project name]` | Commit, merge, and clean up a validated task worktree | Completing the workflow manually phase by phase |
 | `/groundwork:check-specs-alignment` | `[context]` | Audit code alignment with PRD and architecture | Periodic drift detection |
 
 ### Review Skills
@@ -302,7 +303,7 @@ Skills vary in complexity. The table below lists the minimum model tier recommen
 | Tier | Minimum Model | Skills |
 |------|---------------|----------|
 | **Opus (1M)** | Opus at high effort | `/groundwork:design-product`, `/groundwork:design-architecture`, `/groundwork:ux-design`, `/groundwork:create-tasks`, `/groundwork:debug`, `/groundwork:swarm-debug`, `/groundwork:swarm-design-architecture`, `/groundwork:design-it-twice`, `/groundwork:doubt-driven-development` |
-| **Sonnet+** | Sonnet or Opus at high effort | `/groundwork:work-on`, `/groundwork:work-on-next-task`, `/groundwork:just-do-it`, `/groundwork:just-do-it-swarming`, `/groundwork:build-unplanned`, `/groundwork:validate`, `/groundwork:check-specs-alignment`, `/groundwork:review-pr`, `/groundwork:source-product-specs-from-code`, `/groundwork:source-architecture-from-code`, `/groundwork:source-ux-design-from-code`, `/groundwork:domain-modeling`, `/groundwork:vertical-slice`, `/groundwork:instrument-observability`, `/groundwork:staged-rollout`, `/groundwork:ship` |
+| **Sonnet+** | Sonnet or Opus at high effort | `/groundwork:work-on`, `/groundwork:work-on-next-task`, `/groundwork:just-do-it`, `/groundwork:just-do-it-swarming`, `/groundwork:build-unplanned`, `/groundwork:validate`, `/groundwork:finalize-task`, `/groundwork:check-specs-alignment`, `/groundwork:review-pr`, `/groundwork:source-product-specs-from-code`, `/groundwork:source-architecture-from-code`, `/groundwork:source-ux-design-from-code`, `/groundwork:domain-modeling`, `/groundwork:vertical-slice`, `/groundwork:instrument-observability`, `/groundwork:staged-rollout`, `/groundwork:ship` |
 | **Any** | No requirement | `/groundwork:setup-repo`, `/groundwork:select-project`, `/groundwork:handoff`, `/groundwork:skills`, `/groundwork:groundwork-help`, `/groundwork:groundwork-check` |
 
 ## Workflows
@@ -341,6 +342,8 @@ Plan a task first, review the plan, then implement separately:
 /groundwork:plan-task 4                 # Plan task 4, saves to .groundwork-plans/
 # ... review the plan, adjust if needed ...
 /groundwork:implement-task 4            # Implement using the saved plan
+/groundwork:validate                    # Validate and fix the task worktree
+/groundwork:finalize-task 4             # Commit remaining fixes, merge, and clean up
 ```
 
 Also works for ad-hoc features:
@@ -372,17 +375,33 @@ Phases: Observe → Hypothesize → Predict → Test → Conclude. No fix is app
 
 ### Batch Execution
 
-Execute all remaining tasks in dependency order:
+Execute all remaining tasks in dependency order inside the current conversation:
 
 ```
 /groundwork:just-do-it
 ```
 
-All task phases (Plan, Implement, Validate, Fix, Merge) run inline in the main conversation. This works well for small batches but accumulates context over many tasks.
+All task phases run inline. This remains useful for small batches and interactive oversight.
+
+#### Fresh-session terminal harness
+
+The external runner starts a new non-persistent Claude Code or ephemeral Codex process for each phase: `plan-task → implement-task → validate → finalize-task`. Only compact result lines and verified Git state cross phase boundaries.
+
+```bash
+node /path/to/groundwork/bin/groundwork-run.js task TASK-004 --harness claude
+node /path/to/groundwork/bin/groundwork-run.js all --harness codex
+node /path/to/groundwork/bin/groundwork-run.js all --harness codex --project api --dry-run
+```
+
+Codex exports install the runner at `~/.codex/groundwork-run.js` for user scope or `.codex/groundwork-run.js` for project scope. The runner executes tasks sequentially in dependency order and stops on the first failure. Failed worktrees and branches are preserved.
+
+If the base branch advances, `finalize-task` integrates it into the task branch and returns control for a fresh validation session. Once the tree is clean, it supplies the task commit and merge message; the harness verifies that only task-status bookkeeping changed after validation, then performs the outward merge and cleanup.
+
+The same four skills remain manually callable. In a monorepo, pass `--project <name>` to each phase.
 
 #### Swarming Mode (Claude Code only)
 
-For large batches (>5 tasks), use swarming mode to run each task in its own isolated session:
+For parallel task execution, use swarming mode to run each task in its own agent-team session:
 
 ```
 /groundwork:just-do-it-swarming

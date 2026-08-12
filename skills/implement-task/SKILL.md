@@ -1,12 +1,26 @@
 ---
 name: implement-task
 description: Dispatches a planned task/feature to the task-executor agent for worktree-isolated TDD implementation
-argument-hint: "[task-number-or-plan-path]"
+argument-hint: "[task-number-or-plan-path] [--project name]"
 ---
 
 # Task Implementation Skill
 
 Dispatches a previously planned task or feature to the task-executor agent for worktree-isolated TDD implementation.
+
+## Explicit Project Input
+
+If arguments include `--project <name>`, resolve that project directly from the repository's `.groundwork.yml` for this invocation. Treat it as authoritative; do not depend on or change persisted project selection. In runner mode, `GROUNDWORK_PROJECT` and `GROUNDWORK_PROJECT_ROOT` provide the same invocation-local selection.
+
+## Runner Mode
+
+If session context contains `GROUNDWORK_RUNNER_MODE=true`:
+
+- Skip the model recommendation pre-flight and all questions.
+- In task mode, skip Step 2 entirely; the base checkout must remain clean. Tell the task-executor to record `In Progress` inside the task worktree and include it in the implementation commit.
+- Forward the runner-supplied absolute worktree path exactly; do not let the executor choose another directory.
+- Keep worktree creation and the implementation commit owned by the existing task-executor agent.
+- Keep the existing terminal `RESULT: IMPLEMENTED` contract unchanged.
 
 ## Token Discipline
 
@@ -76,6 +90,8 @@ Do NOT read the full plan content into this orchestrator's context. The task-exe
 
 **Skip this step if identifier starts with `FEATURE-`.**
 
+**Also skip this step if `GROUNDWORK_RUNNER_MODE=true`.** Add the equivalent status update to the task-executor instructions so it occurs and is committed inside the task worktree, never in the base checkout.
+
 Update the task file to `**Status:** In Progress` and update the status table in `{{specs_dir}}/tasks/_index.md` or `{{specs_dir}}/tasks.md` (change the task's row to `In Progress`).
 
 ## Step 3: Dispatch to task-executor
@@ -96,6 +112,10 @@ Agent(
   [If interactive: omit this line]
   Do NOT use AskUserQuestion — proceed automatically.
 
+  [If GROUNDWORK_RUNNER_MODE=true: include both lines below]
+  GROUNDWORK_RUNNER_MODE=true
+  WORKTREE PATH: [runner-supplied absolute worktree path]
+
   PROJECT ROOT: [absolute path to project root]
 
   TASK:
@@ -109,8 +129,9 @@ Agent(
   Read this file first with the Read tool — it contains the validated implementation plan.
 
   INSTRUCTIONS:
-  1. Follow your preloaded skills to create a worktree, implement with TDD, and commit.
+  1. Follow your preloaded skills to create a worktree, implement with TDD, and commit. When WORKTREE PATH is supplied, create and use exactly that path.
   2. Read the task section from tasks_path and the plan from PLAN FILE — they provide all session context. Do NOT re-ask the user for requirements.
+  [If GROUNDWORK_RUNNER_MODE=true: change this task's status to In Progress inside the task worktree and include that bookkeeping in the implementation commit.]
   3. When complete, output your final line in EXACTLY this format:
      RESULT: IMPLEMENTED | <worktree_path> | <branch> | <base_branch>
      OR:

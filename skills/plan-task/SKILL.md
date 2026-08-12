@@ -2,12 +2,26 @@
 name: plan-task
 description: Plans a task or feature - loads context, optionally clarifies requirements, spawns Plan agent, persists plan to .groundwork-plans/
 requires: understanding-feature-requests
-argument-hint: "[task-number-or-description]"
+argument-hint: "[task-number-or-description] [--project name]"
 ---
 
 # Task Planning Skill
 
 Plans a task or feature by loading context, optionally clarifying requirements, spawning a Plan agent, and persisting the validated plan to `.groundwork-plans/`.
+
+## Explicit Project Input
+
+If arguments include `--project <name>`, resolve that project directly from the repository's `.groundwork.yml` for this invocation. Treat it as authoritative; do not depend on or change persisted project selection. In runner mode, `GROUNDWORK_PROJECT` and `GROUNDWORK_PROJECT_ROOT` provide the same invocation-local selection.
+
+## Runner Mode
+
+If session context contains `GROUNDWORK_RUNNER_MODE=true`:
+
+- Skip the model recommendation pre-flight.
+- Treat `GROUNDWORK_BATCH_MODE=true` as authoritative: do not call `AskUserQuestion`.
+- When information or a decision is missing, return `RESULT: FAILURE` instead of asking.
+- Do not modify `.gitignore`; the runner keeps `.groundwork-plans/` out of Git state.
+- Keep the existing terminal `RESULT: PLANNED` contract unchanged.
 
 ## Token Discipline
 
@@ -97,7 +111,7 @@ Parse the input from the caller's conversation context. Three modes:
    - `{{specs_dir}}/design_system.md`
    - Tasks file (already found above)
 
-   **If specs missing:** Report which are missing, suggest running `/groundwork:design-product` or `/groundwork:design-architecture` first. Use `AskUserQuestion` to confirm proceeding without them.
+   **If specs missing:** Report which are missing and suggest running `/groundwork:design-product` or `/groundwork:design-architecture` first. In runner mode, return `RESULT: FAILURE` instead of asking. Otherwise use `AskUserQuestion` to confirm proceeding without them.
    **If design system missing:** Proceed without it.
 
 5. Set `identifier=TASK-NNN`, `branch_prefix=task`.

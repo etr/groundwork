@@ -1,11 +1,26 @@
 ---
 name: validate
 description: This skill should be used when implementation is complete to run multi-agent verification with autonomous fix-and-retry until all agents approve
+argument-hint: "[--project name]"
 ---
 
 # Validation Loop Skill
 
 Autonomous verification loop that runs specialized agents and fixes issues until all approve.
+
+## Explicit Project Input
+
+If arguments include `--project <name>`, resolve that project directly from the repository's `.groundwork.yml` for this invocation. Treat it as authoritative; do not depend on or change persisted project selection. In runner mode, `GROUNDWORK_PROJECT` and `GROUNDWORK_PROJECT_ROOT` provide the same invocation-local selection.
+
+## Runner Mode
+
+If session context contains `GROUNDWORK_RUNNER_MODE=true`:
+
+- Skip the model recommendation pre-flight and do not call `AskUserQuestion`.
+- Use the supplied `base_sha` for the complete task diff.
+- If validation needs user input or cannot converge, return `RESULT: FAILURE | <reason>` instead of pausing. The runner preserves the worktree.
+- After every reviewer approves, commit all validation fixes and persisted validation artifacts with a message describing the fixes. Do not create an empty commit. Require a clean worktree before reporting success.
+- End with the exact runner-mode `RESULT: VALIDATED` receipt bound to the committed validation head.
 
 ## Pre-flight: Model Recommendation
 
@@ -35,7 +50,7 @@ If the user selects "Cancel — I'll switch first": output the switching command
 
 ## Hard Rule
 
-You MUST NOT modify source files yourself during this loop. All fixes go through the `validation-fixer` subagent. Allowed orchestrator writes: only the per-run `findings_dir` (`mktemp -d` + `rm -rf`), and `lib/persist-unworked-findings.js` in step 5.5. Zero `Edit`/`Write`/`NotebookEdit`/`sed -i`/`tee`/redirect calls on anything else. No exceptions — even one-character cosmetic fixes go through the subagent. **Why:** this skill exists to keep fix work out of the orchestrator's context window; direct edits burn the budget saved by dispatching the reviewers and pollute the next iteration's context with diff details.
+You MUST NOT modify source files yourself during this loop. All fixes go through the `validation-fixer` subagent. Allowed orchestrator writes: only the per-run `findings_dir` (`mktemp -d` + `rm -rf`), and `lib/persist-unworked-findings.js` in step 5.5. Zero `Edit`/`Write`/`NotebookEdit`/`sed -i`/`tee`/redirect calls on anything else. In runner mode only, the final approved tree may be staged and committed after step 5.5; this records the validated state but does not edit files. No exceptions — even one-character cosmetic fixes go through the subagent. **Why:** this skill exists to keep fix work out of the orchestrator's context window; direct edits burn the budget saved by dispatching the reviewers and pollute the next iteration's context with diff details.
 
 ## Findings Storage
 
@@ -138,8 +153,8 @@ Append a new iteration block each time you re-run agents in step 4.4.
 **CRITICAL — Context budget**: Do NOT read file contents, full diffs, specs, or architecture docs into this orchestrating context. Collect only file paths and metadata. Agents have Read/Grep/Glob tools and will read files in their own context windows.
 
 Collect for the agents:
-- Changed file paths: `git diff --name-only HEAD~1` → list of paths (keep, small)
-- Diff stat: `git diff --stat HEAD~1` → brief change summary (lines added/removed per file)
+- Changed file paths: in runner mode use `git diff --name-only <base_sha>`; otherwise use `git diff --name-only HEAD~1` → list of paths (keep, small)
+- Diff stat: in runner mode use `git diff --stat <base_sha>`; otherwise use `git diff --stat HEAD~1` → brief change summary (lines added/removed per file)
 - Test file paths: identify associated test files by convention (do NOT read them)
 - Task definition (goal, action items, acceptance criteria) → keep, brief
 - Specs path: path to `{{specs_dir}}/product_specs.md` or `{{specs_dir}}/product_specs/` (do NOT read contents)
@@ -256,8 +271,8 @@ Then update your iteration tracking notes (see step 1) with the `findings_file` 
 3. **Parse Fix Agent Result** — the fixer's `RESULT:` line uses **global IDs** (`{agent}-iter{N}-{id}`), not opaque numbers:
    - `RESULT: FIXED | files_touched: [...] | findings_fixed: [global-id, ...]` → parse both lists, proceed to step 4.4
    - `RESULT: PARTIAL | files_touched: [...] | findings_fixed: [global-id, ...] | findings_skipped: [global-id: reason, ...]` → parse all lists, log skipped findings, proceed to step 4.4 with the fixed subset
-   - `RESULT: FAILURE | [reason]` → log the failure reason, escalate to user via `AskUserQuestion`
-   - No parseable result → treat as failure, escalate to user
+   - `RESULT: FAILURE | [reason]` → log the failure reason; in runner mode, return `RESULT: FAILURE` immediately, otherwise escalate to user via `AskUserQuestion`
+   - No parseable result → treat as failure; in runner mode, return `RESULT: FAILURE` immediately, otherwise escalate to user
 
    Record both `findings_fixed` and `findings_skipped` (as global ID lists) in your iteration tracking notes under the current `iteration_number`. These are what step 5.5 uses to compute the unexecuted set.
 
@@ -295,7 +310,7 @@ Then update your iteration tracking notes (see step 1) with the `findings_file` 
 
 Track findings by key: `[Agent]-[Category]-[File]-[Line]`. You don't need full finding bodies in context to do this — derive `Agent` from the global ID prefix and rely on the iteration tracking notes (which carry global IDs) to count repeats. When you actually need to escalate to the user, **only then** Read the relevant `findings_file` once to extract `Category`/`File`/`Line`/`finding`/`recommendation` for the message. Stuck detection is rare; this one-shot read is bounded.
 
-If same finding appears **3 times**:
+If same finding appears **3 times** (in runner mode, return `RESULT: FAILURE` with the finding summary instead of asking):
 
 ```markdown
 ## Stuck - Need User Input
@@ -343,6 +358,8 @@ After all agents approve, persist any unfixed findings via the helper script. Yo
 
 ### 6. Return Result
 
+**Runner-mode validation seal:** Before cleanup and the PASS line, inspect the full task-worktree status. If changes remain, stage them and create one commit whose subject describes the validation fixes or persisted validation artifacts. Do not create an empty commit. Re-run `git status --porcelain --untracked-files=all` and return `RESULT: FAILURE` unless it is empty.
+
 **Cleanup (run BEFORE printing the PASS report):** delete the per-run findings directory created in step 1. This is the only place where the orchestrator may invoke `rm -rf`, and only on the path saved as `findings_dir` (it must be a `groundwork-validation-XXXXXX` mktemp directory):
 
 ```bash
@@ -351,7 +368,7 @@ rm -rf "{findings_dir}"
 
 If `findings_dir` was never created (e.g., the loop bailed out before step 1 finished), skip cleanup.
 
-**On PASS:** emit one line:
+**On PASS outside runner mode:** emit one line:
 
 ```
 Validation PASSED ({N} iter, {M} fixed, {K} unworked → <written>)
@@ -360,6 +377,12 @@ Validation PASSED ({N} iter, {M} fixed, {K} unworked → <written>)
 Where `<written>` is the path returned by `persist-unworked-findings.js`; omit ` → <written>` if the helper returned status `empty` or `no-findings-files`. Do not echo the per-iteration fix list — findings are accessible via the per-iteration JSON files on disk.
 
 Return control to calling skill.
+
+**On PASS in runner mode:** after the validation seal commit and clean-worktree check, capture the full current commit SHA and make the final line exactly:
+
+```text
+RESULT: VALIDATED | iterations=<N> | fixed=<M> | unworked=<K> | validated_head=<full-sha>
+```
 
 ## Severity Reference
 

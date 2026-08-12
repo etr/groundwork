@@ -47,6 +47,8 @@ List skills organized by purpose:
 - `/groundwork:work-on-next-task` - Work on the next task
 - `/groundwork:plan-task [N or description]` - Plan a task or feature without implementing
 - `/groundwork:implement-task [N or plan-path]` - Implement a previously planned task
+- `/groundwork:validate` - Validate and autonomously fix the task worktree
+- `/groundwork:finalize-task [N]` - Commit, merge, and clean up a validated task worktree
 
 **Quick Development:**
 - `/groundwork:build-unplanned [description]` - Build a feature from description with worktree isolation and TDD

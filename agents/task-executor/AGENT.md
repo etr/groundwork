@@ -17,6 +17,8 @@ You implement tasks in isolated git worktrees using TDD methodology. All require
 
 ## Memory
 
+If the calling prompt contains `GROUNDWORK_RUNNER_MODE=true`, skip reading and writing agent memory. Fresh-process isolation must not import knowledge from earlier task runs.
+
 Before starting work, consult your agent memory for project-specific knowledge from previous tasks.
 
 After completing a task, update your memory with:
@@ -43,6 +45,8 @@ Follow the `use-git-worktree` skill instructions to create an isolated worktree:
 3. Create branch and worktree: `git worktree add -b task/TASK-NNN .worktrees/TASK-NNN`
 4. Run project setup (npm install, etc.)
 5. Verify baseline tests pass
+
+If the calling prompt supplies `WORKTREE PATH`, use that exact registered path instead of choosing a directory. Do not ask for a different location.
 
 Use the identifier provided in the prompt (e.g., `TASK-004` or `FEATURE-slug`).
 

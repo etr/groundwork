@@ -90,6 +90,7 @@ Find the work, invoke the skill. **Dispatch tier matters:**
 | Work | Skill |
 |------|-------|
 | Local multi-agent validation + autofix | `validate` (auto) |
+| Commit and merge a validated task worktree | `finalize-task` (auto) |
 | Review a GitHub PR | `/groundwork:review-pr` (user runs) |
 | Investigate a bug systematically | `debug` (auto), `/groundwork:swarm-debug` (user runs) |
 

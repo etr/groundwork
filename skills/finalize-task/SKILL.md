@@ -1,0 +1,106 @@
+---
+name: finalize-task
+description: Use when a task worktree has passed validation - commits remaining validated changes, marks the task complete, merges it into the base branch, and cleans up safely
+argument-hint: "[task-id] [--project name]"
+allowed-tools: ["Read", "Edit", "Bash", "Glob", "Grep"]
+---
+
+# Finalize Task
+
+Finalize one validated task. Use judgment for commit and merge messages. Preserve the worktree and branch whenever state is ambiguous.
+
+## Inputs
+
+Accept a task ID and optional `--project <name>`.
+
+When invoked by the external runner, treat its exact `project_root`, `worktree_path`, `branch`, `base_branch`, `base_head`, and `validated_head` values as authoritative. Missing or inconsistent runner inputs are a failure.
+
+When invoked manually from the task worktree:
+
+1. Resolve `--project` directly from the repository's `.groundwork.yml`; do not depend on or change persisted project selection.
+2. Derive the current registered worktree and checked-out task branch.
+3. Derive the primary worktree and its checked-out base branch.
+4. Treat the current task HEAD as `validated_head`. If validation did not just pass for this exact tree and working state, stop and ask the user to run `validate` first.
+
+## Workflow
+
+### 1. Verify state
+
+Before changing anything:
+
+1. Confirm the task path is a registered worktree for exactly the task branch.
+2. Confirm the primary worktree is on the base branch and clean.
+3. Confirm the task branch HEAD equals `validated_head`.
+4. Record the base branch's current head.
+5. Inspect staged, unstaged, and untracked task-worktree changes without discarding any.
+
+Never reset, stash, rebase, force-delete, or silently switch either worktree to another branch.
+
+### 2. Complete task bookkeeping
+
+Within the selected project's task files:
+
+1. Change only this task's status to `Complete`.
+2. Update its status-table row when an index exists.
+3. Leave unrelated tasks unchanged.
+
+### 3. Commit remaining validated work
+
+Inspect the actual remaining diff. Include validation fixes and task bookkeeping belonging to this task.
+
+- In runner mode, validation has already committed every validated change. Only task-status bookkeeping may remain; reject any other changed path.
+- If bookkeeping changes remain, commit them on the task branch as `<task-id>: Mark task complete`.
+- In manual mode, describe any validated remaining change in the subject.
+- Do not create an empty commit.
+- Require a clean task worktree afterward.
+
+In runner mode, never ask a question. Return `RESULT: FAILURE` for missing information or unsafe state.
+
+### 4. Integrate a moved base
+
+Check whether the current base head is an ancestor of the task branch.
+
+If it is not:
+
+1. Merge the current base head into the task branch.
+2. Resolve conflicts only when the task definition and surrounding code make the resolution unambiguous.
+3. Commit any resolution and require a clean task worktree.
+4. Return `RESULT: REVALIDATE`. Do not merge the task into the base branch yet.
+
+If resolution needs product, architecture, or ownership judgment, safely abort the integration when possible and return `RESULT: NEEDS_INPUT`. Any base integration changes the validated tree and requires a fresh `validate` invocation.
+
+### 5. Prepare the merge
+
+In runner mode:
+
+1. Reconfirm both worktrees are clean and the base branch is still at the head recorded in step 1.
+2. Choose a concise merge message containing the task ID and actual title or outcome.
+3. Return `RESULT: READY_TO_MERGE`. Do not merge outward, remove the worktree, or delete the branch; the harness verifies the prepared tree before performing those operations.
+
+When invoked manually, merge with `--no-ff`, then continue to cleanup below. If an unexpected conflict occurs, abort it when safe and return `RESULT: NEEDS_INPUT`. Do not resolve it on the base branch because the resolution would not have been validated.
+
+### 6. Verify and clean up
+
+After a successful manual merge:
+
+1. Confirm the task branch is an ancestor of the base branch.
+2. Confirm the primary worktree is clean and record its merge commit.
+3. Remove exactly the verified task worktree.
+4. Delete exactly the verified task branch with safe deletion.
+
+If the merge succeeded but cleanup fails, return `RESULT: CLEANUP_REQUIRED`; do not undo the merge.
+
+## Result contract
+
+Make the final line exactly one of:
+
+```text
+RESULT: FINALIZED | task_id=<id> | task_head=<sha> | merge_commit=<sha> | base_branch=<branch>
+RESULT: READY_TO_MERGE | task_id=<id> | task_head=<sha> | base_head=<sha> | merge_message=<one-line message>
+RESULT: REVALIDATE | task_head=<sha> | base_head=<sha> | reason=<one-line reason>
+RESULT: NEEDS_INPUT | reason=<one-line reason>
+RESULT: CLEANUP_REQUIRED | merge_commit=<sha> | worktree_path=<path> | branch=<branch> | reason=<one-line reason>
+RESULT: FAILURE | reason=<one-line reason> | worktree_path=<path> | branch=<branch>
+```
+
+In runner mode, report only `READY_TO_MERGE`, `REVALIDATE`, or a failure result. Report `FINALIZED` only after a manual merge is present, both remaining worktrees are clean, and cleanup succeeded.
