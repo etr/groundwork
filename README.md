@@ -395,7 +395,7 @@ node /path/to/groundwork/bin/groundwork-run.js all --from TASK-010 --to TASK-025
 node /path/to/groundwork/bin/groundwork-run.js all --harness codex --project api --dry-run
 ```
 
-Codex exports install the runner at `~/.codex/groundwork-run.js` for user scope or `.codex/groundwork-run.js` for project scope. The runner executes tasks sequentially in dependency order and stops on the first failure. Failed worktrees and branches are preserved.
+Codex exports install the runner at `~/.codex/groundwork-run.js` for user scope or `.codex/groundwork-run.js` for project scope. The runner creates each linked task worktree before planning and runs every phase from its project root. It executes a project's tasks sequentially in dependency order and stops on the first failure. Failed worktrees and branches are preserved.
 
 Range bounds are inclusive; either `--from` or `--to` may be used alone. Dependencies outside a selected list or range must already be complete. While a phase runs, every progress line includes the machine's local date, time, timezone, and relative phase time. Output also shows sanitized and truncated commands, selected tool activity, validation iteration launches and per-reviewer verdicts, and a heartbeat every 30 seconds during quiet periods. Common secret assignments and credential flags are redacted. Successful short-command completion events and generic agent-turn events are suppressed; failures and commands lasting at least 10 seconds remain visible.
 
@@ -403,9 +403,9 @@ Rerunning is resumable. An existing conventional plan skips planning. An exact r
 
 In monorepos, runner-created workspaces are project-qualified (for example, `task/api/TASK-004` and `.worktrees/api-TASK-004`) so projects may reuse task numbers. Pre-existing changes in another project's linked worktree do not block a run; changes to the selected project in another worktree still do. Legacy unqualified worktrees remain resumable when their project checkpoint identifies the owner.
 
-Multiple runner commands may be launched against the same repository. Shared Git state is protected by a repository lease held for one complete task; another command prints periodic wait status and continues at the next task boundary. Model phases therefore queue rather than execute in parallel within one Git repository.
+Multiple runner commands may be launched against the same repository. A project lease serializes complete tasks for one project, while different projects may execute model phases concurrently. Shared Git setup, linked-worktree lifecycle, publication, and recovery use a writer-preferred repository reader/writer gate; model phases use reader access and wait diagnostics identify the holder. This prevents a waiting writer from starvation without serializing independent projects.
 
-If the base branch advances, `finalize-task` integrates it into the task branch and returns control for a fresh validation session. Once the tree is clean, it supplies the task commit and merge message; the harness verifies that only task-status bookkeeping changed after validation, then performs the outward merge and cleanup.
+If the base branch advances, `finalize-task` integrates it into the task branch and returns control for a fresh validation session. Before publication, the runner revalidates the exact base/task heads under writer access; a moved base preserves the task workspace and re-enters the bounded finalize/revalidate flow. Once the tree is clean, it supplies the task commit and merge message; the harness verifies that only task-status bookkeeping changed after validation, then performs the outward merge and cleanup.
 
 The same four skills remain manually callable. In a monorepo, pass `--project <name>` to each phase.
 

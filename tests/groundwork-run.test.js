@@ -35,6 +35,10 @@ function describe(name, fn) {
 }
 
 function git(cwd, ...args) {
+  if (args[0] === 'worktree' && args[1] === 'add') {
+    const worktree = args.at(-1);
+    if (fs.existsSync(worktree)) return '';
+  }
   return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
 }
 
@@ -100,6 +104,8 @@ describe('module and CLI contract', () => {
       'normalizeActivity',
       'assertRegisteredWorktree',
       'acquireRunnerLease',
+      'acquireProjectLease',
+      'acquireRepositoryGate',
       'runTasks',
     ]) {
       assert.strictEqual(typeof runner[name], 'function', `${name} is not exported`);
@@ -142,16 +148,98 @@ describe('module and CLI contract', () => {
     }
   });
 
-  test('runTasks waits for repository ownership and releases it after failure', () => {
-    const { acquireRunnerLease, runTasks } = require(RUNNER);
+  test('serializes complete tasks for one project without blocking another project lease', () => {
+    const { acquireProjectLease } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-project-lease-'));
+    const waits = [];
+    let releaseApi;
+    try {
+      initRepo(root);
+      const commonDir = path.join(root, '.git');
+      releaseApi = acquireProjectLease(commonDir, { project: 'api', taskId: 'TASK-004' }, {
+        log: () => {}, now: () => 1_000,
+      });
+      const releaseWeb = acquireProjectLease(commonDir, { project: 'web', taskId: 'TASK-004' }, {
+        log: () => {}, now: () => 1_000,
+      });
+      const releaseNextApi = acquireProjectLease(commonDir, { project: 'api', taskId: 'TASK-005' }, {
+        log: () => {}, now: () => 31_000,
+        wait(milliseconds) { waits.push(milliseconds); releaseApi(); },
+      });
+      assert.deepStrictEqual(waits, [1_000]);
+      releaseWeb();
+      releaseNextApi();
+    } finally {
+      if (releaseApi) {
+        try { releaseApi(); } catch {}
+      }
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('gives a waiting writer priority over new repository readers', () => {
+    const { acquireRepositoryGate } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-repository-gate-'));
+    let releaseReader;
+    try {
+      initRepo(root);
+      const commonDir = path.join(root, '.git');
+      releaseReader = acquireRepositoryGate(commonDir, 'read', { project: 'api', taskId: 'TASK-004' }, {
+        log: () => {}, now: () => 1_000,
+      });
+      const writer = acquireRepositoryGate(commonDir, 'write', { project: 'api', taskId: 'TASK-004' }, {
+        log: () => {}, now: () => 31_000,
+        wait() { releaseReader(); },
+      });
+      const reader = acquireRepositoryGate(commonDir, 'read', { project: 'web', taskId: 'TASK-004' }, {
+        log: () => {}, now: () => 61_000,
+        wait() { writer(); },
+      });
+      reader();
+    } finally {
+      if (releaseReader) {
+        try { releaseReader(); } catch {}
+      }
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('reclaims a stale repository gate lease before admitting a reader', () => {
+    const { acquireRepositoryGate } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-stale-gate-'));
+    try {
+      initRepo(root);
+      const commonDir = path.join(root, '.git');
+      const writer = path.join(commonDir, 'groundwork', 'repository-gate', 'writer.lock');
+      write(writer, `${JSON.stringify({
+        version: 1,
+        pid: 2147483647,
+        token: 'a'.repeat(48),
+        project: 'stale',
+        taskId: 'TASK-999',
+        startedAt: 1,
+      })}\n`);
+      const release = acquireRepositoryGate(commonDir, 'read', { project: 'api', taskId: 'TASK-004' }, {
+        log: () => {}, now: () => 1_000,
+      });
+      assert.strictEqual(fs.existsSync(writer), false);
+      release();
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('runTasks waits for repository writers and releases its gate after failure', () => {
+    const { acquireRepositoryGate, runTasks } = require(RUNNER);
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-lease-integration-'));
     let releaseFirst;
     let waits = 0;
     try {
       initRepo(root);
       const commonDir = path.join(root, '.git');
-      releaseFirst = acquireRunnerLease(
+      releaseFirst = acquireRepositoryGate(
         commonDir,
+        'write',
         { project: 'other', taskId: 'TASK-999' },
         { log: () => {}, now: () => 1_000 }
       );
@@ -176,8 +264,9 @@ describe('module and CLI contract', () => {
       assert.strictEqual(waits, 1);
       assert.strictEqual(fs.existsSync(path.join(commonDir, 'groundwork', 'runner.lock')), false);
     } finally {
-      const lease = path.join(root, '.git', 'groundwork', 'runner.lock');
-      if (releaseFirst && fs.existsSync(lease)) releaseFirst();
+      if (releaseFirst) {
+        try { releaseFirst(); } catch {}
+      }
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
@@ -1084,6 +1173,34 @@ describe('filesystem safety', () => {
 });
 
 describe('four-phase orchestration', () => {
+  test('runner prepares the linked task worktree before planning and plans from its project root', () => {
+    const { runTasks } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-prepared-worktree-'));
+    const worktree = path.join(root, '.worktrees', 'TASK-004');
+    try {
+      initRepo(root);
+      assert.throws(
+        () => runTasks(
+          { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
+          {
+            log: () => {},
+            invokePhase(input) {
+              assert.strictEqual(input.phase, 'plan');
+              assert.strictEqual(input.cwd, fs.realpathSync(worktree));
+              assert.strictEqual(input.worktreePath, fs.realpathSync(worktree));
+              assert.strictEqual(git(root, 'rev-parse', 'refs/heads/task/TASK-004'), git(root, 'rev-parse', 'HEAD'));
+              throw new Error('planned workspace verified');
+            },
+          }
+        ),
+        /planned workspace verified/
+      );
+      assert.ok(fs.existsSync(worktree));
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('reuses a legacy monorepo workspace owned by the selected project checkpoint', () => {
     const { runTasks } = require(RUNNER);
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-legacy-monorepo-'));
@@ -1566,10 +1683,12 @@ describe('four-phase orchestration', () => {
       assert.strictEqual(logs.filter((line) => /completed in \d\d:\d\d$/.test(line)).length, 4);
       const realRoot = fs.realpathSync(root);
       const realWorktree = path.join(realRoot, '.worktrees', 'TASK-004');
-      assert.deepStrictEqual(calls.map((call) => call.cwd), [realRoot, realRoot, realWorktree, realWorktree]);
+      assert.deepStrictEqual(calls.map((call) => call.cwd), [realWorktree, realWorktree, realWorktree, realWorktree]);
       assert.ok(calls[0].prompt.includes('groundwork-plan-task'));
       assert.ok(calls[1].prompt.includes('groundwork-implement-task'));
       assert.ok(calls[1].prompt.includes(path.join(realRoot, '.worktrees', 'TASK-004')));
+      assert.ok(calls[1].prompt.includes('precreated registered worktree'));
+      assert.ok(!calls[1].prompt.includes('Create the task worktree'));
       assert.ok(calls[2].prompt.includes('groundwork-validate'));
       assert.ok(calls[3].prompt.includes('groundwork-finalize-task'));
       assert.ok(calls.every((call) => call.prompt.includes('--project api')));
@@ -2069,6 +2188,12 @@ describe('skill and export integration', () => {
     assert.ok(implement.includes('RESUME EXISTING WORKTREE'));
     assert.match(executor, /already exists[\s\S]*reuse/i);
     assert.match(executor, /do not repeat[\s\S]*completed/i);
+  });
+
+  test('runner mode assigns task-worktree lifecycle exclusively to the runner', () => {
+    const implement = fs.readFileSync(path.join(PLUGIN_ROOT, 'skills', 'implement-task', 'SKILL.md'), 'utf8');
+    assert.match(implement, /runner exclusively owns.*worktree lifecycle/i);
+    assert.match(implement, /verify.*precreated.*registered worktree/i);
   });
 
   test('validation emits bounded reviewer progress markers', () => {

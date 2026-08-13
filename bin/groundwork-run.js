@@ -490,6 +490,166 @@ function acquireRunnerLease(commonDir, owner, dependencies = {}) {
   };
 }
 
+function waitForLease(dependencies) {
+  const wait = dependencies.wait || ((milliseconds) => {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
+  });
+  wait(1_000);
+}
+
+function readLiveLease(leasePath) {
+  const stat = fs.lstatSync(leasePath);
+  if (stat.isSymbolicLink() || !stat.isFile() || stat.size > 4_096) {
+    throw new Error(`Repository lease is unsafe: ${leasePath}`);
+  }
+  let holder;
+  try {
+    holder = JSON.parse(fs.readFileSync(leasePath, 'utf8'));
+  } catch {
+    throw new Error(`Repository lease is invalid: ${leasePath}`);
+  }
+  if (!holder || holder.version !== 1 || !Number.isInteger(holder.pid) || holder.pid < 1
+      || typeof holder.token !== 'string' || !/^[0-9a-f]{48}$/.test(holder.token)) {
+    throw new Error(`Repository lease has invalid ownership: ${leasePath}`);
+  }
+  try {
+    process.kill(holder.pid, 0);
+    return holder;
+  } catch (error) {
+    if (error.code === 'ESRCH') {
+      try { fs.unlinkSync(leasePath); } catch (unlinkError) {
+        if (unlinkError.code !== 'ENOENT') throw unlinkError;
+      }
+      return null;
+    }
+    if (error.code === 'EPERM') return holder;
+    throw error;
+  }
+}
+
+function createOwnedLease(leasePath, owner, dependencies = {}) {
+  const now = dependencies.now || Date.now;
+  const token = crypto.randomBytes(24).toString('hex');
+  const record = {
+    version: 1,
+    pid: process.pid,
+    token,
+    project: String(owner.project || ''),
+    taskId: String(owner.taskId || ''),
+    startedAt: now(),
+  };
+  const fd = fs.openSync(leasePath, 'wx', 0o600);
+  try {
+    fs.writeFileSync(fd, `${JSON.stringify(record)}\n`, 'utf8');
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+  return () => {
+    const current = readLiveLease(leasePath);
+    if (!current || current.token !== token || current.pid !== process.pid) {
+      throw new Error('Repository lease ownership changed before release');
+    }
+    fs.unlinkSync(leasePath);
+  };
+}
+
+function acquireProjectLease(commonDir, owner, dependencies = {}) {
+  const log = dependencies.log || console.log;
+  const now = dependencies.now || Date.now;
+  const project = String(owner.project || '.');
+  const projectKey = crypto.createHash('sha256').update(project).digest('hex').slice(0, 32);
+  const directory = path.join(commonDir, 'groundwork', 'projects');
+  const leasePath = path.join(directory, `${projectKey}.lock`);
+  let lastProgressAt = -Infinity;
+  createContainedDirectory(commonDir, directory, 'Project lease directory');
+  for (;;) {
+    try {
+      return createOwnedLease(leasePath, owner, dependencies);
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw error;
+    }
+    const holder = readLiveLease(leasePath);
+    if (!holder) continue;
+    const current = now();
+    if (current - lastProgressAt >= (dependencies.heartbeatMs || 30_000)) {
+      log(`[${formatLocalTimestamp(current)}] waiting for project ${project} task lease — ${holder.taskId || 'unknown'} (pid ${holder.pid})`);
+      lastProgressAt = current;
+    }
+    waitForLease(dependencies);
+  }
+}
+
+function liveLeaseFiles(directory) {
+  if (!fs.existsSync(directory)) return [];
+  const stat = fs.lstatSync(directory);
+  if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error(`Repository gate is unsafe: ${directory}`);
+  const entries = [];
+  for (const name of fs.readdirSync(directory)) {
+    const file = path.join(directory, name);
+    const holder = readLiveLease(file);
+    if (holder) entries.push({ file, holder });
+  }
+  return entries;
+}
+
+function acquireRepositoryGate(commonDir, mode, owner, dependencies = {}) {
+  if (!['read', 'write'].includes(mode)) throw new Error(`Invalid repository gate mode: ${mode}`);
+  const log = dependencies.log || console.log;
+  const now = dependencies.now || Date.now;
+  const root = path.join(commonDir, 'groundwork', 'repository-gate');
+  const readers = path.join(root, 'readers');
+  const writer = path.join(root, 'writer.lock');
+  const token = crypto.randomBytes(24).toString('hex');
+  const readerPath = path.join(readers, `${token}.lock`);
+  let lastProgressAt = -Infinity;
+  createContainedDirectory(commonDir, readers, 'Runner checkpoint and repository gate directory');
+
+  function report(kind, holder) {
+    const current = now();
+    if (current - lastProgressAt < (dependencies.heartbeatMs || 30_000)) return;
+    log(`[${formatLocalTimestamp(current)}] waiting for repository ${kind} gate — ${holder.project || 'unknown'} ${holder.taskId || ''} (pid ${holder.pid})`);
+    lastProgressAt = current;
+  }
+
+  if (mode === 'read') {
+    for (;;) {
+      if (fs.existsSync(writer)) {
+        const holder = readLiveLease(writer);
+        if (holder) { report('writer', holder); waitForLease(dependencies); continue; }
+      }
+      let release;
+      try {
+        release = createOwnedLease(readerPath, owner, dependencies);
+      } catch (error) {
+        if (error.code !== 'EEXIST') throw error;
+        continue;
+      }
+      if (!fs.existsSync(writer)) return release;
+      release();
+    }
+  }
+
+  for (;;) {
+    let releaseWriter;
+    try {
+      releaseWriter = createOwnedLease(writer, owner, dependencies);
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw error;
+      const holder = readLiveLease(writer);
+      if (holder) report('writer', holder);
+      waitForLease(dependencies);
+      continue;
+    }
+    for (;;) {
+      const activeReaders = liveLeaseFiles(readers);
+      if (activeReaders.length === 0) return releaseWriter;
+      report('readers', activeReaders[0].holder);
+      waitForLease(dependencies);
+    }
+  }
+}
+
 function snapshotGitControls(commonDir) {
   const hash = crypto.createHash('sha256');
   const roots = [
@@ -652,15 +812,16 @@ function withoutWorktree(snapshot, worktreePath) {
   return snapshot.split('\n').filter((entry) => !entry.startsWith(`${worktreePath}\0`)).join('\n');
 }
 
+function withoutTaskRefs(snapshot) {
+  return snapshot.split('\n').filter((entry) => !entry.startsWith('refs/heads/task/')).join('\n');
+}
+
 function assertRepositoryTransition(repoRoot, before, input) {
   const afterRefs = snapshotRepositoryRefs(repoRoot);
   const afterWorktrees = snapshotWorktreeRegistry(repoRoot);
-  const taskRef = `refs/heads/${input.branch}`;
   const taskWorktree = input.worktreePath;
-  const mutableTaskRef = input.phase !== 'plan';
-  if ((mutableTaskRef ? withoutRef(before.refs, taskRef) : before.refs)
-      !== (mutableTaskRef ? withoutRef(afterRefs, taskRef) : afterRefs)) {
-    throw new Error(`Repository refs outside ${taskRef} changed during ${input.phase}`);
+  if (withoutTaskRefs(before.refs) !== withoutTaskRefs(afterRefs)) {
+    throw new Error(`Repository refs outside active task branches changed during ${input.phase}`);
   }
   if (input.phase === 'implement') {
     if (withoutWorktree(before.worktrees, taskWorktree) !== withoutWorktree(afterWorktrees, taskWorktree)) {
@@ -710,6 +871,23 @@ function snapshotRunnerState(commonDir) {
 
 function assertRunnerState(commonDir, expected) {
   if (snapshotRunnerState(commonDir) !== expected) {
+    throw new Error('Runner checkpoint state changed during a model phase');
+  }
+}
+
+function snapshotTaskRunnerState(commonDir, repoRoot, projectRoot, taskId) {
+  const location = checkpointPath(commonDir, repoRoot, projectRoot, taskId);
+  if (!fs.existsSync(location.file)) return 'missing';
+  assertNoSymlinkComponents(commonDir, location.file, 'Runner checkpoint');
+  const stat = fs.lstatSync(location.file);
+  if (stat.isSymbolicLink() || !stat.isFile() || stat.size > MAX_CHECKPOINT_BYTES) {
+    throw new Error(`Runner checkpoint is invalid: ${location.file}`);
+  }
+  return crypto.createHash('sha256').update(fs.readFileSync(location.file)).digest('hex');
+}
+
+function assertTaskRunnerState(commonDir, repoRoot, projectRoot, taskId, expected) {
+  if (snapshotTaskRunnerState(commonDir, repoRoot, projectRoot, taskId) !== expected) {
     throw new Error('Runner checkpoint state changed during a model phase');
   }
 }
@@ -822,7 +1000,7 @@ function snapshotUnrelatedWorktrees(repoRoot, projectRoot, taskWorktree) {
       } else {
         assertClean(entry.path, `Unrelated worktree ${entry.path}`);
       }
-      return `${entry.path}\0${execGit(entry.path, ['rev-parse', 'HEAD'])}`;
+      return entry.path;
     })
     .join('\n');
 }
@@ -1334,6 +1512,21 @@ function assertRegisteredWorktree(repoRoot, worktreePath, branch) {
   return canonicalPath;
 }
 
+function prepareTaskWorkspace(repoRoot, workspace, baseHead) {
+  const branchRef = `refs/heads/${workspace.branch}`;
+  const branchExists = refExists(repoRoot, branchRef);
+  const worktreeExists = fs.existsSync(workspace.worktreePath);
+  if (branchExists !== worktreeExists) {
+    throw new Error(`Task resume state is incomplete; expected both branch and worktree: ${workspace.branch}, ${workspace.worktreePath}`);
+  }
+  if (branchExists) return assertRegisteredWorktree(repoRoot, workspace.worktreePath, workspace.branch);
+
+  const parent = path.dirname(workspace.worktreePath);
+  createContainedDirectory(repoRoot, parent, 'Task worktree parent');
+  execGit(repoRoot, ['worktree', 'add', '-b', workspace.branch, workspace.worktreePath, baseHead]);
+  return assertRegisteredWorktree(repoRoot, workspace.worktreePath, workspace.branch);
+}
+
 function initializedSubmodules(cwd) {
   return execGit(cwd, ['ls-files', '--stage', '-z'], { raw: true })
     .split('\0')
@@ -1406,6 +1599,14 @@ function assertPlanFile(projectRoot, reportedPath) {
   return absolute;
 }
 
+function assertRunnerPlanFile(taskProjectRoot, baseProjectRoot, reportedPath) {
+  const taskCandidate = path.resolve(taskProjectRoot, reportedPath);
+  const baseCandidate = path.resolve(baseProjectRoot, reportedPath);
+  if (fs.existsSync(taskCandidate)) return assertPlanFile(taskProjectRoot, reportedPath);
+  if (fs.existsSync(baseCandidate)) return assertPlanFile(baseProjectRoot, reportedPath);
+  return assertPlanFile(taskProjectRoot, reportedPath);
+}
+
 function ensureLocalPlanIgnore(repoRoot, projectRoot) {
   const gitPath = execGit(repoRoot, ['rev-parse', '--git-path', 'info/exclude']);
   const excludePath = path.resolve(repoRoot, gitPath);
@@ -1442,12 +1643,12 @@ function phasePrompt(phase, input) {
   } else if (phase === 'implement') {
     header.push(`Skill arguments: ${input.planFile}${projectArg}`);
     header.push(`Task branch: ${input.branch}`);
+    header.push(`Verify and reuse the precreated registered worktree at exactly ${input.worktreePath}.`);
+    header.push('The runner exclusively owns task-worktree creation, removal, and recovery.');
     if (input.resumeExistingWorktree) {
       header.push('RESUME EXISTING WORKTREE=true');
       header.push(`Reuse the existing registered worktree at exactly ${input.worktreePath}.`);
       header.push('Inspect the plan, commits, working state, and tests; do not repeat completed implementation work. Finish and commit only what remains.');
-    } else {
-      header.push(`Create the task worktree at exactly ${input.worktreePath} on exactly branch ${input.branch}.`);
     }
     header.push('The task status must be changed to In Progress inside the task worktree and included in the implementation commit.');
   } else if (phase === 'validate') {
@@ -1590,8 +1791,9 @@ function runTasks(options, dependencies = {}) {
     wait: dependencies.leaseWait,
     heartbeatMs: dependencies.leaseHeartbeatMs,
   };
-  const releaseSetupLease = acquireRunnerLease(
+  const releaseSetupLease = acquireRepositoryGate(
     commonDir,
+    'write',
     { project: options.project || '.', taskId: 'setup' },
     leaseDependencies
   );
@@ -1644,26 +1846,36 @@ function runTasks(options, dependencies = {}) {
   const callPhase = dependencies.invokePhase || invokePhase;
   function invokeChecked(input) {
     if (dependencies.beforePhase) dependencies.beforePhase(input);
+    const releaseGate = acquireRepositoryGate(
+      commonDir,
+      'read',
+      { project: project.projectName || '.', taskId: input.taskId },
+      leaseDependencies
+    );
     const taskWorktree = input.worktreePath;
     const repositoryState = {
       refs: snapshotRepositoryRefs(repoRoot),
       worktrees: snapshotWorktreeRegistry(repoRoot),
       unrelated: snapshotUnrelatedWorktrees(repoRoot, projectRoot, taskWorktree),
-      runner: snapshotRunnerState(commonDir),
+      runner: snapshotTaskRunnerState(commonDir, repoRoot, projectRoot, input.taskId),
       hooksPaths: readLocalHooksPaths(repoRoot),
     };
     try {
       return callPhase(input);
     } finally {
-      if (restoreTransientTaskHooksPath(repoRoot, input, repositoryState.hooksPaths)) {
-        log(`[${formatLocalTimestamp(now())}] [${input.taskId}] restored transient task-worktree core.hooksPath`);
-      }
-      assertGitControls(commonDir, gitControls);
-      assertRunnerState(commonDir, repositoryState.runner);
-      assertPlanTree(projectRoot);
-      assertRepositoryTransition(repoRoot, repositoryState, input);
-      if (snapshotUnrelatedWorktrees(repoRoot, projectRoot, taskWorktree) !== repositoryState.unrelated) {
-        throw new Error(`An unrelated worktree changed during ${input.phase}`);
+      try {
+        if (restoreTransientTaskHooksPath(repoRoot, input, repositoryState.hooksPaths)) {
+          log(`[${formatLocalTimestamp(now())}] [${input.taskId}] restored transient task-worktree core.hooksPath`);
+        }
+        assertGitControls(commonDir, gitControls);
+        assertTaskRunnerState(commonDir, repoRoot, projectRoot, input.taskId, repositoryState.runner);
+        assertPlanTree(input.projectRoot);
+        assertRepositoryTransition(repoRoot, repositoryState, input);
+        if (snapshotUnrelatedWorktrees(repoRoot, projectRoot, taskWorktree) !== repositoryState.unrelated) {
+          throw new Error(`An unrelated worktree changed during ${input.phase}`);
+        }
+      } finally {
+        releaseGate();
       }
     }
   }
@@ -1671,7 +1883,7 @@ function runTasks(options, dependencies = {}) {
   const completed = [];
 
   for (const taskId of taskIds) {
-    const releaseTaskLease = acquireRunnerLease(
+    const releaseTaskLease = acquireProjectLease(
       commonDir,
       { project: project.projectName || '.', taskId },
       leaseDependencies
@@ -1726,13 +1938,35 @@ function runTasks(options, dependencies = {}) {
         checkpoint.workspace = { branch: expectedBranch, worktreePath: expectedWorktree };
         saveCheckpoint(commonDir, repoRoot, projectRoot, checkpoint);
       }
+      const releaseWorkspaceGate = acquireRepositoryGate(
+        commonDir,
+        'write',
+        { project: project.projectName || '.', taskId },
+        leaseDependencies
+      );
+      let preparedWorktree;
+      try {
+        preparedWorktree = prepareTaskWorkspace(repoRoot, workspace, baseSha);
+      } finally {
+        releaseWorkspaceGate();
+      }
+      const taskProjectRelativePath = path.relative(repoRoot, projectRoot);
+      const lexicalPreparedProject = path.join(preparedWorktree, taskProjectRelativePath);
+      assertNoSymlinkComponents(preparedWorktree, lexicalPreparedProject, 'Task project');
+      const preparedTaskProjectRoot = fs.realpathSync(lexicalPreparedProject);
+      if (!isContained(preparedWorktree, preparedTaskProjectRoot)) {
+        throw new Error('Selected project resolves outside the task worktree');
+      }
+      assertNoSymlinkComponents(preparedWorktree, preparedTaskProjectRoot, 'Task project');
+      const preparedTaskSpecsDir = path.join(preparedTaskProjectRoot, 'specs');
+      assertNoSymlinkComponents(preparedTaskProjectRoot, preparedTaskSpecsDir, 'Task specs');
       const common = {
         harness: options.harness,
         taskId,
         repoRoot,
         projectName: project.projectName,
-        projectRoot,
-        specsDir: project.specsDir,
+        projectRoot: preparedTaskProjectRoot,
+        specsDir: preparedTaskSpecsDir,
         branch: expectedBranch,
         worktreePath: expectedWorktree,
       };
@@ -1742,27 +1976,30 @@ function runTasks(options, dependencies = {}) {
         GROUNDWORK_RUNNER_MODE: 'true',
         GROUNDWORK_BATCH_MODE: 'true',
         GROUNDWORK_PROJECT: project.projectName || '',
-        GROUNDWORK_PROJECT_ROOT: projectRoot,
+        GROUNDWORK_PROJECT_ROOT: preparedTaskProjectRoot,
       };
 
-      const conventionalPlan = path.join(projectRoot, '.groundwork-plans', `${taskId}-plan.md`);
+      const conventionalTaskPlan = path.join(preparedTaskProjectRoot, '.groundwork-plans', `${taskId}-plan.md`);
+      const conventionalBasePlan = path.join(projectRoot, '.groundwork-plans', `${taskId}-plan.md`);
       let planFile;
-      if (fs.existsSync(conventionalPlan)) {
-        planFile = assertPlanFile(projectRoot, conventionalPlan);
+      if (fs.existsSync(conventionalTaskPlan) || fs.existsSync(conventionalBasePlan)) {
+        planFile = fs.existsSync(conventionalTaskPlan)
+          ? assertPlanFile(preparedTaskProjectRoot, conventionalTaskPlan)
+          : assertPlanFile(projectRoot, conventionalBasePlan);
         taskLog(`[${taskId}] plan skipped — existing plan`);
       } else {
         beginPhase('plan');
         const planOutput = invokeChecked({
           ...common,
           phase: 'plan',
-          cwd: projectRoot,
+          cwd: preparedTaskProjectRoot,
           pluginRoot,
           env,
           prompt: phasePrompt('plan', common),
         });
         const plan = parsePlanResult(planOutput);
         if (plan.identifier !== taskId) throw new Error(`plan-task returned ${plan.identifier}, expected ${taskId}`);
-        planFile = assertPlanFile(projectRoot, plan.planFilePath);
+        planFile = assertRunnerPlanFile(preparedTaskProjectRoot, projectRoot, plan.planFilePath);
         if (execGit(repoRoot, ['rev-parse', 'HEAD']) !== baseSha) throw new Error('Base branch changed during planning');
         if (execGit(repoRoot, ['branch', '--show-current']) !== baseBranch) throw new Error('Base branch switched during planning');
         assertClean(repoRoot, 'Base worktree');
@@ -1849,7 +2086,7 @@ function runTasks(options, dependencies = {}) {
         const implementOutput = invokeChecked({
           ...implementInput,
           phase: 'implement',
-          cwd: projectRoot,
+          cwd: preparedTaskProjectRoot,
           pluginRoot,
           env,
           prompt: phasePrompt('implement', implementInput),
@@ -1971,7 +2208,7 @@ function runTasks(options, dependencies = {}) {
 
         beginPhase('finalize');
         const finalizeInput = { ...validateInput, validatedHead };
-        const finalization = parseFinalizeResult(invokeChecked({
+        let finalization = parseFinalizeResult(invokeChecked({
           ...finalizeInput,
           phase: 'finalize',
           cwd: taskProjectRoot,
@@ -1988,27 +2225,50 @@ function runTasks(options, dependencies = {}) {
         assertNoSymlinkComponents(taskProjectRoot, taskSpecsDir, 'Task specs');
 
         if (finalization.outcome === 'ready') {
-          mergeAndCleanup(
-            repoRoot,
-            projectRoot,
-            taskId,
-            implementation,
-            finalization,
-            implementationHead,
-            validatedHead,
-            baseBranch
+          const releasePublicationGate = acquireRepositoryGate(
+            commonDir,
+            'write',
+            { project: project.projectName || '.', taskId },
+            leaseDependencies
           );
-          const completedTask = parseTaskCatalog(readTasks(projectRoot)).get(taskId);
-          if (!completedTask || completedTask.status !== 'Complete') {
-            throw new Error(`${taskId} is not Complete after finalization`);
+          let baseMovedBeforePublication = false;
+          try {
+            baseMovedBeforePublication = execGit(repoRoot, ['rev-parse', baseBranch]) !== finalization.baseHead;
+            if (!baseMovedBeforePublication) {
+              mergeAndCleanup(
+                repoRoot,
+                projectRoot,
+                taskId,
+                implementation,
+                finalization,
+                implementationHead,
+                validatedHead,
+                baseBranch
+              );
+            }
+          } finally {
+            releasePublicationGate();
           }
-          clearCheckpoint(commonDir, repoRoot, projectRoot, taskId);
-          gitControls = snapshotGitControls(commonDir);
-          completePhase();
-          const { validatedHead: _validatedHead, ...validationSummary } = validation;
-          completed.push({ taskId, validation: validationSummary });
-          implementation = null;
-          break;
+          if (baseMovedBeforePublication) {
+            finalization = {
+              outcome: 'revalidate',
+              taskHead: execGit(implementation.worktreePath, ['rev-parse', 'HEAD']),
+              baseHead: execGit(repoRoot, ['rev-parse', baseBranch]),
+              reason: 'base advanced before publication',
+            };
+          } else {
+            const completedTask = parseTaskCatalog(readTasks(projectRoot)).get(taskId);
+            if (!completedTask || completedTask.status !== 'Complete') {
+              throw new Error(`${taskId} is not Complete after finalization`);
+            }
+            clearCheckpoint(commonDir, repoRoot, projectRoot, taskId);
+            gitControls = snapshotGitControls(commonDir);
+            completePhase();
+            const { validatedHead: _validatedHead, ...validationSummary } = validation;
+            completed.push({ taskId, validation: validationSummary });
+            implementation = null;
+            break;
+          }
         }
 
         implementation.worktreePath = assertRegisteredWorktree(
@@ -2098,6 +2358,8 @@ module.exports = {
   invokePhase,
   assertRegisteredWorktree,
   acquireRunnerLease,
+  acquireProjectLease,
+  acquireRepositoryGate,
   resolveProject,
   runTasks,
   main,
