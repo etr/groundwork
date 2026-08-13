@@ -466,6 +466,104 @@ describe('module and CLI contract', () => {
     }
   });
 
+  test('serializes a new reclaimer and successor behind a paused legacy reclaimer', () => {
+    const { acquireRepositoryGate } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-legacy-reclaimer-race-'));
+    const signals = path.join(root, 'signals');
+    fs.mkdirSync(signals);
+    const children = [];
+    let successorRelease;
+    let successorReady;
+    try {
+      initRepo(root);
+      const commonDir = path.join(root, '.git');
+      const gateRoot = path.join(commonDir, 'groundwork', 'repository-gate');
+      const writer = path.join(gateRoot, 'writer.lock');
+      write(writer, `${JSON.stringify({
+        version: 1,
+        pid: 2147483647,
+        processStart: 'dead',
+        token: 'a'.repeat(48),
+        project: 'stale',
+        projectPath: '.',
+        taskId: 'TASK-999',
+        startedAt: 1,
+      })}\n`);
+
+      const file = (name) => path.join(signals, name);
+      const legacyStart = file('legacy-start');
+      const legacyReady = file('legacy-ready');
+      const legacyRelease = file('legacy-release');
+      const legacyDone = file('legacy-done');
+      children.push(spawn(process.execPath, [
+        path.join(PLUGIN_ROOT, 'tests', 'fixtures', 'legacy-reclaimer-child.js'),
+        RUNNER,
+        commonDir,
+        legacyStart,
+        legacyReady,
+        legacyRelease,
+        legacyDone,
+      ], { stdio: ['ignore', 'ignore', 'inherit'] }));
+
+      let recoveryBoundaryReached = false;
+      let legacyReleased = false;
+      const release = acquireRepositoryGate(
+        commonDir,
+        'write',
+        { project: 'new', projectPath: '.', taskId: 'TASK-004' },
+        {
+          log: () => {},
+          beforeLegacyRecoveryPublish() {
+            if (recoveryBoundaryReached) return;
+            recoveryBoundaryReached = true;
+            write(legacyStart, 'start\n');
+            waitForFile(legacyReady);
+
+            successorReady = file('successor-ready');
+            successorRelease = file('successor-release');
+            children.push(gateChild(
+              root,
+              'write',
+              'successor',
+              'TASK-005',
+              successorReady,
+              successorRelease,
+              file('successor-blocked')
+            ));
+            waitForFile(file('successor-blocked'));
+            assert.strictEqual(fs.existsSync(successorReady), false);
+            assert.strictEqual(fs.readFileSync(writer, 'utf8').includes('"project":"stale"'), true);
+          },
+          mutationWait() {
+            if (!legacyReleased) {
+              legacyReleased = true;
+              assert.strictEqual(fs.existsSync(successorReady), false);
+              write(legacyRelease, 'release\n');
+              waitForFile(legacyDone);
+            }
+            Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+          },
+          wait() {
+            if (!successorReady) {
+              throw new Error('new reclaimer skipped the atomic legacy recovery boundary');
+            }
+            waitForFile(successorReady);
+            write(successorRelease, 'release\n');
+            waitForFile(path.join(signals, 'successor-ready.released'));
+          },
+        }
+      );
+
+      assert.strictEqual(recoveryBoundaryReached, true);
+      assert.strictEqual(legacyReleased, true);
+      release();
+    } finally {
+      if (successorRelease && !fs.existsSync(successorRelease)) write(successorRelease, 'release\n');
+      for (const child of children) child.kill();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('publishes complete lease records and cleans staging files when initialization fails', () => {
     const { acquireProjectLease, acquireRepositoryGate } = require(RUNNER);
     const scenarios = [
@@ -510,7 +608,7 @@ describe('module and CLI contract', () => {
       },
     ];
 
-    const phases = ['create', 'partial write', 'fsync'];
+    const phases = ['create', 'partial write', 'fsync', 'directory fsync'];
     for (const scenario of scenarios) {
       for (const phase of phases) {
         const root = fs.mkdtempSync(path.join(
@@ -524,7 +622,11 @@ describe('module and CLI contract', () => {
           function inject(file, stagingFile, fd, currentPhase) {
             if (phase !== currentPhase || !scenario.target(file)) return;
             injected = true;
-            assert.strictEqual(fs.existsSync(file), false, `${scenario.name} final path was published early`);
+            assert.strictEqual(
+              fs.existsSync(file),
+              phase === 'directory fsync',
+              `${scenario.name} publication state was wrong during ${phase}`
+            );
             if (phase === 'partial write') fs.ftruncateSync(fd, 8);
             if (phase === 'fsync') {
               assert.doesNotThrow(() => JSON.parse(fs.readFileSync(stagingFile, 'utf8')));
@@ -542,6 +644,9 @@ describe('module and CLI contract', () => {
               },
               afterLeaseStagingSync(file, stagingFile, fd) {
                 inject(file, stagingFile, fd, 'fsync');
+              },
+              beforeLeaseDirectorySync(file) {
+                inject(file, null, null, 'directory fsync');
               },
             }),
             new RegExp(`injected ${scenario.name} ${phase} failure`)
@@ -603,7 +708,119 @@ describe('module and CLI contract', () => {
     }
   });
 
-  test('waits on only the immediate mutation predecessor with a short bounded retry', () => {
+  test('waits for a live choosing contender with the short mutation retry', () => {
+    const { acquireRepositoryGate, processStartIdentity } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-mutation-choosing-'));
+    try {
+      initRepo(root);
+      const commonDir = path.join(root, '.git');
+      const gateRoot = path.join(commonDir, 'groundwork', 'repository-gate');
+      const choosing = path.join(gateRoot, '.lease-mutation', 'choosing');
+      const readers = path.join(gateRoot, 'readers');
+      const token = 'c'.repeat(48);
+      const chooser = path.join(choosing, `${token}.lock`);
+      write(chooser, `${JSON.stringify({
+        version: 1,
+        pid: process.pid,
+        processStart: processStartIdentity(process.pid),
+        token,
+        ticket: 0,
+        startedAt: 1,
+      })}\n`);
+
+      let mutationWaits = 0;
+      const release = acquireRepositoryGate(
+        commonDir,
+        'read',
+        { project: 'api', projectPath: '.', taskId: 'TASK-004' },
+        {
+          log: () => {},
+          mutationWait(milliseconds) {
+            mutationWaits++;
+            assert.ok(milliseconds <= 25, `slow choosing retry: ${milliseconds}`);
+            assert.deepStrictEqual(
+              fs.readdirSync(readers).filter((name) => name.endsWith('.lock')),
+              [],
+              'the contender published while another process was still choosing'
+            );
+            fs.unlinkSync(chooser);
+          },
+          wait() {
+            throw new Error('choosing contention used the ordinary one-second lease wait');
+          },
+        }
+      );
+
+      assert.strictEqual(mutationWaits, 1);
+      release();
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('keeps waiting for the oldest mutation owner when a nearer predecessor dies', () => {
+    const { acquireRepositoryGate, processStartIdentity } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-mutation-dead-predecessor-'));
+    try {
+      initRepo(root);
+      const commonDir = path.join(root, '.git');
+      const gateRoot = path.join(commonDir, 'groundwork', 'repository-gate');
+      const tickets = path.join(gateRoot, '.lease-mutation', 'tickets');
+      const readers = path.join(gateRoot, 'readers');
+      const processStart = processStartIdentity(process.pid);
+      const oldestToken = '1'.repeat(48);
+      const nearerToken = '2'.repeat(48);
+      const oldest = path.join(tickets, `${oldestToken}.lock`);
+      const nearer = path.join(tickets, `${nearerToken}.lock`);
+      for (const [file, token, ticket, pid] of [
+        [oldest, oldestToken, 1, 111111],
+        [nearer, nearerToken, 2, 222222],
+      ]) {
+        write(file, `${JSON.stringify({
+          version: 1,
+          pid,
+          processStart: `live:${pid}`,
+          token,
+          ticket,
+          startedAt: 1,
+        })}\n`);
+      }
+
+      let mutationWaits = 0;
+      let nearerIsLive = true;
+      const release = acquireRepositoryGate(
+        commonDir,
+        'read',
+        { project: 'api', projectPath: '.', taskId: 'TASK-004' },
+        {
+          log: () => {},
+          processStartIdentity(pid) {
+            if (pid === process.pid) return processStart;
+            if (pid === 111111) return 'live:111111';
+            if (pid === 222222 && nearerIsLive) return 'live:222222';
+            return null;
+          },
+          mutationWait() {
+            mutationWaits++;
+            assert.deepStrictEqual(
+              fs.readdirSync(readers).filter((name) => name.endsWith('.lock')),
+              [],
+              'the contender entered while the oldest mutation owner was live'
+            );
+            if (mutationWaits === 1) nearerIsLive = false;
+            else fs.unlinkSync(oldest);
+          },
+        }
+      );
+
+      assert.strictEqual(mutationWaits, 2);
+      release();
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('waits on mutation predecessors with a short bounded retry', () => {
     const { acquireRepositoryGate, processStartIdentity } = require(RUNNER);
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-mutation-contention-'));
     try {

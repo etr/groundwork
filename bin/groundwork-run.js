@@ -524,9 +524,12 @@ function sameLeaseIdentity(left, right) {
     && left.startedAt === right.startedAt);
 }
 
-function fsyncDirectory(directory) {
+function fsyncDirectory(directory, dependencies = {}, finalPath = null) {
   let fd;
   try {
+    if (dependencies.beforeLeaseDirectorySync) {
+      dependencies.beforeLeaseDirectorySync(finalPath, directory);
+    }
     fd = fs.openSync(directory, fs.constants.O_RDONLY);
     fs.fsyncSync(fd);
   } catch (error) {
@@ -563,7 +566,7 @@ function publishRecordAtomically(finalPath, record, dependencies = {}, notify = 
     }
     fs.linkSync(stagingPath, finalPath);
     published = true;
-    fsyncDirectory(path.dirname(finalPath));
+    fsyncDirectory(path.dirname(finalPath), dependencies, finalPath);
   } catch (error) {
     if (fd !== undefined) {
       try { fs.closeSync(fd); } catch {}
@@ -682,15 +685,11 @@ function acquireLeaseMutation(mutationRoot, dependencies = {}) {
       }
     }
 
-    const predecessor = liveMutationEntries(ticketsDirectory, dependencies).reduce((nearest, entry) => {
-      const precedes = entry.token !== token
-        && (entry.ticket < ticket || (entry.ticket === ticket && entry.token < token));
-      if (!precedes) return nearest;
-      if (!nearest || entry.ticket > nearest.ticket
-          || (entry.ticket === nearest.ticket && entry.token > nearest.token)) return entry;
-      return nearest;
-    }, null);
-    if (predecessor) {
+    const predecessors = liveMutationEntries(ticketsDirectory, dependencies)
+      .filter((entry) => entry.token !== token
+        && (entry.ticket < ticket || (entry.ticket === ticket && entry.token < token)))
+      .sort((left, right) => right.ticket - left.ticket || right.token.localeCompare(left.token));
+    for (const predecessor of predecessors) {
       for (;;) {
         const current = inspectMutationEntry(predecessor.file, dependencies);
         if (!current) break;
@@ -738,30 +737,69 @@ function removeLeaseIfIdentity(leasePath, expected, dependencies = {}) {
   }
 }
 
+function acquireLegacyRecoveryLease(recoveryPath, dependencies = {}) {
+  const token = crypto.randomBytes(24).toString('hex');
+  const processStart = processStartIdentity(process.pid, dependencies);
+  if (!processStart) throw new Error('Cannot identify the runner process instance');
+  const record = {
+    version: 1,
+    pid: process.pid,
+    processStart,
+    token,
+    project: 'recovery',
+    projectPath: '.',
+    taskId: 'setup',
+    startedAt: (dependencies.now || Date.now)(),
+  };
+  for (;;) {
+    if (dependencies.beforeLegacyRecoveryPublish) {
+      dependencies.beforeLegacyRecoveryPublish(recoveryPath);
+    }
+    try {
+      publishRecordAtomically(recoveryPath, record, dependencies);
+      break;
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw error;
+    }
+    const current = inspectLease(recoveryPath, dependencies);
+    if (!current) continue;
+    if (current.live) return null;
+    removeLeaseIfIdentity(recoveryPath, current.holder, dependencies);
+  }
+  return () => {
+    const current = inspectLease(recoveryPath, dependencies);
+    if (!current || !sameLeaseIdentity(current.holder, record)) {
+      throw new Error('Repository recovery lease ownership changed before release');
+    }
+    if (!removeLeaseIfIdentity(recoveryPath, record, dependencies)) {
+      throw new Error('Repository recovery lease disappeared before release');
+    }
+  };
+}
+
 function reclaimStaleLease(leasePath, expected, dependencies = {}) {
   const mutationRoot = dependencies.mutationRoot || path.dirname(leasePath);
   for (;;) {
     const releaseMutation = acquireLeaseMutation(mutationRoot, dependencies);
-    let legacyRecoveryIsLive = false;
+    let releaseRecovery;
     let result;
     try {
       const legacyRecoveryPath = path.join(mutationRoot, '.reclaim.lock');
-      const legacyRecovery = inspectLease(legacyRecoveryPath, dependencies);
-      if (legacyRecovery && legacyRecovery.live) {
-        legacyRecoveryIsLive = true;
-      } else {
-        if (legacyRecovery) {
-          removeLeaseIfIdentity(legacyRecoveryPath, legacyRecovery.holder, dependencies);
-        }
+      releaseRecovery = acquireLegacyRecoveryLease(legacyRecoveryPath, dependencies);
+      if (releaseRecovery) {
         const inspected = inspectLease(leasePath, dependencies);
         if (!inspected) result = true;
         else if (!sameLeaseIdentity(inspected.holder, expected) || inspected.live) result = false;
         else result = removeLeaseIfIdentity(leasePath, expected, dependencies);
       }
     } finally {
-      releaseMutation();
+      try {
+        if (releaseRecovery) releaseRecovery();
+      } finally {
+        releaseMutation();
+      }
     }
-    if (!legacyRecoveryIsLive) return result;
+    if (releaseRecovery) return result;
     waitForLeaseMutation(dependencies);
   }
 }
