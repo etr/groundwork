@@ -517,9 +517,187 @@ function sameLeaseIdentity(left, right) {
     && left.startedAt === right.startedAt);
 }
 
+function fsyncDirectory(directory) {
+  let fd;
+  try {
+    fd = fs.openSync(directory, fs.constants.O_RDONLY);
+    fs.fsyncSync(fd);
+  } catch (error) {
+    if (!['EINVAL', 'ENOTSUP', 'EISDIR'].includes(error.code)) throw error;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+}
+
+function publishRecordAtomically(finalPath, record, dependencies = {}, notify = false) {
+  const stagingPath = path.join(
+    path.dirname(finalPath),
+    `.staging-${record.token}-${crypto.randomBytes(8).toString('hex')}.tmp`
+  );
+  let fd;
+  let published = false;
+  try {
+    fd = fs.openSync(stagingPath, 'wx', 0o600);
+    if (notify && dependencies.afterLeaseStagingCreate) {
+      dependencies.afterLeaseStagingCreate(finalPath, stagingPath, fd);
+    }
+    fs.writeFileSync(fd, `${JSON.stringify(record)}\n`, 'utf8');
+    if (notify && dependencies.afterLeaseStagingWrite) {
+      dependencies.afterLeaseStagingWrite(finalPath, stagingPath, fd);
+    }
+    fs.fsyncSync(fd);
+    if (notify && dependencies.afterLeaseStagingSync) {
+      dependencies.afterLeaseStagingSync(finalPath, stagingPath, fd);
+    }
+    fs.closeSync(fd);
+    fd = undefined;
+    if (notify && dependencies.beforeLeasePublish) {
+      dependencies.beforeLeasePublish(finalPath, stagingPath);
+    }
+    fs.linkSync(stagingPath, finalPath);
+    published = true;
+    fsyncDirectory(path.dirname(finalPath));
+  } catch (error) {
+    if (fd !== undefined) {
+      try { fs.closeSync(fd); } catch {}
+    }
+    if (published) {
+      try { fs.unlinkSync(finalPath); } catch (cleanupError) {
+        if (cleanupError.code !== 'ENOENT') throw cleanupError;
+      }
+    }
+    try { fs.unlinkSync(stagingPath); } catch (cleanupError) {
+      if (cleanupError.code !== 'ENOENT') throw cleanupError;
+    }
+    throw error;
+  }
+  fs.unlinkSync(stagingPath);
+  return record;
+}
+
+function inspectMutationEntry(entryPath, dependencies = {}) {
+  let fd;
+  let entry;
+  try {
+    fd = fs.openSync(entryPath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.size > 4_096) {
+      throw new Error(`Repository lease mutation entry is unsafe: ${entryPath}`);
+    }
+    entry = JSON.parse(fs.readFileSync(fd, 'utf8'));
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    if (error.code === 'ELOOP') {
+      throw new Error(`Repository lease mutation entry is unsafe: ${entryPath}`);
+    }
+    if (error instanceof SyntaxError) {
+      throw new Error(`Repository lease mutation entry is invalid: ${entryPath}`);
+    }
+    throw error;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+  const expectedToken = path.basename(entryPath, '.lock');
+  if (!entry || entry.version !== 1 || !Number.isInteger(entry.pid) || entry.pid < 1
+      || entry.token !== expectedToken || !/^[0-9a-f]{48}$/.test(entry.token)
+      || !Number.isInteger(entry.ticket) || entry.ticket < 0
+      || typeof entry.processStart !== 'string' || !entry.processStart
+      || entry.processStart.length > 256) {
+    throw new Error(`Repository lease mutation entry has invalid ownership: ${entryPath}`);
+  }
+  return {
+    entry,
+    live: processStartIdentity(entry.pid, dependencies) === entry.processStart,
+  };
+}
+
+function liveMutationEntries(directory, dependencies = {}) {
+  const entries = [];
+  for (const name of fs.readdirSync(directory)) {
+    if (name.startsWith('.staging-')) continue;
+    if (!/^[0-9a-f]{48}\.lock$/.test(name)) {
+      throw new Error(`Repository lease mutation filename is invalid: ${path.join(directory, name)}`);
+    }
+    const file = path.join(directory, name);
+    const inspected = inspectMutationEntry(file, dependencies);
+    if (!inspected) continue;
+    if (!inspected.live) {
+      try { fs.unlinkSync(file); } catch (error) {
+        if (error.code !== 'ENOENT') throw error;
+      }
+      continue;
+    }
+    entries.push({ file, ...inspected.entry });
+  }
+  return entries;
+}
+
+function acquireLeaseMutation(mutationRoot, dependencies = {}) {
+  const mutationDirectory = path.join(mutationRoot, '.lease-mutation');
+  const choosingDirectory = path.join(mutationDirectory, 'choosing');
+  const ticketsDirectory = path.join(mutationDirectory, 'tickets');
+  createContainedDirectory(path.dirname(mutationRoot), choosingDirectory, 'Repository lease mutation directory');
+  createContainedDirectory(path.dirname(mutationRoot), ticketsDirectory, 'Repository lease mutation directory');
+  const token = crypto.randomBytes(24).toString('hex');
+  const processStart = processStartIdentity(process.pid, dependencies);
+  if (!processStart) throw new Error('Cannot identify the runner process instance');
+  const baseRecord = {
+    version: 1,
+    pid: process.pid,
+    processStart,
+    token,
+    startedAt: (dependencies.now || Date.now)(),
+  };
+  const choosingPath = path.join(choosingDirectory, `${token}.lock`);
+  const ticketPath = path.join(ticketsDirectory, `${token}.lock`);
+  let ticketPublished = false;
+  try {
+    publishRecordAtomically(choosingPath, { ...baseRecord, ticket: 0 }, dependencies);
+    const currentTickets = liveMutationEntries(ticketsDirectory, dependencies);
+    const ticket = currentTickets.reduce((maximum, entry) => Math.max(maximum, entry.ticket), 0) + 1;
+    publishRecordAtomically(ticketPath, { ...baseRecord, ticket }, dependencies);
+    ticketPublished = true;
+    fs.unlinkSync(choosingPath);
+
+    for (;;) {
+      const choosing = liveMutationEntries(choosingDirectory, dependencies)
+        .filter((entry) => entry.token !== token);
+      if (choosing.length) {
+        waitForLease(dependencies);
+        continue;
+      }
+      const predecessor = liveMutationEntries(ticketsDirectory, dependencies).find((entry) => (
+        entry.token !== token
+        && (entry.ticket < ticket || (entry.ticket === ticket && entry.token < token))
+      ));
+      if (!predecessor) {
+        return () => {
+          try {
+            fs.unlinkSync(ticketPath);
+          } catch (error) {
+            if (error.code !== 'ENOENT') throw error;
+          }
+        };
+      }
+      waitForLease(dependencies);
+    }
+  } catch (error) {
+    try { fs.unlinkSync(choosingPath); } catch (cleanupError) {
+      if (cleanupError.code !== 'ENOENT') throw cleanupError;
+    }
+    if (ticketPublished) {
+      try { fs.unlinkSync(ticketPath); } catch (cleanupError) {
+        if (cleanupError.code !== 'ENOENT') throw cleanupError;
+      }
+    }
+    throw error;
+  }
+}
+
 function removeLeaseIfIdentity(leasePath, expected, dependencies = {}) {
   const current = inspectLease(leasePath, dependencies);
   if (!current || !sameLeaseIdentity(current.holder, expected)) return false;
+  if (dependencies.beforeLeaseRemove) dependencies.beforeLeaseRemove(leasePath, expected);
   try {
     fs.unlinkSync(leasePath);
     return true;
@@ -529,36 +707,22 @@ function removeLeaseIfIdentity(leasePath, expected, dependencies = {}) {
   }
 }
 
-function acquireRecoveryLease(recoveryPath, dependencies) {
-  for (;;) {
-    try {
-      return createOwnedLease(
-        recoveryPath,
-        { project: 'recovery', projectPath: '.', taskId: 'setup' },
-        dependencies
-      );
-    } catch (error) {
-      if (error.code !== 'EEXIST') throw error;
-    }
-    const current = inspectLease(recoveryPath, dependencies);
-    if (!current) continue;
-    if (current.live) return null;
-    if (!removeLeaseIfIdentity(recoveryPath, current.holder, dependencies)) continue;
-  }
-}
-
 function reclaimStaleLease(leasePath, expected, dependencies = {}) {
-  const recoveryPath = path.join(path.dirname(leasePath), '.reclaim.lock');
-  const releaseRecovery = acquireRecoveryLease(recoveryPath, dependencies);
-  if (!releaseRecovery) return false;
+  const mutationRoot = dependencies.mutationRoot || path.dirname(leasePath);
+  const releaseMutation = acquireLeaseMutation(mutationRoot, dependencies);
   try {
+    const legacyRecoveryPath = path.join(mutationRoot, '.reclaim.lock');
+    const legacyRecovery = inspectLease(legacyRecoveryPath, dependencies);
+    if (legacyRecovery && !legacyRecovery.live) {
+      removeLeaseIfIdentity(legacyRecoveryPath, legacyRecovery.holder, dependencies);
+    }
     const inspected = inspectLease(leasePath, dependencies);
     if (!inspected) return true;
     if (!sameLeaseIdentity(inspected.holder, expected)) return false;
     if (inspected.live) return false;
     return removeLeaseIfIdentity(leasePath, expected, dependencies);
   } finally {
-    releaseRecovery();
+    releaseMutation();
   }
 }
 
@@ -584,20 +748,25 @@ function createOwnedLease(leasePath, owner, dependencies = {}, requestedToken = 
     ...normalizedOwner,
     startedAt: now(),
   };
-  const fd = fs.openSync(leasePath, 'wx', 0o600);
+  const mutationRoot = dependencies.mutationRoot || path.dirname(leasePath);
+  const releaseMutation = acquireLeaseMutation(mutationRoot, dependencies);
   try {
-    fs.writeFileSync(fd, `${JSON.stringify(record)}\n`, 'utf8');
-    fs.fsyncSync(fd);
+    publishRecordAtomically(leasePath, record, dependencies, true);
   } finally {
-    fs.closeSync(fd);
+    releaseMutation();
   }
   return () => {
-    const current = inspectLease(leasePath, dependencies);
-    if (!current || !sameLeaseIdentity(current.holder, record)) {
-      throw new Error('Repository lease ownership changed before release');
-    }
-    if (!removeLeaseIfIdentity(leasePath, record, dependencies)) {
-      throw new Error('Repository lease disappeared before release');
+    const releaseRemoval = acquireLeaseMutation(mutationRoot, dependencies);
+    try {
+      const current = inspectLease(leasePath, dependencies);
+      if (!current || !sameLeaseIdentity(current.holder, record)) {
+        throw new Error('Repository lease ownership changed before release');
+      }
+      if (!removeLeaseIfIdentity(leasePath, record, dependencies)) {
+        throw new Error('Repository lease disappeared before release');
+      }
+    } finally {
+      releaseRemoval();
     }
   };
 }
@@ -609,15 +778,16 @@ function acquireProjectLease(commonDir, owner, dependencies = {}) {
   const projectKey = crypto.createHash('sha256').update(project).digest('hex').slice(0, 32);
   const directory = path.join(commonDir, 'groundwork', 'projects');
   const leasePath = path.join(directory, `${projectKey}.lock`);
+  const leaseDependencies = { ...dependencies, mutationRoot: directory };
   let lastProgressAt = -Infinity;
   createContainedDirectory(commonDir, directory, 'Project lease directory');
   for (;;) {
     try {
-      return createOwnedLease(leasePath, owner, dependencies);
+      return createOwnedLease(leasePath, owner, leaseDependencies);
     } catch (error) {
       if (error.code !== 'EEXIST') throw error;
     }
-    const holder = readLiveLease(leasePath, dependencies);
+    const holder = readLiveLease(leasePath, leaseDependencies);
     if (!holder) continue;
     const current = now();
     if (current - lastProgressAt >= (dependencies.heartbeatMs || 30_000)) {
@@ -678,7 +848,7 @@ function activeProjectOwners(commonDir, repoRoot, dependencies = {}) {
   }
   const owners = [];
   for (const name of fs.readdirSync(directory)) {
-    if (name === '.reclaim.lock') continue;
+    if (name === '.reclaim.lock' || name === '.lease-mutation') continue;
     if (!/^[0-9a-f]{32}\.lock$/.test(name)) {
       throw new Error(`Project lease filename is invalid: ${path.join(directory, name)}`);
     }
@@ -729,6 +899,7 @@ function acquireRepositoryGate(commonDir, mode, owner, dependencies = {}) {
   const writer = path.join(root, 'writer.lock');
   const token = crypto.randomBytes(24).toString('hex');
   const readerPath = path.join(readers, `${token}.lock`);
+  const leaseDependencies = { ...dependencies, mutationRoot: root };
   let lastProgressAt = -Infinity;
   createContainedDirectory(commonDir, readers, 'Runner checkpoint and repository gate directory');
   createContainedDirectory(commonDir, waitingWriters, 'Runner checkpoint and repository gate directory');
@@ -742,22 +913,22 @@ function acquireRepositoryGate(commonDir, mode, owner, dependencies = {}) {
 
   if (mode === 'read') {
     for (;;) {
-      const queued = liveLeaseFiles(waitingWriters, dependencies, 'token');
+      const queued = liveLeaseFiles(waitingWriters, leaseDependencies, 'token');
       if (queued.length) { report('writer', queued[0].holder); waitForLease(dependencies); continue; }
       if (fs.existsSync(writer)) {
-        const holder = readLiveLease(writer, dependencies);
+        const holder = readLiveLease(writer, leaseDependencies);
         if (holder) { report('writer', holder); waitForLease(dependencies); continue; }
       }
       let release;
       try {
-        release = createOwnedLease(readerPath, owner, dependencies, token);
+        release = createOwnedLease(readerPath, owner, leaseDependencies, token);
       } catch (error) {
         if (error.code !== 'EEXIST') throw error;
         continue;
       }
       try {
-        if (!readLiveLease(writer, dependencies)
-            && liveLeaseFiles(waitingWriters, dependencies, 'token').length === 0) return release;
+        if (!readLiveLease(writer, leaseDependencies)
+            && liveLeaseFiles(waitingWriters, leaseDependencies, 'token').length === 0) return release;
       } catch (error) {
         try { release(); } catch {}
         throw error;
@@ -767,22 +938,22 @@ function acquireRepositoryGate(commonDir, mode, owner, dependencies = {}) {
   }
 
   const writerIntent = path.join(waitingWriters, `${token}.lock`);
-  const releaseIntent = createOwnedLease(writerIntent, owner, dependencies, token);
+  const releaseIntent = createOwnedLease(writerIntent, owner, leaseDependencies, token);
   try {
     for (;;) {
       let releaseWriter;
       try {
-        releaseWriter = createOwnedLease(writer, owner, dependencies);
+        releaseWriter = createOwnedLease(writer, owner, leaseDependencies);
       } catch (error) {
         if (error.code !== 'EEXIST') throw error;
-        const holder = readLiveLease(writer, dependencies);
+        const holder = readLiveLease(writer, leaseDependencies);
         if (holder) report('writer', holder);
         waitForLease(dependencies);
         continue;
       }
       try {
         for (;;) {
-          const activeReaders = liveLeaseFiles(readers, dependencies, 'token');
+          const activeReaders = liveLeaseFiles(readers, leaseDependencies, 'token');
           if (activeReaders.length === 0) {
             releaseIntent();
             return releaseWriter;
@@ -2087,25 +2258,29 @@ function runTasks(options, dependencies = {}) {
       leaseOwner(input.taskId),
       leaseDependencies
     );
-    const peerOwnersBefore = activeProjectOwners(commonDir, repoRoot, leaseDependencies)
-      .filter((owner) => owner.projectPath !== projectRelative || owner.taskId !== input.taskId);
-    const repositoryState = {
-      refs: snapshotRepositoryRefs(repoRoot),
-      worktrees: snapshotWorktreeRegistry(repoRoot),
-      runner: snapshotRunnerFiles(commonDir),
-      hooksPaths: readLocalHooksPaths(repoRoot),
-    };
+    let peerOwnersBefore;
+    let repositoryState;
     try {
+      peerOwnersBefore = activeProjectOwners(commonDir, repoRoot, leaseDependencies)
+        .filter((owner) => owner.projectPath !== projectRelative || owner.taskId !== input.taskId);
+      repositoryState = {
+        refs: snapshotRepositoryRefs(repoRoot),
+        worktrees: snapshotWorktreeRegistry(repoRoot),
+        runner: snapshotRunnerFiles(commonDir),
+        hooksPaths: readLocalHooksPaths(repoRoot),
+      };
       return callPhase(input);
     } finally {
       try {
-        if (restoreTransientTaskHooksPath(repoRoot, input, repositoryState.hooksPaths)) {
-          log(`[${formatLocalTimestamp(now())}] [${input.taskId}] restored transient task-worktree core.hooksPath`);
+        if (repositoryState) {
+          if (restoreTransientTaskHooksPath(repoRoot, input, repositoryState.hooksPaths)) {
+            log(`[${formatLocalTimestamp(now())}] [${input.taskId}] restored transient task-worktree core.hooksPath`);
+          }
+          assertGitControls(commonDir, gitControls);
+          assertRunnerTransition(repositoryState.runner, snapshotRunnerFiles(commonDir), peerOwnersBefore);
+          assertPlanTree(input.projectRoot);
+          assertRepositoryTransition(repoRoot, repositoryState, input, peerOwnersBefore);
         }
-        assertGitControls(commonDir, gitControls);
-        assertRunnerTransition(repositoryState.runner, snapshotRunnerFiles(commonDir), peerOwnersBefore);
-        assertPlanTree(input.projectRoot);
-        assertRepositoryTransition(repoRoot, repositoryState, input, peerOwnersBefore);
       } finally {
         releaseGate();
       }

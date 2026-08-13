@@ -95,7 +95,7 @@ function waitForFile(file, timeoutMs = 5_000) {
   }
 }
 
-function gateChild(root, mode, project, taskId, readyFile, releaseFile, blockedFile = '') {
+function gateChild(root, mode, project, taskId, readyFile, releaseFile, blockedFile = '', pauses = {}) {
   return spawn(process.execPath, [
     path.join(PLUGIN_ROOT, 'tests', 'fixtures', 'repository-gate-child.js'),
     RUNNER,
@@ -106,6 +106,10 @@ function gateChild(root, mode, project, taskId, readyFile, releaseFile, blockedF
     readyFile,
     releaseFile,
     blockedFile,
+    pauses.publishReady || '',
+    pauses.publishRelease || '',
+    pauses.removeReady || '',
+    pauses.removeRelease || '',
   ], { stdio: ['ignore', 'ignore', 'inherit'] });
 }
 
@@ -403,6 +407,149 @@ describe('module and CLI contract', () => {
     }
   });
 
+  test('publishes complete lease records and cleans staging files when initialization fails', () => {
+    const { acquireProjectLease, acquireRepositoryGate } = require(RUNNER);
+    const scenarios = [
+      {
+        name: 'project',
+        target: (file) => file.includes(`${path.sep}projects${path.sep}`),
+        acquire: (commonDir, dependencies) => acquireProjectLease(
+          commonDir,
+          { project: 'api', projectPath: '.', taskId: 'TASK-004' },
+          dependencies
+        ),
+      },
+      {
+        name: 'reader',
+        target: (file) => file.includes(`${path.sep}readers${path.sep}`),
+        acquire: (commonDir, dependencies) => acquireRepositoryGate(
+          commonDir,
+          'read',
+          { project: 'api', projectPath: '.', taskId: 'TASK-004' },
+          dependencies
+        ),
+      },
+      {
+        name: 'writer intent',
+        target: (file) => file.includes(`${path.sep}writers-waiting${path.sep}`),
+        acquire: (commonDir, dependencies) => acquireRepositoryGate(
+          commonDir,
+          'write',
+          { project: 'api', projectPath: '.', taskId: 'TASK-004' },
+          dependencies
+        ),
+      },
+      {
+        name: 'writer',
+        target: (file) => file.endsWith(`${path.sep}writer.lock`),
+        acquire: (commonDir, dependencies) => acquireRepositoryGate(
+          commonDir,
+          'write',
+          { project: 'api', projectPath: '.', taskId: 'TASK-004' },
+          dependencies
+        ),
+      },
+    ];
+
+    const phases = ['create', 'partial write', 'fsync'];
+    for (const scenario of scenarios) {
+      for (const phase of phases) {
+        const root = fs.mkdtempSync(path.join(
+          os.tmpdir(),
+          `gw-run-atomic-${scenario.name.replace(' ', '-')}-${phase.replace(' ', '-')}-`
+        ));
+        try {
+          initRepo(root);
+          const commonDir = path.join(root, '.git');
+          let injected = false;
+          function inject(file, stagingFile, fd, currentPhase) {
+            if (phase !== currentPhase || !scenario.target(file)) return;
+            injected = true;
+            assert.strictEqual(fs.existsSync(file), false, `${scenario.name} final path was published early`);
+            if (phase === 'partial write') fs.ftruncateSync(fd, 8);
+            if (phase === 'fsync') {
+              assert.doesNotThrow(() => JSON.parse(fs.readFileSync(stagingFile, 'utf8')));
+            }
+            throw new Error(`injected ${scenario.name} ${phase} failure`);
+          }
+          assert.throws(
+            () => scenario.acquire(commonDir, {
+              log: () => {},
+              afterLeaseStagingCreate(file, stagingFile, fd) {
+                inject(file, stagingFile, fd, 'create');
+              },
+              afterLeaseStagingWrite(file, stagingFile, fd) {
+                inject(file, stagingFile, fd, 'partial write');
+              },
+              afterLeaseStagingSync(file, stagingFile, fd) {
+                inject(file, stagingFile, fd, 'fsync');
+              },
+            }),
+            new RegExp(`injected ${scenario.name} ${phase} failure`)
+          );
+          assert.strictEqual(injected, true);
+          const groundwork = path.join(commonDir, 'groundwork');
+          const remaining = fs.existsSync(groundwork)
+            ? fs.readdirSync(groundwork, { recursive: true }).map(String)
+            : [];
+          assert.deepStrictEqual(
+            remaining.filter((name) => name.includes('.staging-') || name.endsWith('.lock')),
+            [],
+            `${scenario.name} left a published or staging lease behind after ${phase}`
+          );
+        } finally {
+          fs.rmSync(root, { recursive: true, force: true });
+        }
+      }
+    }
+  });
+
+  test('serializes stale removal with successor publication at the final removal boundary', () => {
+    const { acquireRepositoryGate } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-stale-removal-boundary-'));
+    try {
+      initRepo(root);
+      const commonDir = path.join(root, '.git');
+      const writer = path.join(commonDir, 'groundwork', 'repository-gate', 'writer.lock');
+      write(writer, `${JSON.stringify({
+        version: 1,
+        pid: 2147483647,
+        processStart: 'dead',
+        token: 'a'.repeat(48),
+        project: 'stale',
+        projectPath: '.',
+        taskId: 'TASK-999',
+        startedAt: 1,
+      })}\n`);
+      let checkedBoundary = false;
+      const releaseReader = acquireRepositoryGate(
+        commonDir,
+        'read',
+        { project: 'reader', projectPath: '.', taskId: 'TASK-004' },
+        {
+          log: () => {},
+          beforeLeaseRemove(file) {
+            if (checkedBoundary || file !== writer) return;
+            checkedBoundary = true;
+            assert.throws(
+              () => acquireRepositoryGate(
+                commonDir,
+                'write',
+                { project: 'successor', projectPath: '.', taskId: 'TASK-005' },
+                { log: () => {}, wait() { throw new Error('successor blocked by lease mutation'); } }
+              ),
+              /successor blocked by lease mutation/
+            );
+          },
+        }
+      );
+      assert.strictEqual(checkedBoundary, true);
+      releaseReader();
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('coordinates repository gates and project leases across processes', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-cross-process-gates-'));
     const signals = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-cross-project-signals-'));
@@ -439,6 +586,55 @@ describe('module and CLI contract', () => {
       for (const child of children) child.kill();
       fs.rmSync(root, { recursive: true, force: true });
       fs.rmSync(signals, { recursive: true, force: true });
+    }
+  });
+
+  test('keeps a complete staged writer private while a competing process waits', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-cross-process-publish-'));
+    const signals = path.join(root, 'signals');
+    fs.mkdirSync(signals);
+    const children = [];
+    try {
+      initRepo(root);
+      const file = (name) => path.join(signals, name);
+      children.push(gateChild(
+        root,
+        'write',
+        'api',
+        'TASK-004',
+        file('first-ready'),
+        file('first-release'),
+        file('first-blocked'),
+        { publishReady: file('publish-ready'), publishRelease: file('publish-release') }
+      ));
+      waitForFile(file('publish-ready'));
+      const gateRoot = path.join(root, '.git', 'groundwork', 'repository-gate');
+      assert.strictEqual(fs.existsSync(path.join(gateRoot, 'writer.lock')), false);
+      const staged = fs.readdirSync(gateRoot).filter((name) => name.startsWith('.staging-'));
+      assert.strictEqual(staged.length, 1);
+      assert.doesNotThrow(() => JSON.parse(fs.readFileSync(path.join(gateRoot, staged[0]), 'utf8')));
+
+      children.push(gateChild(
+        root,
+        'write',
+        'web',
+        'TASK-005',
+        file('second-ready'),
+        file('second-release'),
+        file('second-blocked')
+      ));
+      waitForFile(file('second-blocked'));
+      assert.strictEqual(fs.existsSync(file('second-ready')), false);
+
+      write(file('publish-release'), 'continue\n');
+      waitForFile(file('first-ready'));
+      assert.strictEqual(fs.existsSync(file('second-ready')), false);
+      write(file('first-release'), 'release\n');
+      waitForFile(file('second-ready'));
+      write(file('second-release'), 'release\n');
+    } finally {
+      for (const child of children) child.kill();
+      fs.rmSync(root, { recursive: true, force: true });
     }
   });
 
@@ -528,7 +724,7 @@ describe('module and CLI contract', () => {
     }
   });
 
-  test('serializes competing stale-writer reclaimers across processes', () => {
+  test('serializes three stale-writer reclaimers across the final identity-check boundary', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-cross-process-reclaim-'));
     const signals = path.join(root, 'signals');
     fs.mkdirSync(signals);
@@ -552,20 +748,56 @@ describe('module and CLI contract', () => {
       const secondRelease = path.join(signals, 'second-release');
       const firstBlocked = path.join(signals, 'first-blocked');
       const secondBlocked = path.join(signals, 'second-blocked');
-      children.push(gateChild(root, 'write', 'api', 'TASK-004', firstReady, firstRelease, firstBlocked));
+      const thirdReady = path.join(signals, 'third-ready');
+      const thirdRelease = path.join(signals, 'third-release');
+      const thirdBlocked = path.join(signals, 'third-blocked');
+      const removeReady = path.join(signals, 'remove-ready');
+      const removeRelease = path.join(signals, 'remove-release');
+      children.push(gateChild(
+        root,
+        'write',
+        'api',
+        'TASK-004',
+        firstReady,
+        firstRelease,
+        firstBlocked,
+        { removeReady, removeRelease }
+      ));
+      waitForFile(removeReady);
       children.push(gateChild(root, 'write', 'web', 'TASK-005', secondReady, secondRelease, secondBlocked));
-      const deadline = Date.now() + 5_000;
-      while (!fs.existsSync(firstReady) && !fs.existsSync(secondReady)) {
-        if (Date.now() >= deadline) throw new Error('Neither stale-lease reclaimer acquired the writer gate');
+      children.push(gateChild(root, 'write', 'docs', 'TASK-006', thirdReady, thirdRelease, thirdBlocked));
+      waitForFile(secondBlocked);
+      waitForFile(thirdBlocked);
+      assert.strictEqual(fs.existsSync(firstReady), false);
+      assert.strictEqual(fs.existsSync(secondReady), false);
+      assert.strictEqual(fs.existsSync(thirdReady), false);
+
+      write(removeRelease, 'continue\n');
+      const contenders = [
+        { ready: firstReady, release: firstRelease },
+        { ready: secondReady, release: secondRelease },
+        { ready: thirdReady, release: thirdRelease },
+      ];
+      const deadline = Date.now() + 10_000;
+      while (!contenders.some((contender) => fs.existsSync(contender.ready))) {
+        if (Date.now() >= deadline) throw new Error('No contender acquired the reclaimed writer gate');
         Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
       }
-      waitForFile(fs.existsSync(firstReady) ? secondBlocked : firstBlocked);
-      assert.notStrictEqual(fs.existsSync(firstReady), fs.existsSync(secondReady));
-      const acquiredFirst = fs.existsSync(firstReady);
-      write(acquiredFirst ? firstRelease : secondRelease, 'release\n');
-      waitForFile(path.join(signals, `${path.basename(acquiredFirst ? firstReady : secondReady)}.released`));
-      waitForFile(acquiredFirst ? secondReady : firstReady, 10_000);
-      write(acquiredFirst ? secondRelease : firstRelease, 'release\n');
+      const firstAcquired = contenders.find((contender) => fs.existsSync(contender.ready));
+      assert.strictEqual(contenders.filter((contender) => fs.existsSync(contender.ready)).length, 1);
+      write(firstAcquired.release, 'release\n');
+
+      const remaining = contenders.filter((contender) => contender !== firstAcquired);
+      while (!remaining.some((contender) => fs.existsSync(contender.ready))) {
+        if (Date.now() >= deadline) throw new Error('No second contender acquired the writer gate');
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+      }
+      const secondAcquired = remaining.find((contender) => fs.existsSync(contender.ready));
+      assert.strictEqual(remaining.filter((contender) => fs.existsSync(contender.ready)).length, 1);
+      write(secondAcquired.release, 'release\n');
+      const finalContender = remaining.find((contender) => contender !== secondAcquired);
+      waitForFile(finalContender.ready);
+      write(finalContender.release, 'release\n');
     } finally {
       for (const child of children) child.kill();
       fs.rmSync(root, { recursive: true, force: true });
@@ -610,6 +842,41 @@ describe('module and CLI contract', () => {
       if (releaseFirst) {
         try { releaseFirst(); } catch {}
       }
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('runTasks releases its reader gate when peer enumeration fails before a phase', () => {
+    const { acquireRepositoryGate, runTasks } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-peer-enumeration-cleanup-'));
+    try {
+      initRepo(root);
+      const commonDir = path.join(root, '.git');
+      const projects = path.join(commonDir, 'groundwork', 'projects');
+      assert.throws(
+        () => runTasks(
+          { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
+          {
+            log: () => {},
+            beforePhase() { write(path.join(projects, 'invalid.lock'), 'bad\n'); },
+            invokePhase() { throw new Error('phase should not be reached'); },
+          }
+        ),
+        /Project lease filename is invalid/
+      );
+      assert.deepStrictEqual(
+        fs.readdirSync(path.join(commonDir, 'groundwork', 'repository-gate', 'readers')),
+        []
+      );
+      fs.unlinkSync(path.join(projects, 'invalid.lock'));
+      const releaseWriter = acquireRepositoryGate(
+        commonDir,
+        'write',
+        { project: 'other', projectPath: '.', taskId: 'TASK-999' },
+        { log: () => {}, wait() { throw new Error('reader gate leaked'); } }
+      );
+      releaseWriter();
+    } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
