@@ -407,6 +407,65 @@ describe('module and CLI contract', () => {
     }
   });
 
+  test('waits for a live legacy reclaimer before publishing a successor lease', () => {
+    const { acquireRepositoryGate, processStartIdentity } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-live-legacy-recovery-'));
+    try {
+      initRepo(root);
+      const commonDir = path.join(root, '.git');
+      const gateRoot = path.join(commonDir, 'groundwork', 'repository-gate');
+      const writer = path.join(gateRoot, 'writer.lock');
+      const recovery = path.join(gateRoot, '.reclaim.lock');
+      const staleWriter = {
+        version: 1,
+        pid: 2147483647,
+        processStart: 'dead',
+        token: 'a'.repeat(48),
+        project: 'stale',
+        projectPath: '.',
+        taskId: 'TASK-999',
+        startedAt: 1,
+      };
+      write(writer, `${JSON.stringify(staleWriter)}\n`);
+      write(recovery, `${JSON.stringify({
+        version: 1,
+        pid: process.pid,
+        processStart: processStartIdentity(process.pid),
+        token: 'b'.repeat(48),
+        project: 'recovery',
+        projectPath: '.',
+        taskId: 'setup',
+        startedAt: Date.now(),
+      })}\n`);
+
+      let legacyRemovalCompleted = false;
+      const release = acquireRepositoryGate(
+        commonDir,
+        'read',
+        { project: 'api', projectPath: '.', taskId: 'TASK-004' },
+        {
+          log: () => {},
+          wait() {
+            assert.strictEqual(fs.readFileSync(writer, 'utf8'), `${JSON.stringify(staleWriter)}\n`);
+            assert.strictEqual(
+              fs.readdirSync(path.join(gateRoot, 'readers')).filter((name) => name.endsWith('.lock')).length,
+              0,
+              'the new runner published a successor before the legacy unlink boundary completed'
+            );
+            fs.unlinkSync(writer);
+            fs.unlinkSync(recovery);
+            legacyRemovalCompleted = true;
+          },
+        }
+      );
+
+      assert.strictEqual(legacyRemovalCompleted, true);
+      release();
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('publishes complete lease records and cleans staging files when initialization fails', () => {
     const { acquireProjectLease, acquireRepositoryGate } = require(RUNNER);
     const scenarios = [
@@ -501,6 +560,108 @@ describe('module and CLI contract', () => {
           fs.rmSync(root, { recursive: true, force: true });
         }
       }
+    }
+  });
+
+  test('cleans a published mutation ticket when choosing-entry removal fails', () => {
+    const { acquireRepositoryGate } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-mutation-cleanup-'));
+    try {
+      initRepo(root);
+      const commonDir = path.join(root, '.git');
+      const originalUnlinkSync = fs.unlinkSync;
+      let choosingFailures = 0;
+      try {
+        fs.unlinkSync = function injectedUnlink(file) {
+          if (String(file).includes(`${path.sep}.lease-mutation${path.sep}choosing${path.sep}`)
+              && /^[0-9a-f]{48}\.lock$/.test(path.basename(String(file)))) {
+            choosingFailures++;
+            const error = new Error('injected choosing-entry unlink failure');
+            error.code = 'EIO';
+            throw error;
+          }
+          return originalUnlinkSync.apply(this, arguments);
+        };
+        assert.throws(
+          () => acquireRepositoryGate(
+            commonDir,
+            'read',
+            { project: 'api', projectPath: '.', taskId: 'TASK-004' },
+            { log: () => {} }
+          ),
+          /injected choosing-entry unlink failure/
+        );
+      } finally {
+        fs.unlinkSync = originalUnlinkSync;
+      }
+
+      assert.ok(choosingFailures >= 2, 'the choosing entry cleanup path was not exercised');
+      const tickets = path.join(commonDir, 'groundwork', 'repository-gate', '.lease-mutation', 'tickets');
+      assert.deepStrictEqual(fs.readdirSync(tickets), [], 'failed mutation acquisition left a live ticket');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('waits on only the immediate mutation predecessor with a short bounded retry', () => {
+    const { acquireRepositoryGate, processStartIdentity } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-mutation-contention-'));
+    try {
+      initRepo(root);
+      const commonDir = path.join(root, '.git');
+      const gateRoot = path.join(commonDir, 'groundwork', 'repository-gate');
+      const tickets = path.join(gateRoot, '.lease-mutation', 'tickets');
+      const readers = path.join(gateRoot, 'readers');
+      const processStart = processStartIdentity(process.pid);
+      const contenderCount = 20;
+      const predecessors = [];
+      for (let index = 1; index <= contenderCount; index++) {
+        const token = index.toString(16).padStart(48, '0');
+        const file = path.join(tickets, `${token}.lock`);
+        predecessors.push(file);
+        write(file, `${JSON.stringify({
+          version: 1,
+          pid: process.pid,
+          processStart,
+          token,
+          ticket: index,
+          startedAt: 1,
+        })}\n`);
+      }
+
+      const waits = [];
+      let identityChecks = 0;
+      const release = acquireRepositoryGate(
+        commonDir,
+        'read',
+        { project: 'api', projectPath: '.', taskId: 'TASK-004' },
+        {
+          log: () => {},
+          processStartIdentity(pid) {
+            identityChecks++;
+            return pid === process.pid ? processStart : null;
+          },
+          wait(milliseconds) {
+            waits.push(milliseconds);
+            assert.deepStrictEqual(
+              fs.readdirSync(readers).filter((name) => name.endsWith('.lock')),
+              [],
+              'the contender bypassed a lower mutation ticket'
+            );
+            fs.unlinkSync(predecessors[waits.length - 1]);
+          },
+        }
+      );
+
+      assert.strictEqual(waits.length, contenderCount);
+      assert.ok(waits.every((milliseconds) => milliseconds <= 25), `slow mutation retries: ${waits.join(',')}`);
+      assert.ok(
+        identityChecks <= contenderCount * 4 + 10,
+        `mutation acquisition repeatedly rescanned all contenders (${identityChecks} identity checks)`
+      );
+      release();
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
     }
   });
 
