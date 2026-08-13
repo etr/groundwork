@@ -123,6 +123,10 @@ You can install to multiple targets at once:
 - On OpenCode, complex multi-skill workflows may lose interactivity since skill dependencies are inlined as static appendix sections rather than invoked at runtime
 - Update checking is not available outside Claude Code
 
+#### Task-runner safety boundary
+
+The parallel task runner uses linked worktrees, scoped leases, and post-phase checks to prevent accidental or buggy cross-project changes. These controls do not sandbox a hostile model process running as the same operating-system user: it can deliberately modify files in the shared Git common directory, including coordination records. The runner detects lease-identity tampering when it releases a lease, but cannot reverse mutations that happened first. Use OS sandboxing or private clones when hostile-process isolation is required.
+
 ### Verify Installation
 
 Restart Claude Code or start a new session. You should see:

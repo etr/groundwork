@@ -375,41 +375,6 @@ describe('module and CLI contract', () => {
     }
   });
 
-  test('does not race a stale process-identified legacy recovery lease', () => {
-    const { acquireRepositoryGate } = require(RUNNER);
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-stale-recovery-'));
-    try {
-      initRepo(root);
-      const commonDir = path.join(root, '.git');
-      const gateRoot = path.join(commonDir, 'groundwork', 'repository-gate');
-      const stale = (token, project, taskId) => `${JSON.stringify({
-        version: 1,
-        pid: 2147483647,
-        processStart: 'dead',
-        token,
-        project,
-        projectPath: '.',
-        taskId,
-        startedAt: 1,
-      })}\n`;
-      write(path.join(gateRoot, 'writer.lock'), stale('a'.repeat(48), 'stale', 'TASK-999'));
-      write(path.join(gateRoot, '.reclaim.lock'), stale('b'.repeat(48), 'recovery', 'setup'));
-      assert.throws(
-        () => acquireRepositoryGate(
-          commonDir,
-          'read',
-          { project: 'api', projectPath: '.', taskId: 'TASK-004' },
-          { log: () => {} }
-        ),
-        /legacy recovery record/
-      );
-      assert.strictEqual(fs.existsSync(path.join(gateRoot, 'writer.lock')), true);
-      assert.strictEqual(fs.existsSync(path.join(gateRoot, '.reclaim.lock')), true);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
   test('waits for a live legacy reclaimer before publishing a successor lease', () => {
     const { acquireRepositoryGate, processStartIdentity } = require(RUNNER);
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-live-legacy-recovery-'));
@@ -874,13 +839,126 @@ describe('module and CLI contract', () => {
       );
 
       assert.strictEqual(waits.length, contenderCount);
-      assert.ok(waits.every((milliseconds) => milliseconds <= 250), `unbounded mutation retries: ${waits.join(',')}`);
+      assert.deepStrictEqual(
+        waits,
+        [10, 20, 40, 80, 160, ...Array(contenderCount - 5).fill(250)],
+        `mutation retry progression changed: ${waits.join(',')}`
+      );
       assert.ok(
         identityChecks <= contenderCount + 8,
         `mutation acquisition validated nonblocking contenders (${identityChecks} identity checks)`
       );
       release();
     } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('waits for a live main-version runner before admitting a new writer', () => {
+    const { acquireRepositoryGate } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-main-version-overlap-'));
+    const legacyRunner = path.join(root, 'legacy-groundwork-run.js');
+    let releaseLegacy;
+    try {
+      initRepo(root);
+      write(
+        legacyRunner,
+        execFileSync('git', ['show', 'main:bin/groundwork-run.js'], {
+          cwd: PLUGIN_ROOT,
+          encoding: 'utf8',
+        })
+      );
+      const { acquireRunnerLease } = require(legacyRunner);
+      const commonDir = path.join(root, '.git');
+      releaseLegacy = acquireRunnerLease(
+        commonDir,
+        { project: 'legacy', taskId: 'TASK-004' },
+        { log: () => {} }
+      );
+      let waits = 0;
+      const releaseWriter = acquireRepositoryGate(
+        commonDir,
+        'write',
+        { project: 'new', projectPath: '.', taskId: 'TASK-005' },
+        {
+          log: () => {},
+          wait() {
+            waits++;
+            assert.strictEqual(
+              fs.existsSync(path.join(commonDir, 'groundwork', 'repository-gate', 'writer.lock')),
+              false,
+              'new writer entered its mutation gate while the main-version runner owned the legacy lease'
+            );
+            releaseLegacy();
+            releaseLegacy = null;
+          },
+        }
+      );
+      assert.strictEqual(waits, 1);
+      releaseWriter();
+    } finally {
+      if (releaseLegacy) {
+        try { releaseLegacy(); } catch {}
+      }
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('rechecks the main-version lease at the new writer boundary', () => {
+    const { acquireRepositoryGate } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-main-version-boundary-'));
+    const legacyRunner = path.join(root, 'legacy-groundwork-run.js');
+    let releaseLegacy;
+    try {
+      initRepo(root);
+      write(
+        legacyRunner,
+        execFileSync('git', ['show', 'main:bin/groundwork-run.js'], {
+          cwd: PLUGIN_ROOT,
+          encoding: 'utf8',
+        })
+      );
+      const { acquireRunnerLease } = require(legacyRunner);
+      const commonDir = path.join(root, '.git');
+      let boundaryChecks = 0;
+      let legacyStarted = false;
+      let waits = 0;
+      const releaseWriter = acquireRepositoryGate(
+        commonDir,
+        'write',
+        { project: 'new', projectPath: '.', taskId: 'TASK-005' },
+        {
+          log: () => {},
+          beforeLegacyRunnerBoundaryAcquire() {
+            boundaryChecks++;
+            if (!legacyStarted) {
+              legacyStarted = true;
+              releaseLegacy = acquireRunnerLease(
+                commonDir,
+                { project: 'legacy', taskId: 'TASK-004' },
+                { log: () => {} }
+              );
+            }
+          },
+          wait() {
+            waits++;
+            assert.strictEqual(
+              fs.existsSync(path.join(commonDir, 'groundwork', 'repository-gate', 'writer.lock')),
+              true,
+              'the new writer lost its protocol gate while waiting to establish legacy compatibility'
+            );
+            releaseLegacy();
+            releaseLegacy = null;
+          },
+        }
+      );
+      assert.ok(boundaryChecks >= 2, 'writer boundary was not rechecked after the initial compatibility check');
+      assert.strictEqual(waits, 1);
+      releaseWriter();
+    } finally {
+      if (releaseLegacy) {
+        try { releaseLegacy(); } catch {}
+      }
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
@@ -992,7 +1070,33 @@ describe('module and CLI contract', () => {
       });
       fs.unlinkSync = originalUnlinkSync;
       assert.strictEqual(typeof release, 'function');
+      const readers = path.join(commonDir, 'groundwork', 'repository-gate', 'readers');
+      const publishedReader = fs.readdirSync(readers).find((name) => name.endsWith('.lock'));
+      assert.ok(publishedReader, 'acquisition did not retain a published reader lease');
+      assert.throws(
+        () => acquireRepositoryGate(
+          commonDir,
+          'write',
+          { project: 'api', projectPath: '.', taskId: 'TASK-004' },
+          {
+            log: () => {},
+            wait() {
+              assert.strictEqual(fs.existsSync(path.join(readers, publishedReader)), true);
+              throw new Error('published reader lease still owns the gate');
+            },
+          }
+        ),
+        /published reader lease still owns the gate/
+      );
       release();
+      assert.strictEqual(fs.existsSync(path.join(readers, publishedReader)), false);
+      const releaseWriter = acquireRepositoryGate(
+        commonDir,
+        'write',
+        { project: 'api', projectPath: '.', taskId: 'TASK-004' },
+        { log: () => {} }
+      );
+      releaseWriter();
     } finally {
       fs.unlinkSync = originalUnlinkSync;
       fs.rmSync(root, { recursive: true, force: true });

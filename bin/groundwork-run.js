@@ -512,6 +512,65 @@ function inspectLease(leasePath, dependencies = {}, expectedToken = null) {
   return { holder, live };
 }
 
+function inspectLegacyRunnerLease(leasePath) {
+  let fd;
+  let holder;
+  try {
+    fd = fs.openSync(leasePath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.size > 4_096) {
+      throw new Error(`Legacy runner lease is unsafe: ${leasePath}`);
+    }
+    try {
+      holder = JSON.parse(fs.readFileSync(fd, 'utf8'));
+    } catch {
+      throw new Error(`Legacy runner lease is invalid: ${leasePath}`);
+    }
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    if (error.code === 'ELOOP') throw new Error(`Legacy runner lease is unsafe: ${leasePath}`);
+    throw error;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+  if (!holder || holder.version !== 1 || !Number.isInteger(holder.pid) || holder.pid < 1
+      || typeof holder.token !== 'string' || !/^[0-9a-f]{48}$/.test(holder.token)
+      || !validLeaseText(holder.project) || !validLeaseText(holder.taskId)
+      || !Number.isFinite(holder.startedAt) || holder.startedAt <= 0) {
+    throw new Error(`Legacy runner lease has invalid ownership: ${leasePath}`);
+  }
+  let live = true;
+  try {
+    process.kill(holder.pid, 0);
+  } catch (error) {
+    if (error.code === 'ESRCH') live = false;
+    else if (error.code !== 'EPERM') throw error;
+  }
+  return { holder, live, compatible: holder.protocol === 'repository-gate-v2' };
+}
+
+function waitForLegacyRunnerDrain(commonDir, dependencies = {}) {
+  const log = dependencies.log || console.log;
+  const now = dependencies.now || Date.now;
+  const leasePath = path.join(commonDir, 'groundwork', 'runner.lock');
+  let lastProgressAt = -Infinity;
+  for (;;) {
+    const legacy = inspectLegacyRunnerLease(leasePath);
+    if (!legacy) return;
+    if (legacy.compatible) return;
+    if (!legacy.live) {
+      throw new Error(`Legacy runner lease is stale and cannot be safely reclaimed: ${leasePath}; remove it manually after confirming no pre-upgrade runner remains`);
+    }
+    const current = now();
+    if (current - lastProgressAt >= (dependencies.heartbeatMs || 30_000)) {
+      const heldBy = [legacy.holder.project, legacy.holder.taskId].filter(Boolean).join(' ');
+      log(`[${formatLocalTimestamp(current)}] waiting for pre-upgrade repository runner${heldBy ? ` — ${heldBy}` : ''} (pid ${legacy.holder.pid})`);
+      lastProgressAt = current;
+    }
+    waitForLease(dependencies);
+  }
+}
+
 function sameLeaseIdentity(left, right) {
   return Boolean(left && right
     && left.version === right.version
@@ -521,7 +580,8 @@ function sameLeaseIdentity(left, right) {
     && left.project === right.project
     && left.projectPath === right.projectPath
     && left.taskId === right.taskId
-    && left.startedAt === right.startedAt);
+    && left.startedAt === right.startedAt
+    && left.protocol === right.protocol);
 }
 
 function fsyncDirectory(directory, dependencies = {}, finalPath = null) {
@@ -864,6 +924,7 @@ function createOwnedLease(leasePath, owner, dependencies = {}, requestedToken = 
     token,
     ...normalizedOwner,
     startedAt: now(),
+    ...(dependencies.recordExtensions || {}),
   };
   const mutationRoot = dependencies.mutationRoot || path.dirname(leasePath);
   const releaseMutation = acquireLeaseMutation(mutationRoot, dependencies);
@@ -886,6 +947,32 @@ function createOwnedLease(leasePath, owner, dependencies = {}, requestedToken = 
       releaseRemoval();
     }
   };
+}
+
+function acquireLegacyRunnerBoundary(commonDir, owner, dependencies = {}) {
+  const directory = path.join(commonDir, 'groundwork');
+  const leasePath = path.join(directory, 'runner.lock');
+  createContainedDirectory(commonDir, directory, 'Legacy runner lease directory');
+  for (;;) {
+    if (dependencies.beforeLegacyRunnerBoundaryAcquire) {
+      dependencies.beforeLegacyRunnerBoundaryAcquire(leasePath);
+    }
+    try {
+      return createOwnedLease(leasePath, owner, {
+        ...dependencies,
+        mutationRoot: directory,
+        recordExtensions: { protocol: 'repository-gate-v2' },
+      });
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw error;
+    }
+    const legacy = inspectLegacyRunnerLease(leasePath);
+    if (!legacy) continue;
+    if (!legacy.live) {
+      throw new Error(`Legacy runner lease is stale and cannot be safely reclaimed: ${leasePath}; remove it manually after confirming no pre-upgrade runner remains`);
+    }
+    waitForLease(dependencies);
+  }
 }
 
 function acquireProjectLease(commonDir, owner, dependencies = {}) {
@@ -1022,6 +1109,9 @@ function acquireRepositoryGate(commonDir, mode, owner, dependencies = {}) {
   const readerPath = path.join(readers, `${token}.lock`);
   const leaseDependencies = { ...dependencies, mutationRoot: root };
   let lastProgressAt = -Infinity;
+  // Pre-upgrade runners use this single, repository-wide lease.  Do not enter
+  // the new protocol while one is live: it cannot observe repository-gate.
+  waitForLegacyRunnerDrain(commonDir, leaseDependencies);
   createContainedDirectory(commonDir, readers, 'Runner checkpoint and repository gate directory');
   createContainedDirectory(commonDir, waitingWriters, 'Runner checkpoint and repository gate directory');
 
@@ -1076,8 +1166,24 @@ function acquireRepositoryGate(commonDir, mode, owner, dependencies = {}) {
         for (;;) {
           const activeReaders = liveLeaseFiles(readers, leaseDependencies, 'token');
           if (activeReaders.length === 0) {
-            releaseIntent();
-            return releaseWriter;
+            const releaseLegacyBoundary = acquireLegacyRunnerBoundary(
+              commonDir,
+              owner,
+              leaseDependencies
+            );
+            try {
+              releaseIntent();
+            } catch (error) {
+              try { releaseLegacyBoundary(); } catch {}
+              throw error;
+            }
+            return () => {
+              try {
+                releaseWriter();
+              } finally {
+                releaseLegacyBoundary();
+              }
+            };
           }
           report('readers', activeReaders[0].holder);
           waitForLease(dependencies);
@@ -1387,9 +1493,9 @@ function snapshotRunnerFiles(commonDir) {
 }
 
 function peerCheckpointPaths(peerOwners) {
-  return new Set(peerOwners.filter((owner) => TASK_ID.test(owner.taskId)).map((owner) => {
-    const projectKey = crypto.createHash('sha256').update(owner.projectPath || '.').digest('hex').slice(0, 16);
-    return `${projectKey}/${owner.taskId}.json`;
+  return peerOwners.filter((owner) => TASK_ID.test(owner.taskId)).map((owner) => ({
+    projectKey: crypto.createHash('sha256').update(owner.projectPath || '.').digest('hex').slice(0, 16),
+    taskId: owner.taskId,
   }));
 }
 
@@ -1397,7 +1503,11 @@ function assertRunnerTransition(before, after, peerOwners) {
   const allowed = peerCheckpointPaths(peerOwners);
   const paths = new Set([...before.keys(), ...after.keys()]);
   for (const relative of paths) {
-    if (!allowed.has(relative) && before.get(relative) !== after.get(relative)) {
+    const activePeerCheckpoint = allowed.some(({ projectKey, taskId }) => (
+      relative === `${projectKey}/${taskId}.json`
+      || new RegExp(`^${projectKey}/\\.${taskId}\\.\\d+\\.\\d+\\.tmp$`).test(relative)
+    ));
+    if (!activePeerCheckpoint && before.get(relative) !== after.get(relative)) {
       throw new Error(`Inactive task checkpoint state changed during a model phase: ${relative}`);
     }
   }
