@@ -169,6 +169,99 @@ describe('module and CLI contract', () => {
     }
   });
 
+  test('rechecks a task after waiting for its project lease and skips a completed handoff', () => {
+    const { acquireProjectLease, runTasks } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-task-handoff-'));
+    let releaseFirst;
+    const phases = [];
+    try {
+      initRepo(root);
+      const commonDir = path.join(root, '.git');
+      releaseFirst = acquireProjectLease(
+        commonDir,
+        { project: '.', projectPath: '.', taskId: 'TASK-004' },
+        { log: () => {} }
+      );
+
+      const completed = runTasks(
+        { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
+        {
+          log: () => {},
+          leaseWait() {
+            const taskFile = path.join(root, 'specs', 'tasks.md');
+            fs.writeFileSync(taskFile, fs.readFileSync(taskFile, 'utf8').replace('Not Started', 'Complete'));
+            git(root, 'add', 'specs/tasks.md');
+            git(root, 'commit', '-m', 'Complete TASK-004 in first runner');
+            releaseFirst();
+            releaseFirst = null;
+          },
+          invokePhase(input) {
+            phases.push(input.phase);
+            throw new Error('completed handoff must not invoke a phase');
+          },
+        }
+      );
+
+      assert.deepStrictEqual(completed, []);
+      assert.deepStrictEqual(phases, []);
+    } finally {
+      if (releaseFirst) {
+        try { releaseFirst(); } catch {}
+      }
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('defers stale project-lease reclamation while its exact phase child remains live', () => {
+    const { acquireProjectLease, processStartIdentity } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-orphan-phase-child-'));
+    try {
+      initRepo(root);
+      const commonDir = path.join(root, '.git');
+      const token = 'a'.repeat(48);
+      const parent = {
+        version: 1,
+        pid: 999999,
+        processStart: 'proc:stale-parent',
+        token,
+        project: 'api',
+        projectPath: 'apps/api',
+        taskId: 'TASK-004',
+        startedAt: 1_000,
+      };
+      const projectKey = crypto.createHash('sha256').update('api').digest('hex').slice(0, 32);
+      const leasePath = path.join(commonDir, 'groundwork', 'projects', `${projectKey}.lock`);
+      const childPath = path.join(commonDir, 'groundwork', 'projects', '.phase-children', `${token}.json`);
+      write(leasePath, `${JSON.stringify(parent)}\n`);
+      write(childPath, `${JSON.stringify({
+        version: 1,
+        parent,
+        pid: process.pid,
+        processStart: processStartIdentity(process.pid),
+        startedAt: 1_001,
+      })}\n`);
+
+      assert.throws(
+        () => acquireProjectLease(
+          commonDir,
+          { project: 'api', projectPath: 'apps/api', taskId: 'TASK-005' },
+          { log: () => {}, now: () => 2_000, wait() { throw new Error('active orphan child deferred reclamation'); } }
+        ),
+        /active orphan child deferred reclamation/
+      );
+
+      fs.unlinkSync(childPath);
+      const release = acquireProjectLease(
+        commonDir,
+        { project: 'api', projectPath: 'apps/api', taskId: 'TASK-005' },
+        { log: () => {}, now: () => 2_000 }
+      );
+      release();
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('gives a waiting writer priority over new repository readers', () => {
     const { acquireRepositoryGate } = require(RUNNER);
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-repository-gate-'));
@@ -1864,6 +1957,48 @@ for (let index = 0; index < 100000; index++) fs.writeSync(1, record);
     }
   });
 
+  test('records and clears the exact execed phase child for a project lease', () => {
+    const { invokePhase, processStartIdentity } = require(RUNNER);
+    const fakeBin = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-phase-child-bin-'));
+    const leaseRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-phase-child-lease-'));
+    const previousPath = process.env.PATH;
+    const token = crypto.randomBytes(24).toString('hex');
+    const owner = {
+      version: 1,
+      pid: process.pid,
+      processStart: processStartIdentity(process.pid),
+      token,
+      project: 'api',
+      projectPath: 'apps/api',
+      taskId: 'TASK-004',
+      startedAt: Date.now(),
+    };
+    const leasePath = path.join(leaseRoot, 'project.lock');
+    const recordPath = path.join(leaseRoot, '.phase-children', `${token}.json`);
+    try {
+      const claude = path.join(fakeBin, 'claude');
+      write(claude, '#!/bin/sh\ntest -f "$GROUNDWORK_PHASE_CHILD_RECORD" || exit 9\nprintf \'%s\\n\' \'{"type":"result","result":"RESULT: TEST"}\'\n');
+      fs.chmodSync(claude, 0o755);
+      process.env.PATH = `${fakeBin}:${previousPath}`;
+
+      assert.strictEqual(invokePhase({
+        harness: 'claude',
+        phase: 'plan',
+        taskId: 'TASK-004',
+        cwd: process.cwd(),
+        pluginRoot: PLUGIN_ROOT,
+        prompt: 'test prompt',
+        env: {},
+        phaseLease: { leasePath, owner },
+      }).trim(), 'RESULT: TEST');
+      assert.strictEqual(fs.existsSync(recordPath), false);
+    } finally {
+      process.env.PATH = previousPath;
+      fs.rmSync(fakeBin, { recursive: true, force: true });
+      fs.rmSync(leaseRoot, { recursive: true, force: true });
+    }
+  });
+
   test('reports streamed activity and a heartbeat while a phase is running', () => {
     const { invokePhase } = require(RUNNER);
     const fakeBin = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-progress-bin-'));
@@ -2234,6 +2369,109 @@ describe('filesystem safety', () => {
           }
         ),
         /inactive task branch|repository refs/
+      );
+    } finally {
+      if (releasePeer) {
+        try { releasePeer(); } catch {}
+      }
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('accepts a verified peer that publishes its lease and checkpoint after the phase snapshot', () => {
+    const { acquireProjectLease, runTasks } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-late-peer-checkpoint-'));
+    const peerWorktree = path.join(root, '.worktrees', 'api-TASK-075');
+    let releasePeer;
+    try {
+      initRepo(root);
+      git(root, 'worktree', 'add', '-b', 'task/api/TASK-075', peerWorktree);
+      const peerWorkspace = fs.realpathSync(peerWorktree);
+      const commonDir = path.join(root, '.git');
+      const projectKey = crypto.createHash('sha256').update('apps/api').digest('hex').slice(0, 16);
+      const checkpointDirectory = path.join(commonDir, 'groundwork', 'runner', projectKey);
+
+      assert.throws(
+        () => runTasks(
+          { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
+          {
+            log: () => {},
+            invokePhase(input) {
+              if (input.phase === 'plan') {
+                releasePeer = acquireProjectLease(
+                  commonDir,
+                  { project: 'api', projectPath: 'apps/api', taskId: 'TASK-075' },
+                  { log: () => {} }
+                );
+                write(path.join(checkpointDirectory, 'TASK-075.json'), `${JSON.stringify({
+                  version: 1,
+                  taskId: 'TASK-075',
+                  project: 'apps/api',
+                  baseBranch: 'main',
+                  workspace: { branch: 'task/api/TASK-075', worktreePath: peerWorkspace },
+                })}\n`);
+                assert.deepStrictEqual(
+                  require(RUNNER).activeProjectOwners(commonDir, fs.realpathSync(root), { log: () => {} })
+                    .filter((owner) => owner.taskId !== 'TASK-004')
+                    .map((owner) => owner.taskId),
+                  ['TASK-075']
+                );
+                write(path.join(checkpointDirectory, `.TASK-075.${process.pid}.1.tmp`), 'atomic peer checkpoint staging\n');
+                writePlan(root);
+                return 'RESULT: PLANNED | plan_file_path=.groundwork-plans/TASK-004-plan.md | identifier=TASK-004 | branch_prefix=task';
+              }
+              throw new Error('implementation reached after accepting late peer');
+            },
+          }
+        ),
+        /implementation reached after accepting late peer/
+      );
+    } finally {
+      if (releasePeer) {
+        try { releasePeer(); } catch {}
+      }
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('still rejects a checkpoint mutation unrelated to a late verified peer', () => {
+    const { acquireProjectLease, runTasks } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-late-peer-unrelated-'));
+    const peerWorktree = path.join(root, '.worktrees', 'api-TASK-075');
+    let releasePeer;
+    try {
+      initRepo(root);
+      git(root, 'worktree', 'add', '-b', 'task/api/TASK-075', peerWorktree);
+      const peerWorkspace = fs.realpathSync(peerWorktree);
+      const commonDir = path.join(root, '.git');
+      const projectKey = crypto.createHash('sha256').update('apps/api').digest('hex').slice(0, 16);
+      const checkpointDirectory = path.join(commonDir, 'groundwork', 'runner', projectKey);
+
+      assert.throws(
+        () => runTasks(
+          { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
+          {
+            log: () => {},
+            invokePhase(input) {
+              releasePeer = acquireProjectLease(
+                commonDir,
+                { project: 'api', projectPath: 'apps/api', taskId: 'TASK-075' },
+                { log: () => {} }
+              );
+              write(path.join(checkpointDirectory, 'TASK-075.json'), `${JSON.stringify({
+                version: 1,
+                taskId: 'TASK-075',
+                project: 'apps/api',
+                baseBranch: 'main',
+                workspace: { branch: 'task/api/TASK-075', worktreePath: peerWorkspace },
+              })}\n`);
+              write(path.join(checkpointDirectory, 'TASK-076.json'), '{"unexpected":true}\n');
+              writePlan(root);
+              return 'RESULT: PLANNED | plan_file_path=.groundwork-plans/TASK-004-plan.md | identifier=TASK-004 | branch_prefix=task';
+            },
+          }
+        ),
+        /Inactive task checkpoint/
       );
     } finally {
       if (releasePeer) {

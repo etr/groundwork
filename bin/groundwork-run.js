@@ -505,11 +505,11 @@ function inspectLease(leasePath, dependencies = {}, expectedToken = null) {
     throw new Error(`Repository lease has invalid ownership: ${leasePath}`);
   }
   const currentIdentity = processStartIdentity(holder.pid, dependencies);
-  const live = typeof holder.processStart === 'string'
+  const ownerLive = typeof holder.processStart === 'string'
     && holder.processStart.length > 0
     && holder.processStart.length <= 256
     && holder.processStart === currentIdentity;
-  return { holder, live };
+  return { holder, live: ownerLive || phaseChildIsLive(leasePath, holder, dependencies) };
 }
 
 function inspectLegacyRunnerLease(leasePath) {
@@ -574,6 +574,51 @@ function sameLeaseIdentity(left, right) {
     && left.taskId === right.taskId
     && left.startedAt === right.startedAt
     && left.protocol === right.protocol);
+}
+
+function phaseChildRecordPath(leasePath, holder) {
+  return path.join(path.dirname(leasePath), '.phase-children', `${holder.token}.json`);
+}
+
+function readPhaseChildRecord(leasePath, parent, dependencies = {}) {
+  const recordPath = phaseChildRecordPath(leasePath, parent);
+  let fd;
+  try {
+    fd = fs.openSync(recordPath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.size > 4_096) {
+      throw new Error(`Phase child record is unsafe: ${recordPath}`);
+    }
+    const child = JSON.parse(fs.readFileSync(fd, 'utf8'));
+    if (!child || child.version !== 1 || !sameLeaseIdentity(child.parent, parent)
+        || !Number.isInteger(child.pid) || child.pid < 1
+        || typeof child.processStart !== 'string' || !child.processStart || child.processStart.length > 256
+        || !Number.isFinite(child.startedAt) || child.startedAt <= 0) {
+      throw new Error(`Phase child record has invalid ownership: ${recordPath}`);
+    }
+    return child;
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    if (error.code === 'ELOOP') throw new Error(`Phase child record is unsafe: ${recordPath}`);
+    if (error instanceof SyntaxError) throw new Error(`Phase child record is invalid: ${recordPath}`);
+    throw error;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+}
+
+function phaseChildIsLive(leasePath, parent, dependencies = {}) {
+  const child = readPhaseChildRecord(leasePath, parent, dependencies);
+  return Boolean(child && processStartIdentity(child.pid, dependencies) === child.processStart);
+}
+
+function removePhaseChildRecord(leasePath, parent) {
+  const recordPath = phaseChildRecordPath(leasePath, parent);
+  try {
+    fs.unlinkSync(recordPath);
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
 }
 
 function fsyncDirectory(directory, dependencies = {}, finalPath = null) {
@@ -821,6 +866,7 @@ function removeLeaseIfIdentity(leasePath, expected, dependencies = {}) {
   if (dependencies.beforeLeaseRemove) dependencies.beforeLeaseRemove(leasePath, expected);
   try {
     fs.unlinkSync(leasePath);
+    removePhaseChildRecord(leasePath, expected);
     return true;
   } catch (error) {
     if (error.code === 'ENOENT') return false;
@@ -925,7 +971,7 @@ function createOwnedLease(leasePath, owner, dependencies = {}, requestedToken = 
   } finally {
     releaseMutation();
   }
-  return () => {
+  const release = () => {
     const releaseRemoval = acquireLeaseMutation(mutationRoot, dependencies);
     try {
       const current = inspectLease(leasePath, dependencies);
@@ -939,6 +985,9 @@ function createOwnedLease(leasePath, owner, dependencies = {}, requestedToken = 
       releaseRemoval();
     }
   };
+  release.record = record;
+  release.leasePath = leasePath;
+  return release;
 }
 
 function acquireProjectLease(commonDir, owner, dependencies = {}) {
@@ -1058,7 +1107,12 @@ function activeProjectOwners(commonDir, repoRoot, dependencies = {}) {
     }
     const registered = registeredByPath.get(peerWorktree);
     if (!registered || registered.branch !== `refs/heads/${checkpoint.workspace.branch}`) continue;
-    owners.push({ ...holder, branch: checkpoint.workspace.branch });
+    owners.push({
+      ...holder,
+      branch: checkpoint.workspace.branch,
+      worktreePath: peerWorktree,
+      checkpointPath: checkpointFile,
+    });
   }
   return owners;
 }
@@ -1452,6 +1506,34 @@ function peerCheckpointPaths(peerOwners) {
     projectKey: crypto.createHash('sha256').update(owner.projectPath || '.').digest('hex').slice(0, 16),
     taskId: owner.taskId,
   }));
+}
+
+function exactPeerIdentity(owner) {
+  if (!owner || typeof owner.branch !== 'string' || typeof owner.worktreePath !== 'string'
+      || typeof owner.checkpointPath !== 'string') return null;
+  return [
+    owner.version,
+    owner.pid,
+    owner.processStart,
+    owner.token,
+    owner.project,
+    owner.projectPath,
+    owner.taskId,
+    owner.startedAt,
+    owner.protocol === undefined ? '' : owner.protocol,
+    owner.branch,
+    owner.worktreePath,
+    owner.checkpointPath,
+  ].join('\0');
+}
+
+function reconcilePhasePeers(before, after) {
+  const peers = new Map();
+  for (const owner of [...before, ...after]) {
+    const identity = exactPeerIdentity(owner);
+    if (identity) peers.set(identity, owner);
+  }
+  return [...peers.values()];
 }
 
 function assertRunnerTransition(before, after, peerOwners) {
@@ -1997,6 +2079,62 @@ function buildInvocation({ harness, cwd, pluginRoot, prompt, resultFile }) {
   throw new Error(`Unsupported harness: ${harness}`);
 }
 
+const PHASE_CHILD_SUPERVISOR = String.raw`GROUNDWORK_PHASE_CHILD_PID="$$" node -e '
+const fs = require("fs");
+const path = process.env.GROUNDWORK_PHASE_CHILD_RECORD;
+const parent = JSON.parse(Buffer.from(process.env.GROUNDWORK_PHASE_PARENT, "base64").toString("utf8"));
+const pid = Number(process.env.GROUNDWORK_PHASE_CHILD_PID);
+function processStartIdentity(targetPid) {
+  try {
+    const fields = fs.readFileSync("/proc/" + targetPid + "/stat", "utf8").trim().split(/\s+/);
+    if (fields.length > 21 && /^\d+$/.test(fields[21])) return "proc:" + fields[21];
+  } catch (error) {
+    if (!["ENOENT", "EACCES", "EPERM"].includes(error.code)) throw error;
+  }
+  try {
+    const { execFileSync } = require("child_process");
+    const value = execFileSync("ps", ["-o", "lstart=", "-p", String(targetPid)], {
+      encoding: "utf8", stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    if (value) return value;
+  } catch {}
+  try {
+    process.kill(targetPid, 0);
+    return "pid:" + targetPid;
+  } catch (error) {
+    if (error.code === "EPERM") return "pid:" + targetPid;
+    throw new Error("Cannot identify phase child process instance");
+  }
+}
+const fd = fs.openSync(path, "wx", 0o600);
+try {
+  fs.writeFileSync(fd, JSON.stringify({
+    version: 1, parent, pid, processStart: processStartIdentity(pid), startedAt: Date.now(),
+  }) + "\n", "utf8");
+  fs.fsyncSync(fd);
+} finally {
+  fs.closeSync(fd);
+}
+' || exit $?
+exec "$@"`;
+
+function phaseChildEnvironment(input) {
+  if (!input.phaseLease) return null;
+  const { leasePath, owner } = input.phaseLease;
+  if (!leasePath || !owner || !sameLeaseIdentity(owner, owner)) {
+    throw new Error('Phase child lease identity is invalid');
+  }
+  const directory = path.dirname(phaseChildRecordPath(leasePath, owner));
+  createContainedDirectory(path.dirname(leasePath), directory, 'Phase child record directory');
+  return {
+    recordPath: phaseChildRecordPath(leasePath, owner),
+    environment: {
+      GROUNDWORK_PHASE_CHILD_RECORD: phaseChildRecordPath(leasePath, owner),
+      GROUNDWORK_PHASE_PARENT: Buffer.from(JSON.stringify(owner)).toString('base64'),
+    },
+  };
+}
+
 function invokePhase(input) {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'groundwork-phase-'));
   const resultFile = path.join(tempDir, 'result.txt');
@@ -2006,15 +2144,22 @@ function invokePhase(input) {
   let errorFd;
   let monitor;
   let result;
+  let phaseChild;
   try {
     outputFd = fs.openSync(outputPath, 'wx', 0o600);
     errorFd = fs.openSync(errorPath, 'wx', 0o600);
     const invocation = buildInvocation({ ...input, resultFile });
     const env = buildChildEnv(input.harness, input.env);
+    phaseChild = phaseChildEnvironment(input);
     monitor = startProgressMonitor(input, outputPath, Date.now());
-    result = spawnSync(invocation.command, invocation.args, {
+    result = spawnSync(phaseChild ? '/bin/sh' : invocation.command, phaseChild ? [
+      '-c', PHASE_CHILD_SUPERVISOR, 'groundwork-phase', invocation.command, ...invocation.args,
+    ] : invocation.args, {
       cwd: invocation.cwd,
-      env,
+      env: phaseChild ? {
+        ...env,
+        ...phaseChild.environment,
+      } : env,
       input: invocation.input,
       encoding: 'utf8',
       stdio: ['pipe', outputFd, errorFd],
@@ -2040,6 +2185,7 @@ function invokePhase(input) {
     if (outputFd !== undefined) fs.closeSync(outputFd);
     if (errorFd !== undefined) fs.closeSync(errorFd);
     stopProgressMonitor(monitor);
+    if (phaseChild) removePhaseChildRecord(input.phaseLease.leasePath, input.phaseLease.owner);
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 }
@@ -2463,9 +2609,12 @@ function runTasks(options, dependencies = {}) {
             log(`[${formatLocalTimestamp(now())}] [${input.taskId}] restored transient task-worktree core.hooksPath`);
           }
           assertGitControls(commonDir, gitControls);
-          assertRunnerTransition(repositoryState.runner, snapshotRunnerFiles(commonDir), peerOwnersBefore);
+          const peerOwnersAfter = activeProjectOwners(commonDir, repoRoot, leaseDependencies)
+            .filter((owner) => owner.projectPath !== projectRelative || owner.taskId !== input.taskId);
+          const phasePeers = reconcilePhasePeers(peerOwnersBefore, peerOwnersAfter);
+          assertRunnerTransition(repositoryState.runner, snapshotRunnerFiles(commonDir), phasePeers);
           assertPlanTree(input.projectRoot);
-          assertRepositoryTransition(repoRoot, repositoryState, input, peerOwnersBefore);
+          assertRepositoryTransition(repoRoot, repositoryState, input, phasePeers);
         }
       } finally {
         releaseGate();
@@ -2501,6 +2650,12 @@ function runTasks(options, dependencies = {}) {
       activePhase = null;
     }
     try {
+      const refreshedCatalog = parseTaskCatalog(readTasks(projectRoot));
+      const eligibleTaskIds = orderTasks(refreshedCatalog, [taskId]);
+      if (!eligibleTaskIds.includes(taskId)) {
+        taskLog(`[${taskId}] skipped — completed while awaiting project lease`);
+        continue;
+      }
       if (execGit(repoRoot, ['branch', '--show-current']) !== baseBranch) {
         throw new Error(`Primary worktree moved from base branch ${baseBranch}`);
       }
@@ -2564,6 +2719,10 @@ function runTasks(options, dependencies = {}) {
         specsDir: preparedTaskSpecsDir,
         branch: expectedBranch,
         worktreePath: expectedWorktree,
+        phaseLease: {
+          leasePath: releaseTaskLease.leasePath,
+          owner: releaseTaskLease.record,
+        },
       };
       const env = {
         GROUNDWORK_HARNESS: options.harness,
