@@ -414,11 +414,11 @@ function waitForLease(dependencies) {
   wait(1_000);
 }
 
-function waitForLeaseMutation(dependencies) {
+function waitForLeaseMutation(dependencies, milliseconds = 10) {
   const wait = dependencies.mutationWait || dependencies.wait || ((milliseconds) => {
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
   });
-  wait(10);
+  wait(milliseconds);
 }
 
 function processStartIdentity(pid, dependencies = {}) {
@@ -581,11 +581,20 @@ function publishRecordAtomically(finalPath, record, dependencies = {}, notify = 
     }
     throw error;
   }
-  fs.unlinkSync(stagingPath);
+  try {
+    fs.unlinkSync(stagingPath);
+    fsyncDirectory(path.dirname(finalPath), dependencies, finalPath);
+  } catch (error) {
+    // The final hard link is durable and owned by the caller.  Do not turn a
+    // recoverable staging cleanup failure into an acquisition without a release handle.
+    if (error.code !== 'ENOENT' && dependencies.onLeaseStagingCleanupError) {
+      try { dependencies.onLeaseStagingCleanupError(finalPath, stagingPath, error); } catch {}
+    }
+  }
   return record;
 }
 
-function inspectMutationEntry(entryPath, dependencies = {}) {
+function inspectMutationEntry(entryPath) {
   let fd;
   let entry;
   try {
@@ -615,13 +624,50 @@ function inspectMutationEntry(entryPath, dependencies = {}) {
       || entry.processStart.length > 256) {
     throw new Error(`Repository lease mutation entry has invalid ownership: ${entryPath}`);
   }
-  return {
-    entry,
-    live: processStartIdentity(entry.pid, dependencies) === entry.processStart,
-  };
+  return entry;
 }
 
-function liveMutationEntries(directory, dependencies = {}) {
+function reclaimStaleStagingEntries(directory, dependencies = {}) {
+  const reclaimAfter = dependencies.stagingReclaimMs === undefined
+    ? 5 * 60 * 1000
+    : dependencies.stagingReclaimMs;
+  const now = dependencies.now || Date.now;
+  for (const name of fs.readdirSync(directory)) {
+    const match = /^\.staging-([0-9a-f]{48})-[0-9a-f]{16}\.tmp$/.exec(name);
+    if (!match) continue;
+    const file = path.join(directory, name);
+    let initial;
+    try {
+      initial = fs.lstatSync(file);
+    } catch (error) {
+      if (error.code === 'ENOENT') continue;
+      throw error;
+    }
+    if (initial.isSymbolicLink() || !initial.isFile()) {
+      throw new Error(`Repository lease staging record is unsafe: ${file}`);
+    }
+    let stale = false;
+    try {
+      const current = inspectLease(file, dependencies, match[1]);
+      stale = Boolean(current && !current.live);
+    } catch {
+      stale = now() - initial.mtimeMs >= reclaimAfter;
+    }
+    if (!stale) continue;
+    try {
+      const current = fs.lstatSync(file);
+      if (current.isSymbolicLink() || !current.isFile()
+          || current.ino !== initial.ino || current.size !== initial.size
+          || current.mtimeMs !== initial.mtimeMs) continue;
+      fs.unlinkSync(file);
+      fsyncDirectory(directory, dependencies, file);
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    }
+  }
+}
+
+function mutationEntries(directory) {
   const entries = [];
   for (const name of fs.readdirSync(directory)) {
     if (name.startsWith('.staging-')) continue;
@@ -629,17 +675,28 @@ function liveMutationEntries(directory, dependencies = {}) {
       throw new Error(`Repository lease mutation filename is invalid: ${path.join(directory, name)}`);
     }
     const file = path.join(directory, name);
-    const inspected = inspectMutationEntry(file, dependencies);
-    if (!inspected) continue;
-    if (!inspected.live) {
-      try { fs.unlinkSync(file); } catch (error) {
-        if (error.code !== 'ENOENT') throw error;
-      }
-      continue;
-    }
-    entries.push({ file, ...inspected.entry });
+    const entry = inspectMutationEntry(file);
+    if (entry) entries.push({ file, ...entry });
   }
   return entries;
+}
+
+function waitForMutationEntry(entryPath, localProcessStart, dependencies = {}) {
+  let retryDelay = 10;
+  for (;;) {
+    const current = inspectMutationEntry(entryPath);
+    if (!current) return;
+    const localOwner = current.pid === process.pid && current.processStart === localProcessStart;
+    const live = localOwner || processStartIdentity(current.pid, dependencies) === current.processStart;
+    if (!live) {
+      try { fs.unlinkSync(entryPath); } catch (error) {
+        if (error.code !== 'ENOENT') throw error;
+      }
+      return;
+    }
+    waitForLeaseMutation(dependencies, retryDelay);
+    retryDelay = Math.min(retryDelay * 2, 250);
+  }
 }
 
 function acquireLeaseMutation(mutationRoot, dependencies = {}) {
@@ -663,44 +720,26 @@ function acquireLeaseMutation(mutationRoot, dependencies = {}) {
   let ticketPublished = false;
   try {
     publishRecordAtomically(choosingPath, { ...baseRecord, ticket: 0 }, dependencies);
-    const currentTickets = liveMutationEntries(ticketsDirectory, dependencies);
+    reclaimStaleStagingEntries(choosingDirectory, dependencies);
+    reclaimStaleStagingEntries(ticketsDirectory, dependencies);
+    const currentTickets = mutationEntries(ticketsDirectory);
     const ticket = currentTickets.reduce((maximum, entry) => Math.max(maximum, entry.ticket), 0) + 1;
     publishRecordAtomically(ticketPath, { ...baseRecord, ticket }, dependencies);
     ticketPublished = true;
     fs.unlinkSync(choosingPath);
 
-    const choosing = liveMutationEntries(choosingDirectory, dependencies)
+    const choosing = mutationEntries(choosingDirectory)
       .filter((entry) => entry.token !== token);
     for (const contender of choosing) {
-      for (;;) {
-        const current = inspectMutationEntry(contender.file, dependencies);
-        if (!current) break;
-        if (!current.live) {
-          try { fs.unlinkSync(contender.file); } catch (error) {
-            if (error.code !== 'ENOENT') throw error;
-          }
-          break;
-        }
-        waitForLeaseMutation(dependencies);
-      }
+      waitForMutationEntry(contender.file, processStart, dependencies);
     }
 
-    const predecessors = liveMutationEntries(ticketsDirectory, dependencies)
+    const predecessors = mutationEntries(ticketsDirectory)
       .filter((entry) => entry.token !== token
         && (entry.ticket < ticket || (entry.ticket === ticket && entry.token < token)))
       .sort((left, right) => right.ticket - left.ticket || right.token.localeCompare(left.token));
     for (const predecessor of predecessors) {
-      for (;;) {
-        const current = inspectMutationEntry(predecessor.file, dependencies);
-        if (!current) break;
-        if (!current.live) {
-          try { fs.unlinkSync(predecessor.file); } catch (error) {
-            if (error.code !== 'ENOENT') throw error;
-          }
-          break;
-        }
-        waitForLeaseMutation(dependencies);
-      }
+      waitForMutationEntry(predecessor.file, processStart, dependencies);
     }
     return () => {
       try {
@@ -764,7 +803,7 @@ function acquireLegacyRecoveryLease(recoveryPath, dependencies = {}) {
     const current = inspectLease(recoveryPath, dependencies);
     if (!current) continue;
     if (current.live) return null;
-    removeLeaseIfIdentity(recoveryPath, current.holder, dependencies);
+    throw new Error('Cannot safely reclaim while a stale legacy recovery record exists; wait for legacy runners to drain or remove it manually');
   }
   return () => {
     const current = inspectLease(recoveryPath, dependencies);
@@ -882,8 +921,9 @@ function liveLeaseFiles(directory, dependencies = {}, expectedName = null) {
   if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error(`Repository gate is unsafe: ${directory}`);
   const entries = [];
   if (dependencies.beforeLeaseDirectoryScan) dependencies.beforeLeaseDirectoryScan(directory);
+  reclaimStaleStagingEntries(directory, dependencies);
   for (const name of fs.readdirSync(directory)) {
-    if (name === '.reclaim.lock') continue;
+    if (name === '.reclaim.lock' || name.startsWith('.staging-')) continue;
     if (!/^[0-9a-f]{48}\.lock$/.test(name)) {
       throw new Error(`Repository lease filename is invalid: ${path.join(directory, name)}`);
     }
@@ -925,8 +965,11 @@ function activeProjectOwners(commonDir, repoRoot, dependencies = {}) {
     throw new Error(`Project lease directory is unsafe: ${directory}`);
   }
   const owners = [];
+  reclaimStaleStagingEntries(directory, dependencies);
+  const worktrees = (dependencies.registeredWorktrees || registeredWorktrees)(repoRoot);
+  const registeredByPath = new Map(worktrees.map((entry) => [entry.path, entry]));
   for (const name of fs.readdirSync(directory)) {
-    if (name === '.reclaim.lock' || name === '.lease-mutation') continue;
+    if (name === '.reclaim.lock' || name === '.lease-mutation' || name.startsWith('.staging-')) continue;
     if (!/^[0-9a-f]{32}\.lock$/.test(name)) {
       throw new Error(`Project lease filename is invalid: ${path.join(directory, name)}`);
     }
@@ -960,7 +1003,7 @@ function activeProjectOwners(commonDir, repoRoot, dependencies = {}) {
       if (error.code === 'ENOENT') continue;
       throw error;
     }
-    const registered = registeredWorktrees(repoRoot).find((entry) => entry.path === peerWorktree);
+    const registered = registeredByPath.get(peerWorktree);
     if (!registered || registered.branch !== `refs/heads/${checkpoint.workspace.branch}`) continue;
     owners.push({ ...holder, branch: checkpoint.workspace.branch });
   }
@@ -2849,6 +2892,7 @@ module.exports = {
   assertRegisteredWorktree,
   acquireProjectLease,
   acquireRepositoryGate,
+  activeProjectOwners,
   processStartIdentity,
   snapshotUnrelatedWorktrees,
   resolveProject,

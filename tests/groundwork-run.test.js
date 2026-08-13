@@ -375,7 +375,7 @@ describe('module and CLI contract', () => {
     }
   });
 
-  test('reclaims an abandoned process-identified recovery lease', () => {
+  test('does not race a stale process-identified legacy recovery lease', () => {
     const { acquireRepositoryGate } = require(RUNNER);
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-stale-recovery-'));
     try {
@@ -394,14 +394,17 @@ describe('module and CLI contract', () => {
       })}\n`;
       write(path.join(gateRoot, 'writer.lock'), stale('a'.repeat(48), 'stale', 'TASK-999'));
       write(path.join(gateRoot, '.reclaim.lock'), stale('b'.repeat(48), 'recovery', 'setup'));
-      const release = acquireRepositoryGate(
-        commonDir,
-        'read',
-        { project: 'api', projectPath: '.', taskId: 'TASK-004' },
-        { log: () => {} }
+      assert.throws(
+        () => acquireRepositoryGate(
+          commonDir,
+          'read',
+          { project: 'api', projectPath: '.', taskId: 'TASK-004' },
+          { log: () => {} }
+        ),
+        /legacy recovery record/
       );
-      release();
-      assert.strictEqual(fs.existsSync(path.join(gateRoot, '.reclaim.lock')), false);
+      assert.strictEqual(fs.existsSync(path.join(gateRoot, 'writer.lock')), true);
+      assert.strictEqual(fs.existsSync(path.join(gateRoot, '.reclaim.lock')), true);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -820,7 +823,7 @@ describe('module and CLI contract', () => {
     }
   });
 
-  test('waits on mutation predecessors with a short bounded retry', () => {
+  test('waits on mutation predecessors with a bounded backing-off retry', () => {
     const { acquireRepositoryGate, processStartIdentity } = require(RUNNER);
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-mutation-contention-'));
     try {
@@ -871,12 +874,167 @@ describe('module and CLI contract', () => {
       );
 
       assert.strictEqual(waits.length, contenderCount);
-      assert.ok(waits.every((milliseconds) => milliseconds <= 25), `slow mutation retries: ${waits.join(',')}`);
+      assert.ok(waits.every((milliseconds) => milliseconds <= 250), `unbounded mutation retries: ${waits.join(',')}`);
       assert.ok(
-        identityChecks <= contenderCount * 4 + 10,
-        `mutation acquisition repeatedly rescanned all contenders (${identityChecks} identity checks)`
+        identityChecks <= contenderCount + 8,
+        `mutation acquisition validated nonblocking contenders (${identityChecks} identity checks)`
       );
       release();
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('fails closed without deleting a stale legacy recovery record', () => {
+    const { acquireRepositoryGate } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-stale-legacy-recovery-'));
+    try {
+      initRepo(root);
+      const commonDir = path.join(root, '.git');
+      const gateRoot = path.join(commonDir, 'groundwork', 'repository-gate');
+      const writer = path.join(gateRoot, 'writer.lock');
+      const recovery = path.join(gateRoot, '.reclaim.lock');
+      const stale = (token, project, taskId) => `${JSON.stringify({
+        version: 1,
+        pid: 2147483647,
+        processStart: 'dead',
+        token,
+        project,
+        projectPath: '.',
+        taskId,
+        startedAt: 1,
+      })}\n`;
+      const staleWriter = stale('a'.repeat(48), 'stale', 'TASK-999');
+      const staleRecovery = stale('b'.repeat(48), 'recovery', 'setup');
+      write(writer, staleWriter);
+      write(recovery, staleRecovery);
+
+      assert.throws(
+        () => acquireRepositoryGate(
+          commonDir,
+          'read',
+          { project: 'api', projectPath: '.', taskId: 'TASK-004' },
+          { log: () => {} }
+        ),
+        /legacy recovery record/
+      );
+      assert.strictEqual(fs.readFileSync(writer, 'utf8'), staleWriter);
+      assert.strictEqual(fs.readFileSync(recovery, 'utf8'), staleRecovery);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('ignores and reclaims stale staging records without blocking lease scans', () => {
+    const { acquireRepositoryGate, activeProjectOwners } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-stale-staging-'));
+    try {
+      initRepo(root);
+      const commonDir = path.join(root, '.git');
+      const gateRoot = path.join(commonDir, 'groundwork', 'repository-gate');
+      const stagedWriter = path.join(gateRoot, 'writers-waiting', `.staging-${'a'.repeat(48)}-${'b'.repeat(16)}.tmp`);
+      const stagedReader = path.join(gateRoot, 'readers', `.staging-${'c'.repeat(48)}-${'d'.repeat(16)}.tmp`);
+      const stagedProject = path.join(commonDir, 'groundwork', 'projects', `.staging-${'e'.repeat(48)}-${'f'.repeat(16)}.tmp`);
+      for (const staged of [stagedWriter, stagedReader, stagedProject]) {
+        write(staged, '{incomplete');
+        fs.utimesSync(staged, new Date(0), new Date(0));
+      }
+
+      const releaseReader = acquireRepositoryGate(
+        commonDir,
+        'read',
+        { project: 'api', projectPath: '.', taskId: 'TASK-004' },
+        { log: () => {}, stagingReclaimMs: 0 }
+      );
+      releaseReader();
+      const releaseWriter = acquireRepositoryGate(
+        commonDir,
+        'write',
+        { project: 'api', projectPath: '.', taskId: 'TASK-004' },
+        { log: () => {}, stagingReclaimMs: 0 }
+      );
+      releaseWriter();
+      assert.deepStrictEqual(
+        activeProjectOwners(commonDir, root, { stagingReclaimMs: 0, registeredWorktrees: () => [] }),
+        []
+      );
+      for (const staged of [stagedWriter, stagedReader, stagedProject]) {
+        assert.strictEqual(fs.existsSync(staged), false, `${staged} was not reclaimed`);
+      }
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('keeps a release handle when final staging cleanup fails', () => {
+    const { acquireRepositoryGate } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-staging-cleanup-failure-'));
+    const originalUnlinkSync = fs.unlinkSync;
+    try {
+      initRepo(root);
+      const commonDir = path.join(root, '.git');
+      fs.unlinkSync = function injectedUnlink(file) {
+        if (path.basename(String(file)).startsWith('.staging-')) {
+          const error = new Error('injected staging cleanup failure');
+          error.code = 'EIO';
+          throw error;
+        }
+        return originalUnlinkSync.apply(this, arguments);
+      };
+      let release;
+      assert.doesNotThrow(() => {
+        release = acquireRepositoryGate(
+          commonDir,
+          'read',
+          { project: 'api', projectPath: '.', taskId: 'TASK-004' },
+          { log: () => {} }
+        );
+      });
+      fs.unlinkSync = originalUnlinkSync;
+      assert.strictEqual(typeof release, 'function');
+      release();
+    } finally {
+      fs.unlinkSync = originalUnlinkSync;
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('reads registered worktrees once while checking all active project owners', () => {
+    const { activeProjectOwners, processStartIdentity } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-project-owner-registry-'));
+    try {
+      initRepo(root);
+      const commonDir = path.join(root, '.git');
+      const projectDirectory = path.join(commonDir, 'groundwork', 'projects');
+      const records = [
+        { project: 'api', projectPath: 'apps/api', taskId: 'TASK-004' },
+        { project: 'web', projectPath: 'apps/web', taskId: 'TASK-005' },
+      ].map((owner) => {
+        const worktreePath = path.join(root, '.worktrees', `${owner.project}-${owner.taskId}`);
+        fs.mkdirSync(worktreePath, { recursive: true });
+        const projectKey = crypto.createHash('sha256').update(owner.project).digest('hex').slice(0, 32);
+        const checkpointKey = crypto.createHash('sha256').update(owner.projectPath).digest('hex').slice(0, 16);
+        write(path.join(projectDirectory, `${projectKey}.lock`), `${JSON.stringify({
+          version: 1,
+          pid: process.pid,
+          processStart: processStartIdentity(process.pid),
+          token: crypto.randomBytes(24).toString('hex'),
+          ...owner,
+          startedAt: Date.now(),
+        })}\n`);
+        write(path.join(commonDir, 'groundwork', 'runner', checkpointKey, `${owner.taskId}.json`), `${JSON.stringify({
+          taskId: owner.taskId,
+          project: owner.projectPath,
+          workspace: { branch: `task/${owner.project}/${owner.taskId}`, worktreePath },
+        })}\n`);
+        return { path: fs.realpathSync(worktreePath), branch: `refs/heads/task/${owner.project}/${owner.taskId}` };
+      });
+      let discoveries = 0;
+      const owners = activeProjectOwners(commonDir, root, {
+        registeredWorktrees() { discoveries++; return records; },
+      });
+      assert.strictEqual(discoveries, 1);
+      assert.deepStrictEqual(owners.map((owner) => owner.project).sort(), ['api', 'web']);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
