@@ -76,6 +76,8 @@ It invokes `plan-task`, `implement-task`, `validate`, and `finalize-task` in sep
 
 Monorepo workspaces include the project name, such as `task/api/TASK-004` and `.worktrees/api-TASK-004`. This prevents overlapping task numbers from colliding and allows another project's linked worktree to retain in-progress changes. The selected project must remain clean in unrelated worktrees.
 
+If multiple runner commands target the same repository, they coordinate through a repository lease. One complete task owns shared Git state at a time; waiting commands print periodic status and continue at task boundaries. This avoids invalidating completed model work while keeping separate batch commands resumable.
+
 The runner prints the machine's local date, time, timezone, relative phase timing, sanitized commands, selected tool activity, validation iteration launches and per-reviewer verdicts, and a 30-second heartbeat while Claude Code or Codex is quiet. Generic turn events and successful short-command completions are suppressed; command failures and commands lasting at least 10 seconds remain visible. Explicit task arguments form a list; `--from` and `--to` select inclusive range bounds and may be used independently.
 
 The final phase prepares task bookkeeping, handles a moved base, and chooses the merge message. The harness verifies that prepared state before it performs the outward merge and cleanup.

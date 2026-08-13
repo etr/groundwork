@@ -403,6 +403,8 @@ Rerunning is resumable. An existing conventional plan skips planning. An exact r
 
 In monorepos, runner-created workspaces are project-qualified (for example, `task/api/TASK-004` and `.worktrees/api-TASK-004`) so projects may reuse task numbers. Pre-existing changes in another project's linked worktree do not block a run; changes to the selected project in another worktree still do. Legacy unqualified worktrees remain resumable when their project checkpoint identifies the owner.
 
+Multiple runner commands may be launched against the same repository. Shared Git state is protected by a repository lease held for one complete task; another command prints periodic wait status and continues at the next task boundary. Model phases therefore queue rather than execute in parallel within one Git repository.
+
 If the base branch advances, `finalize-task` integrates it into the task branch and returns control for a fresh validation session. Once the tree is clean, it supplies the task commit and merge message; the harness verifies that only task-status bookkeeping changed after validation, then performs the outward merge and cleanup.
 
 The same four skills remain manually callable. In a monorepo, pass `--project <name>` to each phase.

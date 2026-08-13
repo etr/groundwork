@@ -399,6 +399,97 @@ function createContainedDirectory(parent, child, label) {
   }
 }
 
+function acquireRunnerLease(commonDir, owner, dependencies = {}) {
+  const log = dependencies.log || console.log;
+  const now = dependencies.now || Date.now;
+  const wait = dependencies.wait || ((milliseconds) => {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
+  });
+  const heartbeatMs = dependencies.heartbeatMs || 30_000;
+  const leaseDirectory = path.join(commonDir, 'groundwork');
+  const leasePath = path.join(leaseDirectory, 'runner.lock');
+  const token = crypto.randomBytes(24).toString('hex');
+  let lastProgressAt = -Infinity;
+
+  createContainedDirectory(commonDir, leaseDirectory, 'Runner lease directory');
+  for (;;) {
+    try {
+      const fd = fs.openSync(leasePath, 'wx', 0o600);
+      try {
+        fs.writeFileSync(fd, `${JSON.stringify({
+          version: 1,
+          pid: process.pid,
+          token,
+          project: String(owner.project || ''),
+          taskId: String(owner.taskId || ''),
+          startedAt: now(),
+        })}\n`, 'utf8');
+        fs.fsyncSync(fd);
+      } finally {
+        fs.closeSync(fd);
+      }
+      break;
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw error;
+    }
+
+    const stat = fs.lstatSync(leasePath);
+    if (stat.isSymbolicLink() || !stat.isFile() || stat.size > 4_096) {
+      throw new Error(`Runner lease is unsafe: ${leasePath}`);
+    }
+    let holder;
+    try {
+      holder = JSON.parse(fs.readFileSync(leasePath, 'utf8'));
+    } catch {
+      throw new Error(`Runner lease is invalid: ${leasePath}`);
+    }
+    if (!holder || holder.version !== 1 || !Number.isInteger(holder.pid) || holder.pid < 1) {
+      throw new Error(`Runner lease has invalid ownership: ${leasePath}`);
+    }
+    let active = true;
+    try {
+      process.kill(holder.pid, 0);
+    } catch (error) {
+      if (error.code === 'ESRCH') active = false;
+      else if (error.code !== 'EPERM') throw error;
+    }
+    if (!active) {
+      try {
+        fs.unlinkSync(leasePath);
+      } catch (error) {
+        if (error.code !== 'ENOENT') throw error;
+      }
+      continue;
+    }
+
+    const current = now();
+    if (current - lastProgressAt >= heartbeatMs) {
+      const heldBy = [holder.project, holder.taskId].filter(Boolean).join(' ');
+      log(`[${formatLocalTimestamp(current)}] waiting for repository runner${heldBy ? ` — ${heldBy}` : ''} (pid ${holder.pid})`);
+      lastProgressAt = current;
+    }
+    wait(1_000);
+  }
+
+  return () => {
+    if (!fs.existsSync(leasePath)) throw new Error('Runner lease disappeared before release');
+    const stat = fs.lstatSync(leasePath);
+    if (stat.isSymbolicLink() || !stat.isFile() || stat.size > 4_096) {
+      throw new Error(`Runner lease changed before release: ${leasePath}`);
+    }
+    let current;
+    try {
+      current = JSON.parse(fs.readFileSync(leasePath, 'utf8'));
+    } catch {
+      throw new Error(`Runner lease became invalid before release: ${leasePath}`);
+    }
+    if (current.token !== token || current.pid !== process.pid) {
+      throw new Error('Runner lease ownership changed before release');
+    }
+    fs.unlinkSync(leasePath);
+  };
+}
+
 function snapshotGitControls(commonDir) {
   const hash = crypto.createHash('sha256');
   const roots = [
@@ -1493,42 +1584,63 @@ function runTasks(options, dependencies = {}) {
   if (repoRoot !== primaryRoot) {
     throw new Error(`Run from the primary worktree or pass --repo ${primaryRoot}`);
   }
-  const baseBranch = execGit(repoRoot, ['branch', '--show-current']);
-  if (!baseBranch) throw new Error('The primary worktree must be on a local branch');
-  assertClean(repoRoot, 'Base worktree');
+  const leaseDependencies = {
+    log,
+    now: dependencies.leaseNow || now,
+    wait: dependencies.leaseWait,
+    heartbeatMs: dependencies.leaseHeartbeatMs,
+  };
+  const releaseSetupLease = acquireRunnerLease(
+    commonDir,
+    { project: options.project || '.', taskId: 'setup' },
+    leaseDependencies
+  );
+  let baseBranch;
+  let project;
+  let projectRoot;
+  let taskIds;
+  try {
+    baseBranch = execGit(repoRoot, ['branch', '--show-current']);
+    if (!baseBranch) throw new Error('The primary worktree must be on a local branch');
+    assertClean(repoRoot, 'Base worktree');
 
-  const project = dependencies.resolveProject
-    ? dependencies.resolveProject(repoRoot, options.project, repoInput)
-    : resolveProject(repoRoot, options.project, repoInput);
-  const projectRoot = fs.realpathSync(project.projectRoot);
-  if (!isContained(repoRoot, projectRoot)) throw new Error('Selected project is outside the repository');
-  assertNoSymlinkComponents(repoRoot, projectRoot, 'Selected project');
+    project = dependencies.resolveProject
+      ? dependencies.resolveProject(repoRoot, options.project, repoInput)
+      : resolveProject(repoRoot, options.project, repoInput);
+    projectRoot = fs.realpathSync(project.projectRoot);
+    if (!isContained(repoRoot, projectRoot)) throw new Error('Selected project is outside the repository');
+    assertNoSymlinkComponents(repoRoot, projectRoot, 'Selected project');
 
-  const catalog = parseTaskCatalog(readTasks(projectRoot));
-  let selected = options.command === 'task' ? options.tasks : null;
-  if (options.fromTask || options.toTask) {
-    if (options.fromTask && !catalog.has(options.fromTask)) {
-      throw new Error(`Range start not found: ${options.fromTask}`);
+    const catalog = parseTaskCatalog(readTasks(projectRoot));
+    let selected = options.command === 'task' ? options.tasks : null;
+    if (options.fromTask || options.toTask) {
+      if (options.fromTask && !catalog.has(options.fromTask)) {
+        throw new Error(`Range start not found: ${options.fromTask}`);
+      }
+      if (options.toTask && !catalog.has(options.toTask)) {
+        throw new Error(`Range end not found: ${options.toTask}`);
+      }
+      const fromNumber = options.fromTask ? Number(options.fromTask.slice(5)) : 0;
+      const toNumber = options.toTask ? Number(options.toTask.slice(5)) : Infinity;
+      selected = [...catalog.keys()].filter((taskId) => {
+        const number = Number(taskId.slice(5));
+        return number >= fromNumber && number <= toNumber;
+      });
     }
-    if (options.toTask && !catalog.has(options.toTask)) {
-      throw new Error(`Range end not found: ${options.toTask}`);
+    taskIds = orderTasks(catalog, selected);
+    if (!options.dryRun) {
+      ensureLocalPlanIgnore(repoRoot, projectRoot);
+      assertPlanTree(projectRoot);
+      assertNoCommandGitConfig(repoRoot);
     }
-    const fromNumber = options.fromTask ? Number(options.fromTask.slice(5)) : 0;
-    const toNumber = options.toTask ? Number(options.toTask.slice(5)) : Infinity;
-    selected = [...catalog.keys()].filter((taskId) => {
-      const number = Number(taskId.slice(5));
-      return number >= fromNumber && number <= toNumber;
-    });
+  } finally {
+    releaseSetupLease();
   }
-  const taskIds = orderTasks(catalog, selected);
   if (options.dryRun) {
     taskIds.forEach((taskId) => log(taskId));
     return taskIds;
   }
-  ensureLocalPlanIgnore(repoRoot, projectRoot);
-  assertPlanTree(projectRoot);
-  assertNoCommandGitConfig(repoRoot);
-  let gitControls = snapshotGitControls(commonDir);
+  let gitControls;
   const callPhase = dependencies.invokePhase || invokePhase;
   function invokeChecked(input) {
     if (dependencies.beforePhase) dependencies.beforePhase(input);
@@ -1559,6 +1671,11 @@ function runTasks(options, dependencies = {}) {
   const completed = [];
 
   for (const taskId of taskIds) {
+    const releaseTaskLease = acquireRunnerLease(
+      commonDir,
+      { project: project.projectName || '.', taskId },
+      leaseDependencies
+    );
     let implementation = null;
     let activePhase = null;
     const harnessLabel = options.harness === 'claude' ? 'Claude Code' : 'Codex';
@@ -1579,6 +1696,11 @@ function runTasks(options, dependencies = {}) {
       activePhase = null;
     }
     try {
+      if (execGit(repoRoot, ['branch', '--show-current']) !== baseBranch) {
+        throw new Error(`Primary worktree moved from base branch ${baseBranch}`);
+      }
+      assertClean(repoRoot, 'Base worktree');
+      gitControls = snapshotGitControls(commonDir);
       const baseSha = execGit(repoRoot, ['rev-parse', 'HEAD']);
       const stateLocation = checkpointPath(commonDir, repoRoot, projectRoot, taskId);
       let checkpoint = loadCheckpoint(commonDir, repoRoot, projectRoot, taskId) || {
@@ -1928,6 +2050,8 @@ function runTasks(options, dependencies = {}) {
         ? `\nWorktree preserved: ${implementation.worktreePath}\nBranch preserved: ${implementation.branch}`
         : '';
       throw new Error(`${taskId} failed: ${error.message}${preserved}`);
+    } finally {
+      releaseTaskLease();
     }
   }
   return completed;
@@ -1973,6 +2097,7 @@ module.exports = {
   forEachGitRecord,
   invokePhase,
   assertRegisteredWorktree,
+  acquireRunnerLease,
   resolveProject,
   runTasks,
   main,

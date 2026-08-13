@@ -99,9 +99,86 @@ describe('module and CLI contract', () => {
       'formatLocalTimestamp',
       'normalizeActivity',
       'assertRegisteredWorktree',
+      'acquireRunnerLease',
       'runTasks',
     ]) {
       assert.strictEqual(typeof runner[name], 'function', `${name} is not exported`);
+    }
+  });
+
+  test('queues repository ownership and releases only the acquired lease', () => {
+    const { acquireRunnerLease } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-repository-lease-'));
+    const waits = [];
+    const logs = [];
+    try {
+      initRepo(root);
+      const commonDir = path.join(root, '.git');
+      const releaseFirst = acquireRunnerLease(
+        commonDir,
+        { project: 'artistai', taskId: 'TASK-075' },
+        { log: () => {}, now: () => 1_000 }
+      );
+      const releaseSecond = acquireRunnerLease(
+        commonDir,
+        { project: 'bottle-budget', taskId: 'TASK-059' },
+        {
+          log: (message) => logs.push(message),
+          now: () => 31_000,
+          wait(milliseconds) {
+            waits.push(milliseconds);
+            releaseFirst();
+          },
+        }
+      );
+
+      assert.deepStrictEqual(waits, [1_000]);
+      assert.match(logs[0], /waiting for repository runner .*artistai.*TASK-075/i);
+      assert.ok(fs.existsSync(path.join(commonDir, 'groundwork', 'runner.lock')));
+      releaseSecond();
+      assert.strictEqual(fs.existsSync(path.join(commonDir, 'groundwork', 'runner.lock')), false);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('runTasks waits for repository ownership and releases it after failure', () => {
+    const { acquireRunnerLease, runTasks } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-lease-integration-'));
+    let releaseFirst;
+    let waits = 0;
+    try {
+      initRepo(root);
+      const commonDir = path.join(root, '.git');
+      releaseFirst = acquireRunnerLease(
+        commonDir,
+        { project: 'other', taskId: 'TASK-999' },
+        { log: () => {}, now: () => 1_000 }
+      );
+
+      assert.throws(
+        () => runTasks(
+          { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
+          {
+            log: () => {},
+            leaseNow: () => 31_000,
+            leaseWait() {
+              waits++;
+              releaseFirst();
+            },
+            invokePhase() {
+              throw new Error('phase reached');
+            },
+          }
+        ),
+        /phase reached/
+      );
+      assert.strictEqual(waits, 1);
+      assert.strictEqual(fs.existsSync(path.join(commonDir, 'groundwork', 'runner.lock')), false);
+    } finally {
+      const lease = path.join(root, '.git', 'groundwork', 'runner.lock');
+      if (releaseFirst && fs.existsSync(lease)) releaseFirst();
+      fs.rmSync(root, { recursive: true, force: true });
     }
   });
 
@@ -607,7 +684,7 @@ describe('filesystem safety', () => {
           { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
           { log: () => {}, invokePhase: () => { throw new Error('phase should not run'); } }
         ),
-        /checkpoint.*symlink/i
+        /checkpoint.*symlink|Runner lease directory.*symlink/i
       );
       assert.deepStrictEqual(fs.readdirSync(external), []);
     } finally {
