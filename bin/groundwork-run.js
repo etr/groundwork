@@ -6,6 +6,8 @@ const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const { execFileSync, spawnSync } = require('child_process');
+const { StringDecoder } = require('string_decoder');
+const { Worker } = require('worker_threads');
 
 const TASK_ID = /^TASK-(\d{3})$/;
 const PHASE_SKILLS = {
@@ -16,6 +18,148 @@ const PHASE_SKILLS = {
 };
 const MAX_TASK_FILES = 1000;
 const MAX_TASK_BYTES = 10 * 1024 * 1024;
+const DEFAULT_HEARTBEAT_MS = 30_000;
+const MAX_DIAGNOSTIC_BYTES = 64 * 1024;
+const MAX_CHECKPOINT_BYTES = 64 * 1024;
+
+function formatElapsed(milliseconds) {
+  const seconds = Math.max(0, Math.floor(milliseconds / 1000));
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const remainder = seconds % 60;
+  const clock = `${String(minutes).padStart(2, '0')}:${String(remainder).padStart(2, '0')}`;
+  return hours ? `${hours}:${clock}` : clock;
+}
+
+function formatLocalTimestamp(milliseconds) {
+  const date = new Date(milliseconds);
+  const stamp = [
+    date.getFullYear(),
+    '-', String(date.getMonth() + 1).padStart(2, '0'),
+    '-', String(date.getDate()).padStart(2, '0'),
+    ' ', String(date.getHours()).padStart(2, '0'),
+    ':', String(date.getMinutes()).padStart(2, '0'),
+    ':', String(date.getSeconds()).padStart(2, '0'),
+  ].join('');
+  const zonePart = new Intl.DateTimeFormat(undefined, { timeZoneName: 'short' })
+    .formatToParts(date)
+    .find((part) => part.type === 'timeZoneName');
+  return `${stamp} ${zonePart ? zonePart.value : 'local'}`;
+}
+
+function normalizeActivity(harness, event, state = {}, now = Date.now()) {
+  if (!event || typeof event !== 'object') return null;
+  const longCommandMs = 10_000;
+  function validationProgress(raw) {
+    const prefix = 'GROUNDWORK_VALIDATION_PROGRESS ';
+    const line = String(raw || '').split(/\r?\n/).find((entry) => entry.trim().startsWith(prefix));
+    if (!line) return null;
+    const encoded = line.trim().slice(prefix.length);
+    if (!encoded || encoded.length > 8_192) return null;
+    let progress;
+    try {
+      progress = JSON.parse(encoded);
+    } catch {
+      return null;
+    }
+    if (!progress || !Number.isInteger(progress.iteration) || progress.iteration < 1
+        || progress.iteration > 1_000 || !Array.isArray(progress.agents)
+        || progress.agents.length === 0 || progress.agents.length > 32) return null;
+    const validName = (name) => typeof name === 'string' && /^[a-z][a-z0-9-]{1,63}$/.test(name);
+    if (progress.status === 'launched' && progress.agents.every(validName)) {
+      return `validation iteration ${progress.iteration} launched — ${progress.agents.join(', ')}`;
+    }
+    const validVerdicts = new Set(['approve', 'request-changes', 'skipped']);
+    if (progress.status === 'completed' && progress.agents.every((agent) => (
+      agent && validName(agent.name) && validVerdicts.has(agent.verdict)
+    ))) {
+      return `validation iteration ${progress.iteration} completed — ${progress.agents
+        .map((agent) => `${agent.name}: ${agent.verdict}`).join(', ')}`;
+    }
+    return null;
+  }
+  function safeCommand(raw) {
+    let command = String(raw || '').replace(/\s+/g, ' ').trim();
+    command = command.replace(
+      /\b([A-Z_][A-Z0-9_]*(?:API_KEY|TOKEN|SECRET|PASSWORD))=(?:"[^"]*"|'[^']*'|\S+)/gi,
+      '$1=[redacted]'
+    );
+    command = command.replace(
+      /(--(?:api[-_]?key|token|secret|password))(=|\s+)(?:"[^"]*"|'[^']*'|\S+)/gi,
+      (_match, flag, separator) => `${flag}${separator === '=' ? '=' : ' '}[redacted]`
+    );
+    return command.length > 180 ? `${command.slice(0, 179)}…` : command;
+  }
+  function startCommand(id, command) {
+    if (!state.commandStarted) state.commandStarted = {};
+    if (id) state.commandStarted[id] = now;
+    const safe = safeCommand(command);
+    return safe ? `$ ${safe}` : 'command started';
+  }
+  function finishCommand(id, failed, exitCode) {
+    const startedAt = state.commandStarted && state.commandStarted[id];
+    if (state.commandStarted && id) delete state.commandStarted[id];
+    if (failed) {
+      return Number.isInteger(exitCode) ? `command failed (exit ${exitCode})` : 'command failed';
+    }
+    const elapsed = startedAt === undefined ? 0 : now - startedAt;
+    return elapsed >= longCommandMs ? `command completed in ${Math.round(elapsed / 1000)}s` : null;
+  }
+  if (harness === 'codex') {
+    if (event.type === 'thread.started') return 'Codex session started';
+    if (event.type === 'turn.started' || event.type === 'turn.completed') return null;
+    if ((event.type === 'item.started' || event.type === 'item.completed') && event.item) {
+      if (event.type === 'item.completed' && event.item.type === 'agent_message') {
+        return validationProgress(event.item.text);
+      }
+      if (event.item.type === 'command_execution') {
+        if (event.type === 'item.started') {
+          return startCommand(event.item.id, event.item.command);
+        }
+        const failed = event.item.status === 'failed'
+          || (Number.isInteger(event.item.exit_code) && event.item.exit_code !== 0);
+        return finishCommand(event.item.id, failed, event.item.exit_code);
+      }
+      const labels = {
+        mcp_tool_call: 'tool',
+        web_search: 'web search',
+        file_change: 'file change',
+        todo_list: 'plan update',
+      };
+      const label = labels[event.item.type];
+      if (!label) return null;
+      return `${label} ${event.type.endsWith('started') ? 'started' : 'completed'}`;
+    }
+    return null;
+  }
+  if (harness === 'claude') {
+    if (event.type === 'system' && event.subtype === 'init') return 'Claude session started';
+    const content = event.message && Array.isArray(event.message.content) ? event.message.content : [];
+    const progress = validationProgress(content
+      .filter((block) => block && block.type === 'text')
+      .map((block) => block.text)
+      .join('\n'));
+    if (progress) return progress;
+    const toolUse = content.find((block) => block && block.type === 'tool_use' && block.name);
+    if (toolUse) {
+      if (!state.toolNames) state.toolNames = {};
+      if (toolUse.id) state.toolNames[toolUse.id] = toolUse.name;
+      if (toolUse.name === 'Bash') {
+        return startCommand(toolUse.id, toolUse.input && toolUse.input.command);
+      }
+      return `tool ${toolUse.name} started`;
+    }
+    const toolResult = content.find((block) => block && block.type === 'tool_result');
+    if (toolResult) {
+      const name = state.toolNames && state.toolNames[toolResult.tool_use_id];
+      if (name === 'Bash') {
+        return finishCommand(toolResult.tool_use_id, Boolean(toolResult.is_error), null);
+      }
+      return `tool ${name || 'call'} completed`;
+    }
+  }
+  return null;
+}
 
 function normalizeTaskId(value) {
   if (/^\d+$/.test(value)) return `TASK-${String(Number(value)).padStart(3, '0')}`;
@@ -31,6 +175,8 @@ function parseArgs(argv) {
     repo: process.cwd(),
     project: null,
     tasks: [],
+    fromTask: null,
+    toTask: null,
     dryRun: false,
   };
 
@@ -48,6 +194,8 @@ function parseArgs(argv) {
     if (arg === '--harness') result.harness = argv[++index] || null;
     else if (arg === '--repo') result.repo = path.resolve(argv[++index] || '');
     else if (arg === '--project') result.project = argv[++index] || null;
+    else if (arg === '--from') result.fromTask = normalizeTaskId(argv[++index] || '');
+    else if (arg === '--to') result.toTask = normalizeTaskId(argv[++index] || '');
     else if (arg === '--dry-run') result.dryRun = true;
     else if (arg === '--help' || arg === '-h') result.help = true;
     else if (arg.startsWith('-')) throw new Error(`Unknown option: ${arg}`);
@@ -57,8 +205,15 @@ function parseArgs(argv) {
   if (!result.help && !['claude', 'codex'].includes(result.harness)) {
     throw new Error('--harness must be claude or codex');
   }
-  if (result.command === 'task' && result.tasks.length === 0) {
-    throw new Error('task requires at least one task identifier');
+  if (result.tasks.length && (result.fromTask || result.toTask)) {
+    throw new Error('Choose either an explicit task list or a --from/--to range, not both');
+  }
+  if (result.fromTask && result.toTask
+      && Number(result.fromTask.slice(5)) > Number(result.toTask.slice(5))) {
+    throw new Error('--from must come before or equal --to');
+  }
+  if (result.command === 'task' && result.tasks.length === 0 && !result.fromTask && !result.toTask) {
+    throw new Error('task requires a task list or --from/--to range');
   }
   if (result.command === 'all' && result.tasks.length > 0) {
     throw new Error('all does not accept task identifiers');
@@ -75,8 +230,8 @@ function parseTaskCatalog(markdown) {
     const match = matches[index];
     const end = index + 1 < matches.length ? matches[index + 1].index : markdown.length;
     const body = markdown.slice(match.index, end);
-    const statusMatch = body.match(/^\*\*Status:\*\*\s*(Not Started|In Progress|Complete|Blocked)\s*$/mi);
-    const blockedMatch = body.match(/^\*\*Blocked by:\*\*\s*(.+?)\s*$/mi);
+    const statusMatch = body.match(/^(?:[-*+]\s+)?\*\*Status:\*\*\s*(Not Started|In Progress|Complete|Blocked)\s*$/mi);
+    const blockedMatch = body.match(/^(?:[-*+]\s+)?\*\*Blocked by:\*\*\s*(.+?)\s*$/mi);
     const blockedBy = !blockedMatch || /^none$/i.test(blockedMatch[1].trim())
       ? []
       : [...blockedMatch[1].matchAll(/TASK-\d{3}/gi)].map((entry) => entry[0].toUpperCase());
@@ -223,6 +378,27 @@ function assertNoSymlinkComponents(parent, child, label) {
   }
 }
 
+function createContainedDirectory(parent, child, label) {
+  const parentStat = fs.lstatSync(parent);
+  if (parentStat.isSymbolicLink() || !parentStat.isDirectory()) {
+    throw new Error(`${label} parent is not a real directory: ${parent}`);
+  }
+  const relative = path.relative(parent, child);
+  if (!isContained(parent, child)) throw new Error(`${label} is outside ${parent}`);
+  let current = parent;
+  for (const component of relative.split(path.sep).filter(Boolean)) {
+    current = path.join(current, component);
+    if (fs.existsSync(current)) {
+      const stat = fs.lstatSync(current);
+      if (stat.isSymbolicLink() || !stat.isDirectory()) {
+        throw new Error(`${label} contains a non-directory or symlink: ${current}`);
+      }
+    } else {
+      fs.mkdirSync(current, { mode: 0o700 });
+    }
+  }
+}
+
 function snapshotGitControls(commonDir) {
   const hash = crypto.createHash('sha256');
   const roots = [
@@ -277,6 +453,76 @@ function assertGitControls(commonDir, expected) {
   }
 }
 
+function readLocalHooksPaths(repoRoot) {
+  const env = { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' };
+  delete env.GIT_DIR;
+  delete env.GIT_WORK_TREE;
+  const result = spawnSync(
+    'git',
+    ['config', '--local', '--no-includes', '--null', '--get-all', 'core.hooksPath'],
+    { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env }
+  );
+  if (result.error) throw result.error;
+  if (result.status === 1) return [];
+  if (result.status !== 0) {
+    throw new Error((result.stderr || '').trim() || `git config exited with status ${result.status}`);
+  }
+  return result.stdout.split('\0').filter(Boolean);
+}
+
+function restoreTransientTaskHooksPath(repoRoot, input, expected) {
+  const current = readLocalHooksPaths(repoRoot);
+  if (current.length === expected.length
+      && current.every((value, index) => value === expected[index])) return false;
+  if (input.phase === 'plan' || expected.length > 1 || current.length !== 1) return false;
+
+  const taskWorktree = input.worktreePath;
+  const hooksPath = current[0];
+  if (!path.isAbsolute(hooksPath) || !fs.existsSync(hooksPath)) return false;
+  try {
+    const canonicalHooksPath = fs.realpathSync(hooksPath);
+    if (!isContained(taskWorktree, canonicalHooksPath)) return false;
+    assertNoSymlinkComponents(taskWorktree, canonicalHooksPath, 'Transient task hooksPath');
+    if (!fs.lstatSync(canonicalHooksPath).isDirectory()) return false;
+  } catch {
+    return false;
+  }
+
+  if (expected.length === 0) {
+    execGit(repoRoot, ['config', '--local', '--unset-all', 'core.hooksPath']);
+  } else {
+    execGit(repoRoot, ['config', '--local', '--replace-all', 'core.hooksPath', expected[0]]);
+  }
+  const restored = readLocalHooksPaths(repoRoot);
+  if (restored.length !== expected.length
+      || restored.some((value, index) => value !== expected[index])) {
+    throw new Error('Failed to restore the pre-phase core.hooksPath');
+  }
+  return true;
+}
+
+function relocateTaskHooksPathBeforeCleanup(repoRoot, worktreePath) {
+  const current = readLocalHooksPaths(repoRoot);
+  if (current.length !== 1 || !path.isAbsolute(current[0]) || !fs.existsSync(current[0])) return false;
+
+  const canonicalWorktree = fs.realpathSync(worktreePath);
+  const canonicalHooksPath = fs.realpathSync(current[0]);
+  if (!isContained(canonicalWorktree, canonicalHooksPath)) return false;
+  const relative = path.relative(canonicalWorktree, canonicalHooksPath);
+  if (!relative) return false;
+
+  const primaryHooksPath = path.join(repoRoot, relative);
+  if (!fs.existsSync(primaryHooksPath)) {
+    throw new Error(`Cannot remove task worktree while core.hooksPath points inside it: ${current[0]}`);
+  }
+  assertNoSymlinkComponents(repoRoot, primaryHooksPath, 'Primary hooksPath replacement');
+  if (!fs.lstatSync(primaryHooksPath).isDirectory()) {
+    throw new Error(`Primary hooksPath replacement is not a directory: ${primaryHooksPath}`);
+  }
+  execGit(repoRoot, ['config', '--local', '--replace-all', 'core.hooksPath', primaryHooksPath]);
+  return true;
+}
+
 function registeredWorktrees(repoRoot) {
   return execGit(repoRoot, ['worktree', 'list', '--porcelain'])
     .split('\n\n')
@@ -318,8 +564,8 @@ function withoutWorktree(snapshot, worktreePath) {
 function assertRepositoryTransition(repoRoot, before, input) {
   const afterRefs = snapshotRepositoryRefs(repoRoot);
   const afterWorktrees = snapshotWorktreeRegistry(repoRoot);
-  const taskRef = `refs/heads/task/${input.taskId}`;
-  const taskWorktree = path.join(repoRoot, '.worktrees', input.taskId);
+  const taskRef = `refs/heads/${input.branch}`;
+  const taskWorktree = input.worktreePath;
   const mutableTaskRef = input.phase !== 'plan';
   if ((mutableTaskRef ? withoutRef(before.refs, taskRef) : before.refs)
       !== (mutableTaskRef ? withoutRef(afterRefs, taskRef) : afterRefs)) {
@@ -344,25 +590,98 @@ function assertNoCommandGitConfig(repoRoot) {
   }
 }
 
-function snapshotIgnoredPaths(repoRoot, excludedRoots) {
+function snapshotRunnerState(commonDir) {
+  const root = path.join(commonDir, 'groundwork', 'runner');
+  if (!fs.existsSync(root)) return 'missing';
   const hash = crypto.createHash('sha256');
-  forEachGitRecord(
-    repoRoot,
-    ['ls-files', '--others', '--ignored', '--exclude-standard', '-z'],
-    (relative) => {
-      const absolute = path.resolve(repoRoot, relative);
-      if (!isContained(repoRoot, absolute)) throw new Error(`Ignored path escapes repository: ${relative}`);
-      if (excludedRoots.some((root) => isContained(root, absolute))) return;
-      hash.update(`${relative}\0`);
-    },
-  );
+  let totalBytes = 0;
+  function add(absolute, relative) {
+    const stat = fs.lstatSync(absolute);
+    if (stat.isSymbolicLink()) throw new Error(`Runner checkpoint path must not be a symlink: ${absolute}`);
+    hash.update(`${relative}\0${stat.mode}\0`);
+    if (stat.isDirectory()) {
+      for (const entry of fs.readdirSync(absolute).sort()) {
+        add(path.join(absolute, entry), path.join(relative, entry));
+      }
+    } else if (stat.isFile()) {
+      totalBytes += stat.size;
+      if (stat.size > MAX_CHECKPOINT_BYTES || totalBytes > MAX_CHECKPOINT_BYTES * 100) {
+        throw new Error('Runner checkpoint state exceeds its size limit');
+      }
+      hash.update(fs.readFileSync(absolute));
+    } else {
+      throw new Error(`Runner checkpoint path is not a regular file or directory: ${absolute}`);
+    }
+  }
+  add(root, '.');
   return hash.digest('hex');
 }
 
-function assertIgnoredPaths(repoRoot, excludedRoots, expected) {
-  if (snapshotIgnoredPaths(repoRoot, excludedRoots) !== expected) {
-    throw new Error('The ignored path set in the base worktree changed during a model phase');
+function assertRunnerState(commonDir, expected) {
+  if (snapshotRunnerState(commonDir) !== expected) {
+    throw new Error('Runner checkpoint state changed during a model phase');
   }
+}
+
+function checkpointPath(commonDir, repoRoot, projectRoot, taskId) {
+  const projectRelative = path.relative(repoRoot, projectRoot).split(path.sep).join('/') || '.';
+  const projectKey = crypto.createHash('sha256').update(projectRelative).digest('hex').slice(0, 16);
+  return {
+    file: path.join(commonDir, 'groundwork', 'runner', projectKey, `${taskId}.json`),
+    projectRelative,
+  };
+}
+
+function loadCheckpoint(commonDir, repoRoot, projectRoot, taskId) {
+  const location = checkpointPath(commonDir, repoRoot, projectRoot, taskId);
+  if (!fs.existsSync(location.file)) return null;
+  assertNoSymlinkComponents(commonDir, location.file, 'Runner checkpoint');
+  const stat = fs.lstatSync(location.file);
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_CHECKPOINT_BYTES) {
+    throw new Error(`Runner checkpoint is invalid: ${location.file}`);
+  }
+  let checkpoint;
+  try {
+    checkpoint = JSON.parse(fs.readFileSync(location.file, 'utf8'));
+  } catch {
+    throw new Error(`Runner checkpoint is not valid JSON: ${location.file}`);
+  }
+  if (!checkpoint || checkpoint.version !== 1 || checkpoint.taskId !== taskId
+      || checkpoint.project !== location.projectRelative) {
+    throw new Error(`Runner checkpoint identity does not match ${taskId}`);
+  }
+  return checkpoint;
+}
+
+function saveCheckpoint(commonDir, repoRoot, projectRoot, checkpoint) {
+  const location = checkpointPath(commonDir, repoRoot, projectRoot, checkpoint.taskId);
+  const directory = path.dirname(location.file);
+  createContainedDirectory(commonDir, directory, 'Runner checkpoint directory');
+  if (fs.existsSync(location.file) && fs.lstatSync(location.file).isSymbolicLink()) {
+    throw new Error(`Runner checkpoint must not be a symlink: ${location.file}`);
+  }
+  const temp = path.join(directory, `.${checkpoint.taskId}.${process.pid}.${Date.now()}.tmp`);
+  const fd = fs.openSync(temp, 'wx', 0o600);
+  try {
+    fs.writeFileSync(fd, `${JSON.stringify(checkpoint)}\n`, 'utf8');
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+  fs.renameSync(temp, location.file);
+}
+
+function clearCheckpoint(commonDir, repoRoot, projectRoot, taskId) {
+  const location = checkpointPath(commonDir, repoRoot, projectRoot, taskId);
+  if (!fs.existsSync(location.file)) return;
+  if (fs.lstatSync(location.file).isSymbolicLink()) {
+    throw new Error(`Runner checkpoint must not be a symlink: ${location.file}`);
+  }
+  fs.unlinkSync(location.file);
+}
+
+function fileSha256(filePath) {
+  return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
 }
 
 function assertPlanTree(projectRoot) {
@@ -381,9 +700,10 @@ function assertPlanTree(projectRoot) {
   }
 }
 
-function snapshotUnrelatedWorktrees(repoRoot, taskWorktree) {
+function snapshotUnrelatedWorktrees(repoRoot, projectRoot, taskWorktree) {
   const records = registeredWorktrees(repoRoot);
   const registeredPaths = new Set(records.map((entry) => entry.path));
+  const projectRelative = path.relative(repoRoot, projectRoot).split(path.sep).join('/');
   const worktreeParent = path.join(repoRoot, '.worktrees');
   if (fs.existsSync(worktreeParent)) {
     const parentStat = fs.lstatSync(worktreeParent);
@@ -406,10 +726,73 @@ function snapshotUnrelatedWorktrees(repoRoot, taskWorktree) {
   return records
     .filter((entry) => entry.path !== repoRoot && entry.path !== taskWorktree)
     .map((entry) => {
-      assertClean(entry.path, `Unrelated worktree ${entry.path}`);
-      return `${entry.path}\0${execGit(entry.path, ['rev-parse', 'HEAD'])}\0${snapshotIgnoredPaths(entry.path, [])}`;
+      if (projectRelative) {
+        assertPathspecClean(entry.path, projectRelative, `Selected project in unrelated worktree ${entry.path}`);
+      } else {
+        assertClean(entry.path, `Unrelated worktree ${entry.path}`);
+      }
+      return `${entry.path}\0${execGit(entry.path, ['rev-parse', 'HEAD'])}`;
     })
     .join('\n');
+}
+
+function legacyWorkspaceOwner(commonDir, taskId, legacyBranch, legacyWorktree) {
+  const root = path.join(commonDir, 'groundwork', 'runner');
+  if (!fs.existsSync(root)) return null;
+  const owners = new Set();
+  for (const namespace of fs.readdirSync(root)) {
+    const file = path.join(root, namespace, `${taskId}.json`);
+    if (!fs.existsSync(file)) continue;
+    const stat = fs.lstatSync(file);
+    if (stat.isSymbolicLink() || !stat.isFile() || stat.size > MAX_CHECKPOINT_BYTES) {
+      throw new Error(`Unsafe runner checkpoint while resolving legacy ${taskId}: ${file}`);
+    }
+    let checkpoint;
+    try {
+      checkpoint = JSON.parse(fs.readFileSync(file, 'utf8'));
+    } catch {
+      throw new Error(`Invalid runner checkpoint while resolving legacy ${taskId}: ${file}`);
+    }
+    if (checkpoint.taskId !== taskId || typeof checkpoint.project !== 'string') continue;
+    if (!checkpoint.workspace
+        || (checkpoint.workspace.branch === legacyBranch
+          && checkpoint.workspace.worktreePath === legacyWorktree)) {
+      owners.add(checkpoint.project);
+    }
+  }
+  return owners.size === 1 ? [...owners][0] : null;
+}
+
+function taskWorkspaceIdentity(repoRoot, commonDir, projectRoot, projectName, taskId, checkpoint) {
+  const legacy = {
+    branch: `task/${taskId}`,
+    worktreePath: path.join(repoRoot, '.worktrees', taskId),
+  };
+  if (projectRoot === repoRoot) return legacy;
+  if (!projectName || !/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(projectName)) {
+    throw new Error('Monorepo task workspaces require a safe project name');
+  }
+  const scoped = {
+    branch: `task/${projectName}/${taskId}`,
+    worktreePath: path.join(repoRoot, '.worktrees', `${projectName}-${taskId}`),
+  };
+  if (checkpoint.workspace) {
+    for (const candidate of [legacy, scoped]) {
+      if (checkpoint.workspace.branch === candidate.branch
+          && checkpoint.workspace.worktreePath === candidate.worktreePath) return candidate;
+    }
+    throw new Error(`Runner checkpoint has an invalid workspace identity for ${taskId}`);
+  }
+  if (checkpoint.implementation
+      && checkpoint.implementation.branch === legacy.branch
+      && checkpoint.implementation.worktreePath === legacy.worktreePath) return legacy;
+  const projectRelative = path.relative(repoRoot, projectRoot).split(path.sep).join('/');
+  if (refExists(repoRoot, `refs/heads/${legacy.branch}`)
+      && fs.existsSync(legacy.worktreePath)
+      && legacyWorkspaceOwner(commonDir, taskId, legacy.branch, legacy.worktreePath) === projectRelative) {
+    return legacy;
+  }
+  return scoped;
 }
 
 function refExists(repoRoot, refName) {
@@ -579,6 +962,158 @@ function parseFinalizeResult(output) {
   throw new Error('finalize-task did not return a structured finalization result');
 }
 
+function forEachFileLine(filePath, visit) {
+  const fd = fs.openSync(filePath, 'r');
+  const decoder = new StringDecoder('utf8');
+  const chunk = Buffer.allocUnsafe(64 * 1024);
+  let pending = '';
+  try {
+    let bytesRead;
+    while ((bytesRead = fs.readSync(fd, chunk, 0, chunk.length, null)) > 0) {
+      pending += decoder.write(chunk.subarray(0, bytesRead));
+      let newline;
+      while ((newline = pending.indexOf('\n')) !== -1) {
+        visit(pending.slice(0, newline).replace(/\r$/, ''));
+        pending = pending.slice(newline + 1);
+      }
+    }
+    pending += decoder.end();
+    if (pending) visit(pending.replace(/\r$/, ''));
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function readClaudeResult(outputPath) {
+  let result = null;
+  forEachFileLine(outputPath, (line) => {
+    try {
+      const event = JSON.parse(line);
+      if (event && event.type === 'result' && typeof event.result === 'string') result = event.result;
+    } catch {}
+  });
+  if (result === null) throw new Error('Claude stream did not contain a final result');
+  return result;
+}
+
+function readFileTail(filePath, maxBytes = MAX_DIAGNOSTIC_BYTES) {
+  const stat = fs.statSync(filePath);
+  if (stat.size === 0) return '';
+  const length = Math.min(stat.size, maxBytes);
+  const fd = fs.openSync(filePath, 'r');
+  const buffer = Buffer.allocUnsafe(length);
+  try {
+    fs.readSync(fd, buffer, 0, length, stat.size - length);
+  } finally {
+    fs.closeSync(fd);
+  }
+  return buffer.toString('utf8');
+}
+
+function startProgressMonitor(input, outputPath, startedAt) {
+  const progressFd = input.progressFd === undefined ? 1 : input.progressFd;
+  if (progressFd === null) return null;
+  const heartbeatMs = input.heartbeatMs || DEFAULT_HEARTBEAT_MS;
+  const shared = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT * 2));
+  const source = `
+'use strict';
+const fs = require('fs');
+const { StringDecoder } = require('string_decoder');
+const { workerData } = require('worker_threads');
+const formatElapsed = ${formatElapsed.toString()};
+const formatLocalTimestamp = ${formatLocalTimestamp.toString()};
+const normalizeActivity = ${normalizeActivity.toString()};
+const shared = new Int32Array(workerData.shared);
+const decoder = new StringDecoder('utf8');
+const state = {};
+const fd = fs.openSync(workerData.outputPath, 'r');
+let offset = 0;
+let pending = '';
+let lastHeartbeat = workerData.startedAt;
+let writable = true;
+
+function emit(message) {
+  if (!writable) return;
+  const elapsed = formatElapsed(Date.now() - workerData.startedAt);
+  try {
+    fs.writeSync(workerData.progressFd, '[' + formatLocalTimestamp(Date.now()) + '] [' + workerData.taskId + ' ' + workerData.phase + ' ' + elapsed + '] ' + message + '\\n');
+  } catch {
+    writable = false;
+  }
+}
+
+function visit(line) {
+  try {
+    const message = normalizeActivity(workerData.harness, JSON.parse(line), state);
+    if (message) emit(message);
+  } catch {}
+}
+
+function drain(final) {
+  const size = fs.fstatSync(fd).size;
+  const chunk = Buffer.allocUnsafe(64 * 1024);
+  while (offset < size) {
+    const length = Math.min(chunk.length, size - offset);
+    const bytesRead = fs.readSync(fd, chunk, 0, length, offset);
+    if (!bytesRead) break;
+    offset += bytesRead;
+    pending += decoder.write(chunk.subarray(0, bytesRead));
+    let newline;
+    while ((newline = pending.indexOf('\\n')) !== -1) {
+      visit(pending.slice(0, newline).replace(/\\r$/, ''));
+      pending = pending.slice(newline + 1);
+    }
+  }
+  if (final) {
+    pending += decoder.end();
+    if (pending) visit(pending.replace(/\\r$/, ''));
+    pending = '';
+  }
+}
+
+const interval = setInterval(() => {
+  const done = Atomics.load(shared, 0) === 1;
+  drain(done);
+  const now = Date.now();
+  if (now - lastHeartbeat >= workerData.heartbeatMs) {
+    emit(workerData.harnessLabel + ' still running');
+    lastHeartbeat = now;
+  }
+  if (done) {
+    clearInterval(interval);
+    fs.closeSync(fd);
+    Atomics.store(shared, 1, 1);
+    Atomics.notify(shared, 1);
+  }
+}, Math.max(10, Math.min(250, workerData.heartbeatMs)));
+`;
+  const worker = new Worker(source, {
+    eval: true,
+    workerData: {
+      shared: shared.buffer,
+      outputPath,
+      startedAt,
+      heartbeatMs,
+      progressFd,
+      taskId: input.taskId || 'task',
+      phase: input.phase || 'phase',
+      harness: input.harness,
+      harnessLabel: input.harness === 'claude' ? 'Claude Code' : 'Codex',
+    },
+  });
+  worker.on('error', () => {});
+  worker.unref();
+  return { worker, shared };
+}
+
+function stopProgressMonitor(monitor) {
+  if (!monitor) return;
+  Atomics.store(monitor.shared, 0, 1);
+  Atomics.notify(monitor.shared, 0);
+  const result = Atomics.wait(monitor.shared, 1, 0, 2_000);
+  if (result === 'timed-out') monitor.worker.terminate();
+}
+
 function buildInvocation({ harness, cwd, pluginRoot, prompt, resultFile }) {
   if (harness === 'claude') {
     return {
@@ -590,7 +1125,8 @@ function buildInvocation({ harness, cwd, pluginRoot, prompt, resultFile }) {
         '--model', 'sonnet',
         '--effort', 'high',
         '--permission-mode', 'acceptEdits',
-        '--output-format', 'text',
+        '--output-format', 'stream-json',
+        '--verbose',
       ],
       cwd,
       input: prompt,
@@ -603,8 +1139,9 @@ function buildInvocation({ harness, cwd, pluginRoot, prompt, resultFile }) {
         'exec',
         '--ephemeral',
         '--approve-for-me',
-        '--sandbox', 'workspace-write',
         '--cd', cwd,
+        '--json',
+        '--color', 'never',
         '--output-last-message', resultFile,
         '-',
       ],
@@ -616,26 +1153,50 @@ function buildInvocation({ harness, cwd, pluginRoot, prompt, resultFile }) {
 }
 
 function invokePhase(input) {
-  const resultFile = path.join(os.tmpdir(), `groundwork-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}.txt`);
-  const invocation = buildInvocation({ ...input, resultFile });
-  const env = buildChildEnv(input.harness, input.env);
-  const result = spawnSync(invocation.command, invocation.args, {
-    cwd: invocation.cwd,
-    env,
-    input: invocation.input,
-    encoding: 'utf8',
-    stdio: ['pipe', 'pipe', 'pipe'],
-  });
-  let output = result.stdout || '';
-  if (input.harness === 'codex' && fs.existsSync(resultFile)) {
-    output = fs.readFileSync(resultFile, 'utf8');
-    fs.unlinkSync(resultFile);
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'groundwork-phase-'));
+  const resultFile = path.join(tempDir, 'result.txt');
+  const outputPath = path.join(tempDir, 'stdout.jsonl');
+  const errorPath = path.join(tempDir, 'stderr.log');
+  let outputFd;
+  let errorFd;
+  let monitor;
+  let result;
+  try {
+    outputFd = fs.openSync(outputPath, 'wx', 0o600);
+    errorFd = fs.openSync(errorPath, 'wx', 0o600);
+    const invocation = buildInvocation({ ...input, resultFile });
+    const env = buildChildEnv(input.harness, input.env);
+    monitor = startProgressMonitor(input, outputPath, Date.now());
+    result = spawnSync(invocation.command, invocation.args, {
+      cwd: invocation.cwd,
+      env,
+      input: invocation.input,
+      encoding: 'utf8',
+      stdio: ['pipe', outputFd, errorFd],
+    });
+    fs.closeSync(outputFd);
+    outputFd = undefined;
+    fs.closeSync(errorFd);
+    errorFd = undefined;
+    stopProgressMonitor(monitor);
+    monitor = null;
+
+    if (result.error) throw result.error;
+    if (result.status !== 0) {
+      const diagnostic = readFileTail(errorPath).trim() || readFileTail(outputPath).trim();
+      throw new Error(`${input.phase} process exited ${result.status}: ${diagnostic}`);
+    }
+    if (input.harness === 'codex') {
+      if (!fs.existsSync(resultFile)) throw new Error('Codex did not write its final result');
+      return fs.readFileSync(resultFile, 'utf8');
+    }
+    return readClaudeResult(outputPath);
+  } finally {
+    if (outputFd !== undefined) fs.closeSync(outputFd);
+    if (errorFd !== undefined) fs.closeSync(errorFd);
+    stopProgressMonitor(monitor);
+    fs.rmSync(tempDir, { recursive: true, force: true });
   }
-  if (result.error) throw result.error;
-  if (result.status !== 0) {
-    throw new Error(`${input.phase} process exited ${result.status}: ${(result.stderr || output).trim()}`);
-  }
-  return output;
 }
 
 function buildChildEnv(harness, additions = {}) {
@@ -723,6 +1284,24 @@ function assertClean(cwd, label, seen = new Set()) {
   seen.delete(canonical);
 }
 
+function assertPathspecClean(cwd, pathspec, label) {
+  const flagged = execGit(cwd, ['ls-files', '-v', '-z', '--', pathspec], { raw: true })
+    .split('\0')
+    .filter((entry) => entry && (/^[a-z] /.test(entry) || entry.startsWith('S ')));
+  if (flagged.length) {
+    throw new Error(`${label} has assume-unchanged or skip-worktree entries:\n${flagged.join('\n')}`);
+  }
+  const status = execGit(cwd, [
+    'status',
+    '--porcelain',
+    '--untracked-files=all',
+    '--ignore-submodules=none',
+    '--',
+    pathspec,
+  ]);
+  if (status) throw new Error(`${label} is not clean:\n${status}`);
+}
+
 function assertPlanFile(projectRoot, reportedPath) {
   const lexical = path.resolve(projectRoot, reportedPath);
   const lexicalAllowed = path.join(projectRoot, '.groundwork-plans');
@@ -771,7 +1350,14 @@ function phasePrompt(phase, input) {
     header.push(`Skill arguments: ${input.taskId}${projectArg}`);
   } else if (phase === 'implement') {
     header.push(`Skill arguments: ${input.planFile}${projectArg}`);
-    header.push(`Create the task worktree at exactly ${path.join(input.repoRoot, '.worktrees', input.taskId)}.`);
+    header.push(`Task branch: ${input.branch}`);
+    if (input.resumeExistingWorktree) {
+      header.push('RESUME EXISTING WORKTREE=true');
+      header.push(`Reuse the existing registered worktree at exactly ${input.worktreePath}.`);
+      header.push('Inspect the plan, commits, working state, and tests; do not repeat completed implementation work. Finish and commit only what remains.');
+    } else {
+      header.push(`Create the task worktree at exactly ${input.worktreePath} on exactly branch ${input.branch}.`);
+    }
     header.push('The task status must be changed to In Progress inside the task worktree and included in the implementation commit.');
   } else if (phase === 'validate') {
     header.push(`Skill arguments: ${projectArg.trim() || '(none)'}`);
@@ -806,7 +1392,7 @@ function maskSelectedTaskStatus(content, taskId) {
   return content.split('\n').map((line) => {
     const heading = line.match(/^###\s+(TASK-\d{3}):/);
     if (heading) currentTask = heading[1];
-    if (currentTask === taskId && /^\*\*Status:\*\*/.test(line)) {
+    if (currentTask === taskId && /^(?:[-*+]\s+)?\*\*Status:\*\*/.test(line)) {
       return line.replace(/(Not Started|In Progress|Complete|Blocked)/, '<TASK_STATUS>');
     }
     if (new RegExp(`^\\|\\s*${taskId}\\s*\\|`).test(line)) {
@@ -835,8 +1421,11 @@ function taskBookkeepingPaths(repoRoot, projectRoot, taskId, validatedHead, task
   }
   const beforeTask = parseTaskCatalog(readTasksAtCommit(repoRoot, projectRoot, validatedHead)).get(taskId);
   const afterTask = parseTaskCatalog(readTasksAtCommit(repoRoot, projectRoot, taskHead)).get(taskId);
-  if (!beforeTask || !afterTask || beforeTask.status === 'Complete' || afterTask.status !== 'Complete') {
+  if (!beforeTask || !afterTask || afterTask.status !== 'Complete') {
     throw new Error(`finalize-task did not make only the required ${taskId} completion transition`);
+  }
+  if (beforeTask.status === 'Complete' && taskHead !== validatedHead) {
+    throw new Error(`finalize-task changed task bookkeeping after validated ${taskId} was already Complete`);
   }
 }
 
@@ -870,6 +1459,7 @@ function mergeAndCleanup(repoRoot, projectRoot, taskId, implementation, result, 
   if (execGit(repoRoot, ['rev-parse', `refs/heads/${implementation.branch}`]) !== result.taskHead) {
     throw new Error('Task branch moved after final verification');
   }
+  relocateTaskHooksPathBeforeCleanup(repoRoot, implementation.worktreePath);
   try {
     execGit(repoRoot, ['merge', '--no-ff', result.taskHead, '-m', result.mergeMessage]);
   } catch (error) {
@@ -895,6 +1485,7 @@ function mergeAndCleanup(repoRoot, projectRoot, taskId, implementation, result, 
 
 function runTasks(options, dependencies = {}) {
   const log = dependencies.log || console.log;
+  const now = dependencies.now || Date.now;
   const repoInput = path.resolve(options.repo || process.cwd());
   const repoRoot = fs.realpathSync(execGit(repoInput, ['rev-parse', '--show-toplevel']));
   const commonDir = fs.realpathSync(path.resolve(repoRoot, execGit(repoRoot, ['rev-parse', '--git-common-dir'])));
@@ -914,7 +1505,21 @@ function runTasks(options, dependencies = {}) {
   assertNoSymlinkComponents(repoRoot, projectRoot, 'Selected project');
 
   const catalog = parseTaskCatalog(readTasks(projectRoot));
-  const selected = options.command === 'task' ? options.tasks : null;
+  let selected = options.command === 'task' ? options.tasks : null;
+  if (options.fromTask || options.toTask) {
+    if (options.fromTask && !catalog.has(options.fromTask)) {
+      throw new Error(`Range start not found: ${options.fromTask}`);
+    }
+    if (options.toTask && !catalog.has(options.toTask)) {
+      throw new Error(`Range end not found: ${options.toTask}`);
+    }
+    const fromNumber = options.fromTask ? Number(options.fromTask.slice(5)) : 0;
+    const toNumber = options.toTask ? Number(options.toTask.slice(5)) : Infinity;
+    selected = [...catalog.keys()].filter((taskId) => {
+      const number = Number(taskId.slice(5));
+      return number >= fromNumber && number <= toNumber;
+    });
+  }
   const taskIds = orderTasks(catalog, selected);
   if (options.dryRun) {
     taskIds.forEach((taskId) => log(taskId));
@@ -923,30 +1528,29 @@ function runTasks(options, dependencies = {}) {
   ensureLocalPlanIgnore(repoRoot, projectRoot);
   assertPlanTree(projectRoot);
   assertNoCommandGitConfig(repoRoot);
-  const gitControls = snapshotGitControls(commonDir);
-  const ignoredExclusions = [
-    path.join(repoRoot, '.worktrees'),
-    path.join(projectRoot, '.groundwork-plans'),
-  ];
-  const ignoredPaths = snapshotIgnoredPaths(repoRoot, ignoredExclusions);
-
+  let gitControls = snapshotGitControls(commonDir);
   const callPhase = dependencies.invokePhase || invokePhase;
   function invokeChecked(input) {
     if (dependencies.beforePhase) dependencies.beforePhase(input);
-    const taskWorktree = path.join(repoRoot, '.worktrees', input.taskId);
+    const taskWorktree = input.worktreePath;
     const repositoryState = {
       refs: snapshotRepositoryRefs(repoRoot),
       worktrees: snapshotWorktreeRegistry(repoRoot),
-      unrelated: snapshotUnrelatedWorktrees(repoRoot, taskWorktree),
+      unrelated: snapshotUnrelatedWorktrees(repoRoot, projectRoot, taskWorktree),
+      runner: snapshotRunnerState(commonDir),
+      hooksPaths: readLocalHooksPaths(repoRoot),
     };
     try {
       return callPhase(input);
     } finally {
+      if (restoreTransientTaskHooksPath(repoRoot, input, repositoryState.hooksPaths)) {
+        log(`[${formatLocalTimestamp(now())}] [${input.taskId}] restored transient task-worktree core.hooksPath`);
+      }
       assertGitControls(commonDir, gitControls);
+      assertRunnerState(commonDir, repositoryState.runner);
       assertPlanTree(projectRoot);
-      assertIgnoredPaths(repoRoot, ignoredExclusions, ignoredPaths);
       assertRepositoryTransition(repoRoot, repositoryState, input);
-      if (snapshotUnrelatedWorktrees(repoRoot, taskWorktree) !== repositoryState.unrelated) {
+      if (snapshotUnrelatedWorktrees(repoRoot, projectRoot, taskWorktree) !== repositoryState.unrelated) {
         throw new Error(`An unrelated worktree changed during ${input.phase}`);
       }
     }
@@ -956,13 +1560,50 @@ function runTasks(options, dependencies = {}) {
 
   for (const taskId of taskIds) {
     let implementation = null;
+    let activePhase = null;
+    const harnessLabel = options.harness === 'claude' ? 'Claude Code' : 'Codex';
+    function taskLog(message, at = now()) {
+      log(`[${formatLocalTimestamp(at)}] ${message}`);
+    }
+    function beginPhase(phase) {
+      const startedAt = now();
+      activePhase = { phase, startedAt };
+      taskLog(`[${taskId}] ${phase} started — ${harnessLabel}`, startedAt);
+    }
+    function completePhase() {
+      const completedAt = now();
+      taskLog(
+        `[${taskId}] ${activePhase.phase} completed in ${formatElapsed(completedAt - activePhase.startedAt)}`,
+        completedAt
+      );
+      activePhase = null;
+    }
     try {
-      const expectedBranch = `task/${taskId}`;
-      const expectedWorktree = path.join(repoRoot, '.worktrees', taskId);
-      if (refExists(repoRoot, `refs/heads/${expectedBranch}`) || fs.existsSync(expectedWorktree)) {
-        throw new Error(`Expected task branch or worktree already exists: ${expectedBranch}, ${expectedWorktree}`);
-      }
       const baseSha = execGit(repoRoot, ['rev-parse', 'HEAD']);
+      const stateLocation = checkpointPath(commonDir, repoRoot, projectRoot, taskId);
+      let checkpoint = loadCheckpoint(commonDir, repoRoot, projectRoot, taskId) || {
+        version: 1,
+        taskId,
+        project: stateLocation.projectRelative,
+        baseBranch,
+      };
+      if (checkpoint.baseBranch !== baseBranch) {
+        throw new Error(`Runner checkpoint expects base branch ${checkpoint.baseBranch}, not ${baseBranch}`);
+      }
+      const workspace = taskWorkspaceIdentity(
+        repoRoot,
+        commonDir,
+        projectRoot,
+        project.projectName,
+        taskId,
+        checkpoint
+      );
+      const expectedBranch = workspace.branch;
+      const expectedWorktree = workspace.worktreePath;
+      if (!checkpoint.workspace) {
+        checkpoint.workspace = { branch: expectedBranch, worktreePath: expectedWorktree };
+        saveCheckpoint(commonDir, repoRoot, projectRoot, checkpoint);
+      }
       const common = {
         harness: options.harness,
         taskId,
@@ -970,6 +1611,8 @@ function runTasks(options, dependencies = {}) {
         projectName: project.projectName,
         projectRoot,
         specsDir: project.specsDir,
+        branch: expectedBranch,
+        worktreePath: expectedWorktree,
       };
       const env = {
         GROUNDWORK_HARNESS: options.harness,
@@ -980,33 +1623,117 @@ function runTasks(options, dependencies = {}) {
         GROUNDWORK_PROJECT_ROOT: projectRoot,
       };
 
-      log(`[${taskId}] plan`);
-      const planOutput = invokeChecked({
-        ...common,
-        phase: 'plan',
-        cwd: projectRoot,
-        pluginRoot,
-        env,
-        prompt: phasePrompt('plan', common),
-      });
-      const plan = parsePlanResult(planOutput);
-      if (plan.identifier !== taskId) throw new Error(`plan-task returned ${plan.identifier}, expected ${taskId}`);
-      const planFile = assertPlanFile(projectRoot, plan.planFilePath);
-      if (execGit(repoRoot, ['rev-parse', 'HEAD']) !== baseSha) throw new Error('Base branch changed during planning');
-      if (execGit(repoRoot, ['branch', '--show-current']) !== baseBranch) throw new Error('Base branch switched during planning');
-      assertClean(repoRoot, 'Base worktree');
+      const conventionalPlan = path.join(projectRoot, '.groundwork-plans', `${taskId}-plan.md`);
+      let planFile;
+      if (fs.existsSync(conventionalPlan)) {
+        planFile = assertPlanFile(projectRoot, conventionalPlan);
+        taskLog(`[${taskId}] plan skipped — existing plan`);
+      } else {
+        beginPhase('plan');
+        const planOutput = invokeChecked({
+          ...common,
+          phase: 'plan',
+          cwd: projectRoot,
+          pluginRoot,
+          env,
+          prompt: phasePrompt('plan', common),
+        });
+        const plan = parsePlanResult(planOutput);
+        if (plan.identifier !== taskId) throw new Error(`plan-task returned ${plan.identifier}, expected ${taskId}`);
+        planFile = assertPlanFile(projectRoot, plan.planFilePath);
+        if (execGit(repoRoot, ['rev-parse', 'HEAD']) !== baseSha) throw new Error('Base branch changed during planning');
+        if (execGit(repoRoot, ['branch', '--show-current']) !== baseBranch) throw new Error('Base branch switched during planning');
+        assertClean(repoRoot, 'Base worktree');
+        completePhase();
+      }
+      const planRecord = {
+        path: path.relative(projectRoot, planFile).split(path.sep).join('/'),
+        sha256: fileSha256(planFile),
+      };
+      const planChanged = !checkpoint.plan
+        || checkpoint.plan.path !== planRecord.path
+        || checkpoint.plan.sha256 !== planRecord.sha256;
+      const planInvalidatedDownstream = planChanged
+        && Boolean(checkpoint.implementation || checkpoint.validation);
+      if (planChanged) {
+        checkpoint.plan = planRecord;
+        delete checkpoint.implementation;
+        delete checkpoint.validation;
+        saveCheckpoint(commonDir, repoRoot, projectRoot, checkpoint);
+      }
 
-      log(`[${taskId}] implement`);
-      const implementInput = { ...common, planFile };
-      const implementOutput = invokeChecked({
-        ...implementInput,
-        phase: 'implement',
-        cwd: projectRoot,
-        pluginRoot,
-        env,
-        prompt: phasePrompt('implement', implementInput),
-      });
-      implementation = parseImplementationResult(implementOutput);
+      const branchExists = refExists(repoRoot, `refs/heads/${expectedBranch}`);
+      const worktreeExists = fs.existsSync(expectedWorktree);
+      if (branchExists !== worktreeExists) {
+        throw new Error(`Task resume state is incomplete; expected both branch and worktree: ${expectedBranch}, ${expectedWorktree}`);
+      }
+      let resumeExistingWorktree = false;
+      let reusableValidation = false;
+      if (branchExists) {
+        implementation = {
+          worktreePath: assertRegisteredWorktree(repoRoot, expectedWorktree, expectedBranch),
+          branch: expectedBranch,
+          baseBranch,
+        };
+        let worktreeClean = true;
+        try {
+          assertClean(implementation.worktreePath, 'Existing task worktree');
+        } catch (error) {
+          if (/ is not clean:\n/.test(error.message)) worktreeClean = false;
+          else throw error;
+        }
+        const currentHead = execGit(implementation.worktreePath, ['rev-parse', 'HEAD']);
+        const validationIdentityMatches = worktreeClean
+          && checkpoint.validation
+          && checkpoint.validation.baseHead === baseSha
+          && checkpoint.validation.branch === expectedBranch;
+        reusableValidation = Boolean(validationIdentityMatches
+          && checkpoint.validation.taskHead === currentHead);
+        if (validationIdentityMatches && !reusableValidation) {
+          try {
+            taskBookkeepingPaths(
+              repoRoot,
+              projectRoot,
+              taskId,
+              checkpoint.validation.taskHead,
+              currentHead
+            );
+            reusableValidation = true;
+          } catch {}
+        }
+        const implementationMatches = worktreeClean
+          && checkpoint.implementation
+          && checkpoint.implementation.planSha256 === planRecord.sha256
+          && checkpoint.implementation.branch === expectedBranch
+          && checkpoint.implementation.worktreePath === implementation.worktreePath
+          && checkpoint.implementation.taskHead === currentHead;
+        const projectRelativePath = path.relative(repoRoot, projectRoot);
+        const existingTaskProject = path.join(implementation.worktreePath, projectRelativePath);
+        assertNoSymlinkComponents(implementation.worktreePath, existingTaskProject, 'Task project');
+        const existingTask = parseTaskCatalog(readTasks(existingTaskProject)).get(taskId);
+        const legacyComplete = worktreeClean && !planInvalidatedDownstream && !checkpoint.implementation
+          && existingTask && ['In Progress', 'Complete'].includes(existingTask.status)
+          && currentHead !== execGit(repoRoot, ['merge-base', baseSha, currentHead]);
+        if (reusableValidation || implementationMatches || legacyComplete) {
+          taskLog(`[${taskId}] implement skipped — existing clean worktree`);
+        } else {
+          resumeExistingWorktree = true;
+        }
+      }
+
+      if (!implementation || resumeExistingWorktree) {
+        beginPhase('implement');
+        const implementInput = { ...common, planFile, resumeExistingWorktree };
+        const implementOutput = invokeChecked({
+          ...implementInput,
+          phase: 'implement',
+          cwd: projectRoot,
+          pluginRoot,
+          env,
+          prompt: phasePrompt('implement', implementInput),
+        });
+        implementation = parseImplementationResult(implementOutput);
+      }
       if (implementation.branch !== expectedBranch) {
         throw new Error(`implement-task returned ${implementation.branch}; expected branch ${expectedBranch}`);
       }
@@ -1026,8 +1753,12 @@ function runTasks(options, dependencies = {}) {
       }
       assertClean(repoRoot, 'Base worktree');
       assertClean(implementation.worktreePath, 'Task worktree');
-      const implementationHead = execGit(implementation.worktreePath, ['rev-parse', 'HEAD']);
-      execGit(repoRoot, ['merge-base', '--is-ancestor', baseSha, implementationHead]);
+      const observedTaskHead = execGit(implementation.worktreePath, ['rev-parse', 'HEAD']);
+      const implementationHead = reusableValidation && checkpoint.implementation
+        ? checkpoint.implementation.taskHead
+        : observedTaskHead;
+      execGit(repoRoot, ['merge-base', baseSha, observedTaskHead]);
+      execGit(repoRoot, ['merge-base', '--is-ancestor', implementationHead, observedTaskHead]);
       const projectRelativePath = path.relative(repoRoot, projectRoot);
       const lexicalTaskProject = path.join(implementation.worktreePath, projectRelativePath);
       assertNoSymlinkComponents(implementation.worktreePath, lexicalTaskProject, 'Task project');
@@ -1047,12 +1778,24 @@ function runTasks(options, dependencies = {}) {
         ...env,
         GROUNDWORK_PROJECT_ROOT: taskProjectRoot,
       };
+      if (activePhase) completePhase();
+      if (!reusableValidation) {
+        checkpoint.implementation = {
+          planSha256: planRecord.sha256,
+          worktreePath: implementation.worktreePath,
+          branch: implementation.branch,
+          baseBranch: implementation.baseBranch,
+          baseHead: baseSha,
+          taskHead: implementationHead,
+        };
+        delete checkpoint.validation;
+        saveCheckpoint(commonDir, repoRoot, projectRoot, checkpoint);
+      }
 
       let validation;
       let validationBase = baseSha;
       let repeats = new Set();
       for (let attempt = 0; attempt < 5; attempt++) {
-        log(`[${taskId}] validate`);
         const validateInput = {
           ...taskCommon,
           baseSha: validationBase,
@@ -1060,28 +1803,51 @@ function runTasks(options, dependencies = {}) {
           branch: implementation.branch,
           baseBranch: implementation.baseBranch,
         };
-        validation = parseValidationResult(invokeChecked({
-          ...validateInput,
-          phase: 'validate',
-          cwd: taskProjectRoot,
-          pluginRoot,
-          env: taskEnv,
-          prompt: phasePrompt('validate', validateInput),
-        }));
-        implementation.worktreePath = assertRegisteredWorktree(
-          repoRoot,
-          implementation.worktreePath,
-          implementation.branch
-        );
-        assertClean(implementation.worktreePath, 'Validated task worktree');
-        assertNoSymlinkComponents(implementation.worktreePath, lexicalTaskProject, 'Task project');
-        assertNoSymlinkComponents(taskProjectRoot, taskSpecsDir, 'Task specs');
-        const validatedHead = execGit(implementation.worktreePath, ['rev-parse', 'HEAD']);
-        if (validation.validatedHead !== validatedHead) {
-          throw new Error('VALIDATED receipt does not match the clean task-worktree HEAD');
+        let validatedHead;
+        if (reusableValidation && attempt === 0) {
+          validation = {
+            iterations: checkpoint.validation.iterations,
+            fixed: checkpoint.validation.fixed,
+            unworked: checkpoint.validation.unworked,
+            validatedHead: checkpoint.validation.taskHead,
+          };
+          validatedHead = checkpoint.validation.taskHead;
+          taskLog(`[${taskId}] validate skipped — unchanged validated heads`);
+        } else {
+          beginPhase('validate');
+          validation = parseValidationResult(invokeChecked({
+            ...validateInput,
+            phase: 'validate',
+            cwd: taskProjectRoot,
+            pluginRoot,
+            env: taskEnv,
+            prompt: phasePrompt('validate', validateInput),
+          }));
+          implementation.worktreePath = assertRegisteredWorktree(
+            repoRoot,
+            implementation.worktreePath,
+            implementation.branch
+          );
+          assertClean(implementation.worktreePath, 'Validated task worktree');
+          assertNoSymlinkComponents(implementation.worktreePath, lexicalTaskProject, 'Task project');
+          assertNoSymlinkComponents(taskProjectRoot, taskSpecsDir, 'Task specs');
+          validatedHead = execGit(implementation.worktreePath, ['rev-parse', 'HEAD']);
+          if (validation.validatedHead !== validatedHead) {
+            throw new Error('VALIDATED receipt does not match the clean task-worktree HEAD');
+          }
+          checkpoint.validation = {
+            baseHead: validationBase,
+            taskHead: validatedHead,
+            branch: implementation.branch,
+            iterations: validation.iterations,
+            fixed: validation.fixed,
+            unworked: validation.unworked,
+          };
+          saveCheckpoint(commonDir, repoRoot, projectRoot, checkpoint);
+          completePhase();
         }
 
-        log(`[${taskId}] finalize`);
+        beginPhase('finalize');
         const finalizeInput = { ...validateInput, validatedHead };
         const finalization = parseFinalizeResult(invokeChecked({
           ...finalizeInput,
@@ -1114,6 +1880,9 @@ function runTasks(options, dependencies = {}) {
           if (!completedTask || completedTask.status !== 'Complete') {
             throw new Error(`${taskId} is not Complete after finalization`);
           }
+          clearCheckpoint(commonDir, repoRoot, projectRoot, taskId);
+          gitControls = snapshotGitControls(commonDir);
+          completePhase();
           const { validatedHead: _validatedHead, ...validationSummary } = validation;
           completed.push({ taskId, validation: validationSummary });
           implementation = null;
@@ -1135,10 +1904,26 @@ function runTasks(options, dependencies = {}) {
         if (repeats.has(fingerprint)) throw new Error('finalize-task requested revalidation without changing Git state');
         repeats.add(fingerprint);
         validationBase = actualBaseHead;
+        checkpoint.implementation = {
+          ...checkpoint.implementation,
+          baseHead: actualBaseHead,
+          taskHead: actualTaskHead,
+        };
+        delete checkpoint.validation;
+        saveCheckpoint(commonDir, repoRoot, projectRoot, checkpoint);
+        reusableValidation = false;
 
         if (attempt === 4) throw new Error('Base kept moving; finalization exceeded 5 revalidation attempts');
+        completePhase();
       }
     } catch (error) {
+      if (activePhase) {
+        const failedAt = now();
+        taskLog(
+          `[${taskId}] ${activePhase.phase} failed after ${formatElapsed(failedAt - activePhase.startedAt)}`,
+          failedAt
+        );
+      }
       const preserved = implementation
         ? `\nWorktree preserved: ${implementation.worktreePath}\nBranch preserved: ${implementation.branch}`
         : '';
@@ -1151,7 +1936,8 @@ function runTasks(options, dependencies = {}) {
 function usage() {
   return `Usage:
   groundwork-run task TASK-NNN [TASK-NNN ...] --harness claude|codex [--project NAME] [--repo PATH]
-  groundwork-run all --harness claude|codex [--project NAME] [--repo PATH] [--dry-run]`;
+  groundwork-run task --from TASK-NNN [--to TASK-NNN] --harness claude|codex [--project NAME] [--repo PATH]
+  groundwork-run all --harness claude|codex [--from TASK-NNN] [--to TASK-NNN] [--project NAME] [--repo PATH] [--dry-run]`;
 }
 
 function main(argv) {
@@ -1181,6 +1967,9 @@ module.exports = {
   parseFinalizeResult,
   buildInvocation,
   buildChildEnv,
+  formatElapsed,
+  formatLocalTimestamp,
+  normalizeActivity,
   forEachGitRecord,
   invokePhase,
   assertRegisteredWorktree,

@@ -389,11 +389,19 @@ The external runner starts a new non-persistent Claude Code or ephemeral Codex p
 
 ```bash
 node /path/to/groundwork/bin/groundwork-run.js task TASK-004 --harness claude
+node /path/to/groundwork/bin/groundwork-run.js task TASK-004 TASK-009 TASK-012 --harness codex
 node /path/to/groundwork/bin/groundwork-run.js all --harness codex
+node /path/to/groundwork/bin/groundwork-run.js all --from TASK-010 --to TASK-025 --harness codex
 node /path/to/groundwork/bin/groundwork-run.js all --harness codex --project api --dry-run
 ```
 
 Codex exports install the runner at `~/.codex/groundwork-run.js` for user scope or `.codex/groundwork-run.js` for project scope. The runner executes tasks sequentially in dependency order and stops on the first failure. Failed worktrees and branches are preserved.
+
+Range bounds are inclusive; either `--from` or `--to` may be used alone. Dependencies outside a selected list or range must already be complete. While a phase runs, every progress line includes the machine's local date, time, timezone, and relative phase time. Output also shows sanitized and truncated commands, selected tool activity, validation iteration launches and per-reviewer verdicts, and a heartbeat every 30 seconds during quiet periods. Common secret assignments and credential flags are redacted. Successful short-command completion events and generic agent-turn events are suppressed; failures and commands lasting at least 10 seconds remain visible.
+
+Rerunning is resumable. An existing conventional plan skips planning. An exact registered clean task worktree whose task is already `In Progress` or `Complete` skips implementation; dirty or ambiguous worktrees are passed back to `implement-task` in resume mode. Successful validation is checkpointed against the plan hash, base head, task head, branch, worktree, and project. Validation is skipped only while those proofs still match (or only verified completion bookkeeping was added). Checkpoints live under the Git common directory at `<git-common-dir>/groundwork/runner/`, do not dirty the repository, and are removed after a successful merge.
+
+In monorepos, runner-created workspaces are project-qualified (for example, `task/api/TASK-004` and `.worktrees/api-TASK-004`) so projects may reuse task numbers. Pre-existing changes in another project's linked worktree do not block a run; changes to the selected project in another worktree still do. Legacy unqualified worktrees remain resumable when their project checkpoint identifies the owner.
 
 If the base branch advances, `finalize-task` integrates it into the task branch and returns control for a fresh validation session. Once the tree is clean, it supplies the task commit and merge message; the harness verifies that only task-status bookkeeping changed after validation, then performs the outward merge and cleanup.
 

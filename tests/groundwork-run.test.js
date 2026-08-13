@@ -5,6 +5,7 @@
  */
 
 const assert = require('assert');
+const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -74,6 +75,13 @@ function validated(worktree, iterations = 1, fixed = 0, unworked = 0) {
   return `RESULT: VALIDATED | iterations=${iterations} | fixed=${fixed} | unworked=${unworked} | validated_head=${git(worktree, 'rev-parse', 'HEAD')}`;
 }
 
+function writePlan(projectRoot, taskId = 'TASK-004') {
+  write(
+    path.join(projectRoot, '.groundwork-plans', `${taskId}-plan.md`),
+    `# Implementation Plan: ${taskId}\n\n## Context\n- Identifier: ${taskId}\n- Branch prefix: task\n`
+  );
+}
+
 describe('module and CLI contract', () => {
   test('exposes a terminal runner deep-module API', () => {
     assert.ok(fs.existsSync(RUNNER), 'bin/groundwork-run.js is missing');
@@ -87,6 +95,9 @@ describe('module and CLI contract', () => {
       'parseValidationResult',
       'parseFinalizeResult',
       'buildInvocation',
+      'formatElapsed',
+      'formatLocalTimestamp',
+      'normalizeActivity',
       'assertRegisteredWorktree',
       'runTasks',
     ]) {
@@ -104,6 +115,8 @@ describe('module and CLI contract', () => {
         repo: process.cwd(),
         project: 'api',
         tasks: ['TASK-004'],
+        fromTask: null,
+        toTask: null,
         dryRun: false,
       }
     );
@@ -113,6 +126,25 @@ describe('module and CLI contract', () => {
     );
     assert.throws(() => parseArgs(['--harness', 'codex']), /task or all/);
     assert.throws(() => parseArgs(['all', '--harness', 'pi']), /claude or codex/);
+  });
+
+  test('accepts explicit task lists and inclusive range bounds', () => {
+    const { parseArgs } = require(RUNNER);
+    assert.deepStrictEqual(
+      parseArgs(['task', '4', 'TASK-009', '--harness', 'codex']).tasks,
+      ['TASK-004', 'TASK-009']
+    );
+    const range = parseArgs(['all', '--from', '2', '--to', 'TASK-009', '--harness', 'claude']);
+    assert.strictEqual(range.fromTask, 'TASK-002');
+    assert.strictEqual(range.toTask, 'TASK-009');
+    assert.throws(
+      () => parseArgs(['task', '4', '--from', '2', '--harness', 'codex']),
+      /task list.*range/i
+    );
+    assert.throws(
+      () => parseArgs(['all', '--from', '9', '--to', '2', '--harness', 'codex']),
+      /from.*before.*to/i
+    );
   });
 
   test('dry-run does not modify repository-local excludes', () => {
@@ -134,6 +166,38 @@ describe('module and CLI contract', () => {
         ['TASK-004']
       );
       assert.strictEqual(fs.readFileSync(exclude, 'utf8'), before);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('dry-run selects an inclusive task range in catalog order', () => {
+    const { runTasks } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-range-'));
+    try {
+      git(root, 'init', '-b', 'main');
+      git(root, 'config', 'user.email', 'test@example.com');
+      git(root, 'config', 'user.name', 'Test User');
+      write(path.join(root, 'specs', 'tasks.md'),
+        '### TASK-001: One\n**Status:** Not Started\n**Blocked by:** None\n\n' +
+        '### TASK-002: Two\n**Status:** Not Started\n**Blocked by:** None\n\n' +
+        '### TASK-003: Three\n**Status:** Complete\n**Blocked by:** None\n\n' +
+        '### TASK-004: Four\n**Status:** Not Started\n**Blocked by:** None\n');
+      git(root, 'add', '.');
+      git(root, 'commit', '-m', 'base');
+
+      const selected = runTasks({
+        command: 'all',
+        harness: 'codex',
+        repo: root,
+        project: null,
+        tasks: [],
+        fromTask: 'TASK-002',
+        toTask: 'TASK-004',
+        dryRun: true,
+      }, { log: () => {} });
+
+      assert.deepStrictEqual(selected, ['TASK-002', 'TASK-004']);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -176,6 +240,16 @@ describe('task catalog', () => {
 **Status:** Not Started
 **Blocked by:** TASK-001
 `;
+
+  test('parses list-prefixed task status metadata', () => {
+    const { parseTaskCatalog } = require(RUNNER);
+    const task = parseTaskCatalog(
+      '### TASK-074: Training capsule\n\n- **Status:** Complete\n- **Blocked by:** None\n'
+    ).get('TASK-074');
+
+    assert.strictEqual(task.status, 'Complete');
+    assert.deepStrictEqual(task.blockedBy, []);
+  });
 
   test('parses and topologically orders incomplete tasks', () => {
     const { parseTaskCatalog, orderTasks } = require(RUNNER);
@@ -239,6 +313,8 @@ for (let index = 0; index < 100000; index++) fs.writeSync(1, record);
     assert.strictEqual(claude.command, 'claude');
     assert.ok(claude.args.includes('--no-session-persistence'));
     assert.ok(claude.args.includes('--plugin-dir'));
+    assert.ok(claude.args.includes('stream-json'));
+    assert.ok(claude.args.includes('--verbose'));
     assert.ok(!claude.args.includes('--resume'));
 
     const codex = buildInvocation({
@@ -250,8 +326,95 @@ for (let index = 0; index < 100000; index++) fs.writeSync(1, record);
     });
     assert.strictEqual(codex.command, 'codex');
     assert.deepStrictEqual(codex.args.slice(0, 2), ['exec', '--ephemeral']);
+    assert.ok(codex.args.includes('--approve-for-me'));
+    assert.ok(!codex.args.includes('--sandbox'));
+    assert.ok(codex.args.includes('--json'));
+    assert.ok(codex.args.includes('--color'));
+    assert.ok(codex.args.includes('never'));
     assert.ok(codex.args.includes('--output-last-message'));
     assert.ok(!codex.args.includes('resume'));
+  });
+
+  test('shows sanitized commands and suppresses generic turn noise', () => {
+    const { formatElapsed, formatLocalTimestamp, normalizeActivity } = require(RUNNER);
+    assert.strictEqual(formatElapsed(0), '00:00');
+    assert.strictEqual(formatElapsed(90_000), '01:30');
+    assert.strictEqual(formatElapsed(3_661_000), '1:01:01');
+    const local = new Date(2026, 0, 2, 3, 4, 5);
+    assert.match(formatLocalTimestamp(local.getTime()), /^2026-01-02 03:04:05 \S+$/);
+
+    const state = {};
+    assert.strictEqual(normalizeActivity('codex', { type: 'turn.started' }, state, 1_000), null);
+    const codex = normalizeActivity('codex', {
+      type: 'item.started',
+      item: {
+        id: '1',
+        type: 'command_execution',
+        command: 'OPENAI_API_KEY=secret-value codex exec --token another-secret task',
+      },
+    }, state, 1_000);
+    assert.strictEqual(codex, '$ OPENAI_API_KEY=[redacted] codex exec --token [redacted] task');
+
+    const claudeState = {};
+    assert.strictEqual(normalizeActivity('claude', {
+      type: 'assistant',
+      message: { content: [{ type: 'tool_use', id: 'tool-1', name: 'Bash', input: { command: 'git   status --short' } }] },
+    }, claudeState, 2_000), '$ git status --short');
+    assert.strictEqual(normalizeActivity('claude', {
+      type: 'user',
+      message: { content: [{ type: 'tool_result', tool_use_id: 'tool-1' }] },
+    }, claudeState, 2_500), null);
+    assert.strictEqual(normalizeActivity('codex', { type: 'unknown' }, {}), null);
+  });
+
+  test('reports only failed or long-running command completions', () => {
+    const { normalizeActivity } = require(RUNNER);
+    const state = {};
+    normalizeActivity('codex', {
+      type: 'item.started',
+      item: { id: 'short', type: 'command_execution', command: 'git status' },
+    }, state, 1_000);
+    assert.strictEqual(normalizeActivity('codex', {
+      type: 'item.completed',
+      item: { id: 'short', type: 'command_execution', status: 'completed', exit_code: 0 },
+    }, state, 1_500), null);
+
+    normalizeActivity('codex', {
+      type: 'item.started',
+      item: { id: 'long', type: 'command_execution', command: 'npm test' },
+    }, state, 2_000);
+    assert.strictEqual(normalizeActivity('codex', {
+      type: 'item.completed',
+      item: { id: 'long', type: 'command_execution', status: 'completed', exit_code: 0 },
+    }, state, 14_000), 'command completed in 12s');
+
+    normalizeActivity('codex', {
+      type: 'item.started',
+      item: { id: 'failed', type: 'command_execution', command: 'npm test' },
+    }, state, 20_000);
+    assert.strictEqual(normalizeActivity('codex', {
+      type: 'item.completed',
+      item: { id: 'failed', type: 'command_execution', status: 'failed', exit_code: 1 },
+    }, state, 20_100), 'command failed (exit 1)');
+  });
+
+  test('reports validation-agent launch and verdicts for each iteration', () => {
+    const { normalizeActivity } = require(RUNNER);
+    const launched = 'GROUNDWORK_VALIDATION_PROGRESS {"iteration":2,"status":"launched","agents":["code-quality-reviewer","security-reviewer"]}';
+    const completed = 'GROUNDWORK_VALIDATION_PROGRESS {"iteration":2,"status":"completed","agents":[{"name":"code-quality-reviewer","verdict":"approve"},{"name":"security-reviewer","verdict":"request-changes"}]}';
+
+    assert.strictEqual(normalizeActivity('codex', {
+      type: 'item.completed',
+      item: { type: 'agent_message', text: launched },
+    }), 'validation iteration 2 launched — code-quality-reviewer, security-reviewer');
+    assert.strictEqual(normalizeActivity('codex', {
+      type: 'item.completed',
+      item: { type: 'agent_message', text: completed },
+    }), 'validation iteration 2 completed — code-quality-reviewer: approve, security-reviewer: request-changes');
+    assert.strictEqual(normalizeActivity('claude', {
+      type: 'assistant',
+      message: { content: [{ type: 'text', text: completed }] },
+    }), 'validation iteration 2 completed — code-quality-reviewer: approve, security-reviewer: request-changes');
   });
 
   test('parses all four bounded phase results', () => {
@@ -328,6 +491,80 @@ for (let index = 0; index < 100000; index++) fs.writeSync(1, record);
     }
   });
 
+  test('reports streamed activity and a heartbeat while a phase is running', () => {
+    const { invokePhase } = require(RUNNER);
+    const fakeBin = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-progress-bin-'));
+    const progressFile = path.join(fakeBin, 'progress.log');
+    const previousPath = process.env.PATH;
+    let progressFd;
+    try {
+      const codex = path.join(fakeBin, 'codex');
+      write(codex, `#!/usr/bin/env node
+const fs = require('fs');
+const args = process.argv.slice(2);
+const resultIndex = args.indexOf('--output-last-message');
+process.stdout.write(JSON.stringify({ type: 'thread.started', thread_id: 'thread-1' }) + '\\n');
+process.stdout.write(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'GROUNDWORK_VALIDATION_PROGRESS {"iteration":1,"status":"launched","agents":["code-quality-reviewer","security-reviewer"]}' } }) + '\\n');
+process.stdout.write(JSON.stringify({ type: 'item.started', item: { id: '1', type: 'command_execution', command: 'git status --short' } }) + '\\n');
+setTimeout(() => {
+  fs.writeFileSync(args[resultIndex + 1], 'RESULT: TEST\\n');
+}, 80);
+`);
+      fs.chmodSync(codex, 0o755);
+      process.env.PATH = `${fakeBin}:${previousPath}`;
+      progressFd = fs.openSync(progressFile, 'w');
+
+      const output = invokePhase({
+        harness: 'codex',
+        phase: 'plan',
+        taskId: 'TASK-004',
+        cwd: process.cwd(),
+        pluginRoot: PLUGIN_ROOT,
+        prompt: 'test prompt',
+        env: {},
+        heartbeatMs: 20,
+        progressFd,
+      });
+
+      fs.closeSync(progressFd);
+      progressFd = undefined;
+      const progress = fs.readFileSync(progressFile, 'utf8');
+      assert.strictEqual(output.trim(), 'RESULT: TEST');
+      assert.match(progress, /\[\d{4}-\d\d-\d\d \d\d:\d\d:\d\d \S+\] \[TASK-004 plan \d\d:\d\d\] Codex session started/);
+      assert.match(progress, /validation iteration 1 launched — code-quality-reviewer, security-reviewer/);
+      assert.match(progress, /\[\d{4}-\d\d-\d\d \d\d:\d\d:\d\d \S+\] \[TASK-004 plan \d\d:\d\d\] \$ git status --short/);
+      assert.match(progress, /\[\d{4}-\d\d-\d\d \d\d:\d\d:\d\d \S+\] \[TASK-004 plan \d\d:\d\d\] Codex still running/);
+    } finally {
+      if (progressFd !== undefined) fs.closeSync(progressFd);
+      process.env.PATH = previousPath;
+      fs.rmSync(fakeBin, { recursive: true, force: true });
+    }
+  });
+
+  test('extracts the final result from Claude stream JSON', () => {
+    const { invokePhase } = require(RUNNER);
+    const fakeBin = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-claude-stream-bin-'));
+    const previousPath = process.env.PATH;
+    try {
+      const claude = path.join(fakeBin, 'claude');
+      write(claude, '#!/bin/sh\nprintf \'%s\\n\' \'{"type":"result","result":"RESULT: TEST"}\'\n');
+      fs.chmodSync(claude, 0o755);
+      process.env.PATH = `${fakeBin}:${previousPath}`;
+      assert.strictEqual(invokePhase({
+        harness: 'claude',
+        phase: 'plan',
+        taskId: 'TASK-004',
+        cwd: process.cwd(),
+        pluginRoot: PLUGIN_ROOT,
+        prompt: 'test prompt',
+        env: {},
+      }).trim(), 'RESULT: TEST');
+    } finally {
+      process.env.PATH = previousPath;
+      fs.rmSync(fakeBin, { recursive: true, force: true });
+    }
+  });
+
   test('propagates a real child-process failure', () => {
     const { invokePhase } = require(RUNNER);
     const fakeBin = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-failing-bin-'));
@@ -356,6 +593,29 @@ for (let index = 0; index < 100000; index++) fs.writeSync(1, record);
 });
 
 describe('filesystem safety', () => {
+  test('rejects a symlinked checkpoint parent before writing outside Git state', () => {
+    const { runTasks } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-state-link-'));
+    const external = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-state-external-'));
+    try {
+      initRepo(root);
+      writePlan(root);
+      fs.symlinkSync(external, path.join(root, '.git', 'groundwork'));
+
+      assert.throws(
+        () => runTasks(
+          { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
+          { log: () => {}, invokePhase: () => { throw new Error('phase should not run'); } }
+        ),
+        /checkpoint.*symlink/i
+      );
+      assert.deepStrictEqual(fs.readdirSync(external), []);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(external, { recursive: true, force: true });
+    }
+  });
+
   test('rejects a symlinked tasks file before invoking a phase', () => {
     const { runTasks } = require(RUNNER);
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-task-link-'));
@@ -553,9 +813,550 @@ describe('filesystem safety', () => {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
+
+  test('advances after a successful phase creates an ignored cache path', () => {
+    const { runTasks } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-ignored-churn-'));
+    const phases = [];
+    try {
+      initRepo(root);
+      fs.appendFileSync(path.join(root, '.gitignore'), '.cache/\n');
+      git(root, 'add', '.gitignore');
+      git(root, 'commit', '-m', 'ignore tool cache');
+
+      assert.throws(
+        () => runTasks(
+          { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
+          {
+            log: () => {},
+            invokePhase(input) {
+              phases.push(input.phase);
+              if (input.phase === 'plan') {
+                write(path.join(root, '.groundwork-plans', 'TASK-004-plan.md'), '# Plan\n');
+                write(path.join(root, '.cache', 'tool-state'), 'generated\n');
+                return 'RESULT: PLANNED | plan_file_path=.groundwork-plans/TASK-004-plan.md | identifier=TASK-004 | branch_prefix=task';
+              }
+              throw new Error('implementation reached');
+            },
+          }
+        ),
+        /implementation reached/
+      );
+      assert.deepStrictEqual(phases, ['plan', 'implement']);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('allows another monorepo project to remain dirty in an unrelated worktree', () => {
+    const { runTasks } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-other-project-dirty-'));
+    const unrelated = path.join(root, '.worktrees', 'TASK-075');
+    const selectedProject = path.join(root, 'packages', 'bottle-budget');
+    try {
+      initRepo(root);
+      write(path.join(root, 'packages', 'artistai', 'feature.txt'), 'base\n');
+      write(
+        path.join(selectedProject, 'specs', 'tasks.md'),
+        '### TASK-004: Bottle budget\n**Status:** Not Started\n**Blocked by:** None\n'
+      );
+      git(root, 'add', '.');
+      git(root, 'commit', '-m', 'Add monorepo projects');
+      git(root, 'worktree', 'add', '-b', 'task/TASK-075', unrelated);
+      write(path.join(unrelated, 'packages', 'artistai', 'feature.txt'), 'in progress\n');
+
+      assert.throws(
+        () => runTasks(
+          {
+            command: 'task',
+            harness: 'codex',
+            repo: root,
+            project: 'bottle-budget',
+            tasks: ['TASK-004'],
+            dryRun: false,
+          },
+          {
+            log: () => {},
+            resolveProject() {
+              return {
+                projectName: 'bottle-budget',
+                projectRoot: selectedProject,
+                specsDir: path.join(selectedProject, 'specs'),
+              };
+            },
+            invokePhase() {
+              throw new Error('phase reached');
+            },
+          }
+        ),
+        /phase reached/
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('still rejects selected-project changes in an unrelated worktree', () => {
+    const { runTasks } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-selected-project-dirty-'));
+    const unrelated = path.join(root, '.worktrees', 'TASK-075');
+    const selectedProject = path.join(root, 'packages', 'bottle-budget');
+    try {
+      initRepo(root);
+      write(path.join(selectedProject, 'feature.txt'), 'base\n');
+      write(
+        path.join(selectedProject, 'specs', 'tasks.md'),
+        '### TASK-004: Bottle budget\n**Status:** Not Started\n**Blocked by:** None\n'
+      );
+      git(root, 'add', '.');
+      git(root, 'commit', '-m', 'Add selected project');
+      git(root, 'worktree', 'add', '-b', 'task/TASK-075', unrelated);
+      write(path.join(unrelated, 'packages', 'bottle-budget', 'feature.txt'), 'in progress\n');
+
+      assert.throws(
+        () => runTasks(
+          {
+            command: 'task',
+            harness: 'codex',
+            repo: root,
+            project: 'bottle-budget',
+            tasks: ['TASK-004'],
+            dryRun: false,
+          },
+          {
+            log: () => {},
+            resolveProject() {
+              return {
+                projectName: 'bottle-budget',
+                projectRoot: selectedProject,
+                specsDir: path.join(selectedProject, 'specs'),
+              };
+            },
+            invokePhase() {
+              throw new Error('phase reached');
+            },
+          }
+        ),
+        /Selected project in unrelated worktree .* is not clean/
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('uses a project-qualified workspace when task IDs overlap across projects', () => {
+    const { runTasks } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-overlapping-task-id-'));
+    const unrelated = path.join(root, '.worktrees', 'TASK-075');
+    const selectedProject = path.join(root, 'packages', 'bottle-budget');
+    const phases = [];
+    try {
+      initRepo(root);
+      write(path.join(root, 'packages', 'artistai', 'feature.txt'), 'base\n');
+      write(
+        path.join(selectedProject, 'specs', 'tasks.md'),
+        '### TASK-075: Bottle task\n**Status:** Not Started\n**Blocked by:** None\n'
+      );
+      git(root, 'add', '.');
+      git(root, 'commit', '-m', 'Add overlapping project task');
+      git(root, 'worktree', 'add', '-b', 'task/TASK-075', unrelated);
+      write(path.join(unrelated, 'packages', 'artistai', 'feature.txt'), 'in progress\n');
+
+      assert.throws(
+        () => runTasks(
+          {
+            command: 'task',
+            harness: 'codex',
+            repo: root,
+            project: 'bottle-budget',
+            tasks: ['TASK-075'],
+            dryRun: false,
+          },
+          {
+            log: () => {},
+            resolveProject() {
+              return {
+                projectName: 'bottle-budget',
+                projectRoot: selectedProject,
+                specsDir: path.join(selectedProject, 'specs'),
+              };
+            },
+            invokePhase(input) {
+              phases.push(input.phase);
+              if (input.phase === 'plan') {
+                writePlan(selectedProject, 'TASK-075');
+                return 'RESULT: PLANNED | plan_file_path=.groundwork-plans/TASK-075-plan.md | identifier=TASK-075 | branch_prefix=task';
+              }
+              assert.strictEqual(input.branch, 'task/bottle-budget/TASK-075');
+              assert.strictEqual(
+                input.worktreePath,
+                path.join(fs.realpathSync(root), '.worktrees', 'bottle-budget-TASK-075')
+              );
+              assert.match(input.prompt, /task\/bottle-budget\/TASK-075/);
+              throw new Error('scoped implementation reached');
+            },
+          }
+        ),
+        /scoped implementation reached/
+      );
+      assert.deepStrictEqual(phases, ['plan', 'implement']);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('four-phase orchestration', () => {
+  test('reuses a legacy monorepo workspace owned by the selected project checkpoint', () => {
+    const { runTasks } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-legacy-monorepo-'));
+    const projectRoot = path.join(root, 'apps', 'api');
+    const worktree = path.join(root, '.worktrees', 'TASK-004');
+    try {
+      git(root, 'init', '-b', 'main');
+      git(root, 'config', 'user.email', 'test@example.com');
+      git(root, 'config', 'user.name', 'Test User');
+      write(path.join(projectRoot, 'specs', 'tasks.md'), '### TASK-004: Four\n**Status:** Not Started\n**Blocked by:** None\n');
+      write(path.join(root, '.gitignore'), '.worktrees/\n.groundwork-plans/\n');
+      git(root, 'add', '.');
+      git(root, 'commit', '-m', 'base');
+      writePlan(projectRoot);
+      git(root, 'worktree', 'add', '-b', 'task/TASK-004', worktree);
+      const worktreeTasks = path.join(worktree, 'apps', 'api', 'specs', 'tasks.md');
+      fs.writeFileSync(worktreeTasks, fs.readFileSync(worktreeTasks, 'utf8').replace('Not Started', 'In Progress'));
+      write(path.join(worktree, 'apps', 'api', 'feature.txt'), 'implemented\n');
+      git(worktree, 'add', '.');
+      git(worktree, 'commit', '-m', 'Legacy implementation');
+
+      const projectRelative = 'apps/api';
+      const projectKey = crypto.createHash('sha256').update(projectRelative).digest('hex').slice(0, 16);
+      write(
+        path.join(root, '.git', 'groundwork', 'runner', projectKey, 'TASK-004.json'),
+        `${JSON.stringify({ version: 1, taskId: 'TASK-004', project: projectRelative, baseBranch: 'main' })}\n`
+      );
+
+      assert.throws(
+        () => runTasks(
+          { command: 'task', harness: 'codex', repo: root, project: 'api', tasks: ['TASK-004'], dryRun: false },
+          {
+            log: () => {},
+            resolveProject() {
+              return { projectName: 'api', projectRoot, specsDir: path.join(projectRoot, 'specs') };
+            },
+            invokePhase(input) {
+              assert.strictEqual(input.phase, 'validate');
+              assert.strictEqual(input.branch, 'task/TASK-004');
+              assert.strictEqual(input.worktreePath, fs.realpathSync(worktree));
+              throw new Error('legacy validation reached');
+            },
+          }
+        ),
+        /legacy validation reached/
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('skips an existing plan and a verifiably completed implementation', () => {
+    const { runTasks } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-skip-artifacts-'));
+    const worktree = path.join(root, '.worktrees', 'TASK-004');
+    const phases = [];
+    const logs = [];
+    try {
+      initRepo(root);
+      writePlan(root);
+      git(root, 'worktree', 'add', '-b', 'task/TASK-004', worktree);
+      const taskFile = path.join(worktree, 'specs', 'tasks.md');
+      fs.writeFileSync(taskFile, fs.readFileSync(taskFile, 'utf8').replace('Not Started', 'In Progress'));
+      write(path.join(worktree, 'feature.txt'), 'implemented\n');
+      git(worktree, 'add', '.');
+      git(worktree, 'commit', '-m', 'Implement TASK-004');
+
+      runTasks(
+        { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
+        {
+          pluginRoot: PLUGIN_ROOT,
+          log: (message) => logs.push(message),
+          invokePhase(input) {
+            phases.push(input.phase);
+            if (input.phase === 'validate') return validated(worktree);
+            if (input.phase === 'finalize') {
+              return finalizeMock(root, worktree, 'TASK-004', 'task/TASK-004', 'main');
+            }
+            throw new Error(`${input.phase} should have been skipped`);
+          },
+        }
+      );
+
+      assert.deepStrictEqual(phases, ['validate', 'finalize']);
+      assert.ok(logs.some((line) => line.endsWith('[TASK-004] plan skipped — existing plan')));
+      assert.ok(logs.some((line) => line.endsWith('[TASK-004] implement skipped — existing clean worktree')));
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('resumes implementation when an existing task worktree is ambiguous', () => {
+    const { runTasks } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-resume-implementation-'));
+    const worktree = path.join(root, '.worktrees', 'TASK-004');
+    const phases = [];
+    try {
+      initRepo(root);
+      writePlan(root);
+      git(root, 'worktree', 'add', '-b', 'task/TASK-004', worktree);
+      write(path.join(worktree, 'partial.txt'), 'partial\n');
+
+      runTasks(
+        { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
+        {
+          pluginRoot: PLUGIN_ROOT,
+          log: () => {},
+          invokePhase(input) {
+            phases.push(input.phase);
+            if (input.phase === 'implement') {
+              assert.strictEqual(input.resumeExistingWorktree, true);
+              assert.match(input.prompt, /reuse the existing registered worktree/i);
+              const taskFile = path.join(worktree, 'specs', 'tasks.md');
+              fs.writeFileSync(taskFile, fs.readFileSync(taskFile, 'utf8').replace('Not Started', 'In Progress'));
+              git(worktree, 'add', '.');
+              git(worktree, 'commit', '-m', 'Finish TASK-004');
+              return `RESULT: IMPLEMENTED | worktree_path=${worktree} | branch=task/TASK-004 | base_branch=main`;
+            }
+            if (input.phase === 'validate') return validated(worktree);
+            return finalizeMock(root, worktree, 'TASK-004', 'task/TASK-004', 'main');
+          },
+        }
+      );
+
+      assert.deepStrictEqual(phases, ['implement', 'validate', 'finalize']);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('restores a transient task-worktree hooksPath after implementation', () => {
+    const { runTasks } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-worktree-hooks-'));
+    const worktree = path.join(root, '.worktrees', 'TASK-004');
+    const originalHooks = path.join(root, 'scripts', 'githooks');
+    try {
+      initRepo(root);
+      write(path.join(originalHooks, 'pre-push'), '#!/bin/sh\n');
+      git(root, 'add', '.');
+      git(root, 'commit', '-m', 'add hooks');
+      git(root, 'config', 'core.hooksPath', originalHooks);
+      writePlan(root);
+
+      runTasks(
+        { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
+        {
+          pluginRoot: PLUGIN_ROOT,
+          log: () => {},
+          invokePhase(input) {
+            if (input.phase === 'implement') {
+              git(root, 'worktree', 'add', '-b', 'task/TASK-004', worktree);
+              const taskFile = path.join(worktree, 'specs', 'tasks.md');
+              fs.writeFileSync(taskFile, fs.readFileSync(taskFile, 'utf8').replace('Not Started', 'In Progress'));
+              git(worktree, 'add', '.');
+              git(worktree, 'commit', '-m', 'Implement TASK-004');
+              git(worktree, 'config', 'core.hooksPath', path.join(worktree, 'scripts', 'githooks'));
+              return `RESULT: IMPLEMENTED | worktree_path=${worktree} | branch=task/TASK-004 | base_branch=main`;
+            }
+            if (input.phase === 'validate') return validated(worktree);
+            return finalizeMock(root, worktree, 'TASK-004', 'task/TASK-004', 'main');
+          },
+        }
+      );
+
+      assert.strictEqual(git(root, 'config', '--get', 'core.hooksPath'), originalHooks);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('repairs a leaked task-worktree hooksPath before cleanup on resume', () => {
+    const { runTasks } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-resume-hooks-'));
+    const worktree = path.join(root, '.worktrees', 'TASK-004');
+    const nextWorktree = path.join(root, '.worktrees', 'TASK-005');
+    const primaryHooks = path.join(root, 'scripts', 'githooks');
+    try {
+      initRepo(root);
+      write(path.join(primaryHooks, 'pre-push'), '#!/bin/sh\n');
+      fs.appendFileSync(
+        path.join(root, 'specs', 'tasks.md'),
+        '\n### TASK-005: Five\n**Status:** Not Started\n**Blocked by:** None\n'
+      );
+      git(root, 'add', '.');
+      git(root, 'commit', '-m', 'add hooks');
+      writePlan(root);
+      git(root, 'worktree', 'add', '-b', 'task/TASK-004', worktree);
+      const taskFile = path.join(worktree, 'specs', 'tasks.md');
+      fs.writeFileSync(taskFile, fs.readFileSync(taskFile, 'utf8').replace('Not Started', 'In Progress'));
+      git(worktree, 'add', '.');
+      git(worktree, 'commit', '-m', 'Implement TASK-004');
+      git(root, 'config', 'core.hooksPath', path.join(worktree, 'scripts', 'githooks'));
+
+      runTasks(
+        { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004', 'TASK-005'], dryRun: false },
+        {
+          pluginRoot: PLUGIN_ROOT,
+          log: () => {},
+          invokePhase(input) {
+            const selectedWorktree = input.taskId === 'TASK-004' ? worktree : nextWorktree;
+            if (input.phase === 'plan') {
+              writePlan(root, 'TASK-005');
+              return 'RESULT: PLANNED | plan_file_path=.groundwork-plans/TASK-005-plan.md | identifier=TASK-005 | branch_prefix=task';
+            }
+            if (input.phase === 'implement') {
+              git(root, 'worktree', 'add', '-b', 'task/TASK-005', nextWorktree);
+              const nextTaskFile = path.join(nextWorktree, 'specs', 'tasks.md');
+              fs.writeFileSync(nextTaskFile, fs.readFileSync(nextTaskFile, 'utf8').replace(
+                '### TASK-005: Five\n**Status:** Not Started',
+                '### TASK-005: Five\n**Status:** In Progress'
+              ));
+              git(nextWorktree, 'add', '.');
+              git(nextWorktree, 'commit', '-m', 'Implement TASK-005');
+              return `RESULT: IMPLEMENTED | worktree_path=${nextWorktree} | branch=task/TASK-005 | base_branch=main`;
+            }
+            if (input.phase === 'validate') return validated(selectedWorktree);
+            if (input.phase === 'finalize') {
+              return finalizeMock(
+                root,
+                selectedWorktree,
+                input.taskId,
+                `task/${input.taskId}`,
+                'main'
+              );
+            }
+            throw new Error(`Unexpected ${input.phase}`);
+          },
+        }
+      );
+
+      assert.strictEqual(git(root, 'config', '--get', 'core.hooksPath'), fs.realpathSync(primaryHooks));
+      assert.strictEqual(fs.existsSync(worktree), false);
+      assert.strictEqual(fs.existsSync(nextWorktree), false);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('reuses validation only when its base and task heads still match', () => {
+    const { runTasks } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-resume-validation-'));
+    const worktree = path.join(root, '.worktrees', 'TASK-004');
+    const firstPhases = [];
+    try {
+      initRepo(root);
+      assert.throws(
+        () => runTasks(
+          { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
+          {
+            pluginRoot: PLUGIN_ROOT,
+            log: () => {},
+            invokePhase(input) {
+              firstPhases.push(input.phase);
+              if (input.phase === 'plan') {
+                writePlan(root);
+                return 'RESULT: PLANNED | plan_file_path=.groundwork-plans/TASK-004-plan.md | identifier=TASK-004 | branch_prefix=task';
+              }
+              if (input.phase === 'implement') {
+                git(root, 'worktree', 'add', '-b', 'task/TASK-004', worktree);
+                const taskFile = path.join(worktree, 'specs', 'tasks.md');
+                fs.writeFileSync(taskFile, fs.readFileSync(taskFile, 'utf8').replace('Not Started', 'In Progress'));
+                write(path.join(worktree, 'feature.txt'), 'implemented\n');
+                git(worktree, 'add', '.');
+                git(worktree, 'commit', '-m', 'Implement TASK-004');
+                return `RESULT: IMPLEMENTED | worktree_path=${worktree} | branch=task/TASK-004 | base_branch=main`;
+              }
+              if (input.phase === 'validate') return validated(worktree, 2, 1, 0);
+              return 'RESULT: FAILURE | stop after validation';
+            },
+          }
+        ),
+        /stop after validation/
+      );
+      assert.deepStrictEqual(firstPhases, ['plan', 'implement', 'validate', 'finalize']);
+
+      const secondPhases = [];
+      runTasks(
+        { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
+        {
+          pluginRoot: PLUGIN_ROOT,
+          log: () => {},
+          invokePhase(input) {
+            secondPhases.push(input.phase);
+            if (input.phase !== 'finalize') throw new Error(`${input.phase} should have been checkpointed`);
+            return finalizeMock(root, worktree, 'TASK-004', 'task/TASK-004', 'main');
+          },
+        }
+      );
+      assert.deepStrictEqual(secondPhases, ['finalize']);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('reuses validation after finalization already committed only task bookkeeping', () => {
+    const { runTasks } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-resume-bookkeeping-'));
+    const worktree = path.join(root, '.worktrees', 'TASK-004');
+    try {
+      initRepo(root);
+      assert.throws(
+        () => runTasks(
+          { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
+          {
+            pluginRoot: PLUGIN_ROOT,
+            log: () => {},
+            invokePhase(input) {
+              if (input.phase === 'plan') {
+                writePlan(root);
+                return 'RESULT: PLANNED | plan_file_path=.groundwork-plans/TASK-004-plan.md | identifier=TASK-004 | branch_prefix=task';
+              }
+              if (input.phase === 'implement') {
+                git(root, 'worktree', 'add', '-b', 'task/TASK-004', worktree);
+                const taskFile = path.join(worktree, 'specs', 'tasks.md');
+                fs.writeFileSync(taskFile, fs.readFileSync(taskFile, 'utf8').replace('Not Started', 'In Progress'));
+                write(path.join(worktree, 'feature.txt'), 'implemented\n');
+                git(worktree, 'add', '.');
+                git(worktree, 'commit', '-m', 'Implement TASK-004');
+                return `RESULT: IMPLEMENTED | worktree_path=${worktree} | branch=task/TASK-004 | base_branch=main`;
+              }
+              if (input.phase === 'validate') return validated(worktree);
+              completeTaskFile(worktree, 'TASK-004');
+              git(worktree, 'add', '.');
+              git(worktree, 'commit', '-m', 'TASK-004: Mark task complete');
+              return 'RESULT: FAILURE | interrupted after bookkeeping';
+            },
+          }
+        ),
+        /interrupted after bookkeeping/
+      );
+
+      const phases = [];
+      runTasks(
+        { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
+        {
+          pluginRoot: PLUGIN_ROOT,
+          log: () => {},
+          invokePhase(input) {
+            phases.push(input.phase);
+            if (input.phase !== 'finalize') throw new Error(`${input.phase} should have been checkpointed`);
+            return `RESULT: READY_TO_MERGE | task_id=TASK-004 | task_head=${git(worktree, 'rev-parse', 'HEAD')} | base_head=${git(root, 'rev-parse', 'HEAD')} | merge_message=Merge TASK-004`;
+          },
+        }
+      );
+      assert.deepStrictEqual(phases, ['finalize']);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('rejects a plan reached through a symlinked plan directory', () => {
     const { runTasks } = require(RUNNER);
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-plan-link-'));
@@ -630,6 +1431,7 @@ describe('four-phase orchestration', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-four-phases-'));
     const worktree = path.join(root, '.worktrees', 'TASK-004');
     const calls = [];
+    const logs = [];
     try {
       initRepo(root);
       const completed = runTasks(
@@ -643,7 +1445,7 @@ describe('four-phase orchestration', () => {
         },
         {
           pluginRoot: PLUGIN_ROOT,
-          log: () => {},
+          log: (message) => logs.push(message),
           resolveProject() {
             return { projectName: 'api', projectRoot: root, specsDir: path.join(root, 'specs') };
           },
@@ -673,6 +1475,18 @@ describe('four-phase orchestration', () => {
       );
 
       assert.deepStrictEqual(calls.map((call) => call.phase), ['plan', 'implement', 'validate', 'finalize']);
+      const startedLogs = logs.filter((line) => line.includes('started'));
+      assert.deepStrictEqual(
+        startedLogs.map((line) => line.replace(/^\[[^\]]+\] /, '')),
+        [
+          '[TASK-004] plan started — Codex',
+          '[TASK-004] implement started — Codex',
+          '[TASK-004] validate started — Codex',
+          '[TASK-004] finalize started — Codex',
+        ]
+      );
+      assert.ok(startedLogs.every((line) => /^\[\d{4}-\d\d-\d\d \d\d:\d\d:\d\d \S+\]/.test(line)));
+      assert.strictEqual(logs.filter((line) => /completed in \d\d:\d\d$/.test(line)).length, 4);
       const realRoot = fs.realpathSync(root);
       const realWorktree = path.join(realRoot, '.worktrees', 'TASK-004');
       assert.deepStrictEqual(calls.map((call) => call.cwd), [realRoot, realRoot, realWorktree, realWorktree]);
@@ -689,6 +1503,54 @@ describe('four-phase orchestration', () => {
       assert.ok(fs.existsSync(path.join(root, 'feature.txt')));
       assert.ok(fs.readFileSync(path.join(root, 'specs', 'tasks.md'), 'utf8').includes('**Status:** Complete'));
       assert.strictEqual(git(root, 'status', '--porcelain'), '');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('accepts task completion already committed in the validated tree', () => {
+    const { runTasks } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-validated-complete-'));
+    const worktree = path.join(root, '.worktrees', 'TASK-004');
+    try {
+      initRepo(root);
+
+      const completed = runTasks(
+        { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
+        {
+          pluginRoot: PLUGIN_ROOT,
+          log: () => {},
+          invokePhase(input) {
+            if (input.phase === 'plan') {
+              writePlan(root);
+              return 'RESULT: PLANNED | plan_file_path=.groundwork-plans/TASK-004-plan.md | identifier=TASK-004 | branch_prefix=task';
+            }
+            if (input.phase === 'implement') {
+              git(root, 'worktree', 'add', '-b', 'task/TASK-004', worktree);
+              const taskFile = path.join(worktree, 'specs', 'tasks.md');
+              fs.writeFileSync(taskFile, fs.readFileSync(taskFile, 'utf8').replace('Not Started', 'In Progress'));
+              write(path.join(worktree, 'feature.txt'), 'implemented\n');
+              git(worktree, 'add', '.');
+              git(worktree, 'commit', '-m', 'Implement TASK-004');
+              return `RESULT: IMPLEMENTED | worktree_path=${worktree} | branch=task/TASK-004 | base_branch=main`;
+            }
+            if (input.phase === 'validate') {
+              completeTaskFile(worktree, 'TASK-004');
+              git(worktree, 'add', '.');
+              git(worktree, 'commit', '-m', 'Validate and complete TASK-004');
+              return validated(worktree);
+            }
+            return `RESULT: READY_TO_MERGE | task_id=TASK-004 | task_head=${git(worktree, 'rev-parse', 'HEAD')} | base_head=${git(root, 'rev-parse', 'HEAD')} | merge_message=Merge TASK-004`;
+          },
+        }
+      );
+
+      assert.deepStrictEqual(completed, [{
+        taskId: 'TASK-004',
+        validation: { iterations: 1, fixed: 0, unworked: 0 },
+      }]);
+      assert.strictEqual(fs.existsSync(worktree), false);
+      assert.match(fs.readFileSync(path.join(root, 'specs', 'tasks.md'), 'utf8'), /\*\*Status:\*\* Complete/);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -762,7 +1624,7 @@ describe('four-phase orchestration', () => {
   test('uses the selected project inside the task worktree for monorepo validation and finalization', () => {
     const { runTasks } = require(RUNNER);
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-monorepo-context-'));
-    const worktree = path.join(root, '.worktrees', 'TASK-004');
+    const worktree = path.join(root, '.worktrees', 'api-TASK-004');
     const taskProject = path.join(worktree, 'apps', 'api');
     const calls = [];
     try {
@@ -794,23 +1656,23 @@ describe('four-phase orchestration', () => {
               return 'RESULT: PLANNED | plan_file_path=.groundwork-plans/TASK-004-plan.md | identifier=TASK-004 | branch_prefix=task';
             }
             if (input.phase === 'implement') {
-              git(root, 'worktree', 'add', '-b', 'task/TASK-004', worktree);
+              git(root, 'worktree', 'add', '-b', 'task/api/TASK-004', worktree);
               const taskFile = path.join(taskProject, 'specs', 'tasks.md');
               fs.writeFileSync(taskFile, fs.readFileSync(taskFile, 'utf8').replace('Not Started', 'In Progress'));
               write(path.join(taskProject, 'feature.txt'), 'implemented\n');
               git(worktree, 'add', '.');
               git(worktree, 'commit', '-m', 'Implement TASK-004');
-              return `RESULT: IMPLEMENTED | worktree_path=${worktree} | branch=task/TASK-004 | base_branch=main`;
+              return `RESULT: IMPLEMENTED | worktree_path=${worktree} | branch=task/api/TASK-004 | base_branch=main`;
             }
             if (input.phase === 'validate') return validated(worktree);
-            return finalizeMock(root, worktree, 'TASK-004', 'task/TASK-004', 'main', taskProject);
+            return finalizeMock(root, worktree, 'TASK-004', 'task/api/TASK-004', 'main', taskProject);
           },
         }
       );
 
       const validateCall = calls.find((call) => call.phase === 'validate');
       const finalizeCall = calls.find((call) => call.phase === 'finalize');
-      const expectedTaskProject = path.join(fs.realpathSync(root), '.worktrees', 'TASK-004', 'apps', 'api');
+      const expectedTaskProject = path.join(fs.realpathSync(root), '.worktrees', 'api-TASK-004', 'apps', 'api');
       assert.strictEqual(validateCall.cwd, expectedTaskProject);
       assert.strictEqual(finalizeCall.cwd, expectedTaskProject);
       assert.strictEqual(validateCall.env.GROUNDWORK_PROJECT_ROOT, validateCall.cwd);
@@ -1022,6 +1884,7 @@ describe('four-phase orchestration', () => {
     const { runTasks } = require(RUNNER);
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-all-stop-'));
     const tasksSeen = [];
+    const logs = [];
     try {
       git(root, 'init', '-b', 'main');
       git(root, 'config', 'user.email', 'test@example.com');
@@ -1036,7 +1899,7 @@ describe('four-phase orchestration', () => {
           { command: 'all', harness: 'codex', repo: root, project: null, tasks: [], dryRun: false },
           {
             pluginRoot: PLUGIN_ROOT,
-            log: () => {},
+            log: (message) => logs.push(message),
             invokePhase(input) {
               tasksSeen.push(input.taskId);
               return 'RESULT: FAILURE | planning blocked';
@@ -1046,6 +1909,7 @@ describe('four-phase orchestration', () => {
         /planning blocked/
       );
       assert.deepStrictEqual(tasksSeen, ['TASK-001']);
+      assert.match(logs.at(-1), /^\[\d{4}-\d\d-\d\d \d\d:\d\d:\d\d \S+\] \[TASK-001\] plan failed after \d\d:\d\d$/);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -1116,8 +1980,25 @@ describe('skill and export integration', () => {
     const implement = fs.readFileSync(path.join(PLUGIN_ROOT, 'skills', 'implement-task', 'SKILL.md'), 'utf8');
     const executor = fs.readFileSync(path.join(PLUGIN_ROOT, 'agents', 'task-executor', 'AGENT.md'), 'utf8');
     assert.ok(implement.includes('WORKTREE PATH: [runner-supplied absolute worktree path]'));
+    assert.ok(implement.includes('TASK BRANCH: [runner-supplied exact branch]'));
     assert.ok(executor.includes('skip reading and writing agent memory'));
     assert.ok(executor.includes('use that exact registered path'));
+    assert.ok(executor.includes('use that exact branch'));
+  });
+
+  test('runner implementation contracts resume an existing exact worktree', () => {
+    const implement = fs.readFileSync(path.join(PLUGIN_ROOT, 'skills', 'implement-task', 'SKILL.md'), 'utf8');
+    const executor = fs.readFileSync(path.join(PLUGIN_ROOT, 'agents', 'task-executor', 'AGENT.md'), 'utf8');
+    assert.ok(implement.includes('RESUME EXISTING WORKTREE'));
+    assert.match(executor, /already exists[\s\S]*reuse/i);
+    assert.match(executor, /do not repeat[\s\S]*completed/i);
+  });
+
+  test('validation emits bounded reviewer progress markers', () => {
+    const validate = fs.readFileSync(path.join(PLUGIN_ROOT, 'skills', 'validate', 'SKILL.md'), 'utf8');
+    assert.match(validate, /GROUNDWORK_VALIDATION_PROGRESS[\s\S]*"status":"launched"/);
+    assert.match(validate, /GROUNDWORK_VALIDATION_PROGRESS[\s\S]*"status":"completed"/);
+    assert.match(validate, /same assistant turn[\s\S]*launch/i);
   });
 
   test('Codex export installs the standalone runner outside any skill directory', () => {

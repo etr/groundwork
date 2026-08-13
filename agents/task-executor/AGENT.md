@@ -46,7 +46,7 @@ Follow the `use-git-worktree` skill instructions to create an isolated worktree:
 4. Run project setup (npm install, etc.)
 5. Verify baseline tests pass
 
-If the calling prompt supplies `WORKTREE PATH`, use that exact registered path instead of choosing a directory. Do not ask for a different location.
+If the calling prompt supplies `WORKTREE PATH` and `TASK BRANCH`, use that exact registered path and use that exact branch instead of choosing either. Do not ask for a different location. If that path already exists and `RESUME EXISTING WORKTREE=true`, verify it is the registered worktree for the expected task branch, then reuse it instead of creating a branch or worktree. Inspect its commits, status, plan progress, and tests. Do not repeat completed plan items; continue TDD for only the remaining or incomplete work.
 
 Use the identifier provided in the prompt (e.g., `TASK-004` or `FEATURE-slug`).
 

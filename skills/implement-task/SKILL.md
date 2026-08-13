@@ -19,6 +19,8 @@ If session context contains `GROUNDWORK_RUNNER_MODE=true`:
 - Skip the model recommendation pre-flight and all questions.
 - In task mode, skip Step 2 entirely; the base checkout must remain clean. Tell the task-executor to record `In Progress` inside the task worktree and include it in the implementation commit.
 - Forward the runner-supplied absolute worktree path exactly; do not let the executor choose another directory.
+- Forward the runner-supplied task branch exactly; monorepos use a project-qualified branch to prevent overlapping task IDs from colliding.
+- When the runner supplies `RESUME EXISTING WORKTREE=true`, verify and reuse that exact registered worktree. Tell the executor to inspect existing commits, working state, tests, and plan progress; do not repeat completed implementation work.
 - Keep worktree creation and the implementation commit owned by the existing task-executor agent.
 - Keep the existing terminal `RESULT: IMPLEMENTED` contract unchanged.
 
@@ -115,6 +117,9 @@ Agent(
   [If GROUNDWORK_RUNNER_MODE=true: include both lines below]
   GROUNDWORK_RUNNER_MODE=true
   WORKTREE PATH: [runner-supplied absolute worktree path]
+  TASK BRANCH: [runner-supplied exact branch]
+  [If the runner reports an existing ambiguous or partial worktree: include the line below]
+  RESUME EXISTING WORKTREE=true
 
   PROJECT ROOT: [absolute path to project root]
 
@@ -129,7 +134,7 @@ Agent(
   Read this file first with the Read tool — it contains the validated implementation plan.
 
   INSTRUCTIONS:
-  1. Follow your preloaded skills to create a worktree, implement with TDD, and commit. When WORKTREE PATH is supplied, create and use exactly that path.
+  1. Follow your preloaded skills to create or safely resume a worktree, implement with TDD, and commit. When WORKTREE PATH and TASK BRANCH are supplied, use exactly that path and branch. When RESUME EXISTING WORKTREE=true, verify and reuse the registered worktree, inspect completed plan items and tests, and finish only remaining work.
   2. Read the task section from tasks_path and the plan from PLAN FILE — they provide all session context. Do NOT re-ask the user for requirements.
   [If GROUNDWORK_RUNNER_MODE=true: change this task's status to In Progress inside the task worktree and include that bookkeeping in the implementation commit.]
   3. When complete, output your final line in EXACTLY this format:

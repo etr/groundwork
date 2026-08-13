@@ -187,6 +187,14 @@ Record skipped agents in the aggregation table with verdict `skipped` and a note
 
 **Token discipline:** Launch all agents in a single tool-use turn. Do NOT output text-only turns while waiting for agents to return — each turn re-reads the full context window. Aggregate results silently and output ONE summary after all agents complete. The same applies to re-validation rounds in Step 4.
 
+On the same assistant turn as each launch batch, immediately before the Agent tool calls, emit exactly one compact progress marker. Include only agents active in this iteration, in launch order; omit skipped and carry-forward agents:
+
+```text
+GROUNDWORK_VALIDATION_PROGRESS {"iteration":1,"status":"launched","agents":["code-quality-reviewer","security-reviewer"]}
+```
+
+Substitute the current iteration and complete active-agent list. Do not add paths, prompts, findings, summaries, or counts to this marker. Emit it for the initial batch and every re-validation batch.
+
 Use Agent tool to launch all agents in parallel:
 
 | Agent (`subagent_type`) | Context to Provide |
@@ -226,6 +234,14 @@ The full review (including the `findings[]` array) lives only in the file at `fi
 ### 3. Aggregate Results
 
 Parse each agent's compact one-line JSON response. Read **only** these fields: `verdict`, `score`, `summary`, `counts.critical`, `counts.major`, `counts.minor`, and `findings_file`. **Do NOT** read the file at `findings_file` here — those bodies stay out of orchestrator context entirely. They are handed verbatim to the validation-fixer in step 4.2 as a path (never as content), and persisted by the helper script in step 5.5 (which also reads them out-of-process).
+
+Before the human-readable iteration summary, emit exactly one completion marker. Include every active agent from this iteration in launch order with only its parsed verdict:
+
+```text
+GROUNDWORK_VALIDATION_PROGRESS {"iteration":1,"status":"completed","agents":[{"name":"code-quality-reviewer","verdict":"approve"},{"name":"security-reviewer","verdict":"request-changes"}]}
+```
+
+Allowed verdicts are `approve`, `request-changes`, and `skipped`. Do not add scores, counts, paths, summaries, or findings. Emit this marker for every iteration.
 
 Emit one line summarizing this iteration's active agents (skip carry-forward agents):
 
