@@ -407,97 +407,6 @@ function createContainedDirectory(parent, child, label) {
   }
 }
 
-function acquireRunnerLease(commonDir, owner, dependencies = {}) {
-  const log = dependencies.log || console.log;
-  const now = dependencies.now || Date.now;
-  const wait = dependencies.wait || ((milliseconds) => {
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
-  });
-  const heartbeatMs = dependencies.heartbeatMs || 30_000;
-  const leaseDirectory = path.join(commonDir, 'groundwork');
-  const leasePath = path.join(leaseDirectory, 'runner.lock');
-  const token = crypto.randomBytes(24).toString('hex');
-  let lastProgressAt = -Infinity;
-
-  createContainedDirectory(commonDir, leaseDirectory, 'Runner lease directory');
-  for (;;) {
-    try {
-      const fd = fs.openSync(leasePath, 'wx', 0o600);
-      try {
-        fs.writeFileSync(fd, `${JSON.stringify({
-          version: 1,
-          pid: process.pid,
-          token,
-          project: String(owner.project || ''),
-          taskId: String(owner.taskId || ''),
-          startedAt: now(),
-        })}\n`, 'utf8');
-        fs.fsyncSync(fd);
-      } finally {
-        fs.closeSync(fd);
-      }
-      break;
-    } catch (error) {
-      if (error.code !== 'EEXIST') throw error;
-    }
-
-    const stat = fs.lstatSync(leasePath);
-    if (stat.isSymbolicLink() || !stat.isFile() || stat.size > 4_096) {
-      throw new Error(`Runner lease is unsafe: ${leasePath}`);
-    }
-    let holder;
-    try {
-      holder = JSON.parse(fs.readFileSync(leasePath, 'utf8'));
-    } catch {
-      throw new Error(`Runner lease is invalid: ${leasePath}`);
-    }
-    if (!holder || holder.version !== 1 || !Number.isInteger(holder.pid) || holder.pid < 1) {
-      throw new Error(`Runner lease has invalid ownership: ${leasePath}`);
-    }
-    let active = true;
-    try {
-      process.kill(holder.pid, 0);
-    } catch (error) {
-      if (error.code === 'ESRCH') active = false;
-      else if (error.code !== 'EPERM') throw error;
-    }
-    if (!active) {
-      try {
-        fs.unlinkSync(leasePath);
-      } catch (error) {
-        if (error.code !== 'ENOENT') throw error;
-      }
-      continue;
-    }
-
-    const current = now();
-    if (current - lastProgressAt >= heartbeatMs) {
-      const heldBy = [holder.project, holder.taskId].filter(Boolean).join(' ');
-      log(`[${formatLocalTimestamp(current)}] waiting for repository runner${heldBy ? ` — ${heldBy}` : ''} (pid ${holder.pid})`);
-      lastProgressAt = current;
-    }
-    wait(1_000);
-  }
-
-  return () => {
-    if (!fs.existsSync(leasePath)) throw new Error('Runner lease disappeared before release');
-    const stat = fs.lstatSync(leasePath);
-    if (stat.isSymbolicLink() || !stat.isFile() || stat.size > 4_096) {
-      throw new Error(`Runner lease changed before release: ${leasePath}`);
-    }
-    let current;
-    try {
-      current = JSON.parse(fs.readFileSync(leasePath, 'utf8'));
-    } catch {
-      throw new Error(`Runner lease became invalid before release: ${leasePath}`);
-    }
-    if (current.token !== token || current.pid !== process.pid) {
-      throw new Error('Runner lease ownership changed before release');
-    }
-    fs.unlinkSync(leasePath);
-  };
-}
-
 function waitForLease(dependencies) {
   const wait = dependencies.wait || ((milliseconds) => {
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
@@ -554,15 +463,26 @@ function normalizeLeaseOwner(owner) {
 }
 
 function inspectLease(leasePath, dependencies = {}, expectedToken = null) {
-  const stat = fs.lstatSync(leasePath);
-  if (stat.isSymbolicLink() || !stat.isFile() || stat.size > 4_096) {
-    throw new Error(`Repository lease is unsafe: ${leasePath}`);
-  }
+  if (dependencies.beforeLeaseInspect) dependencies.beforeLeaseInspect(leasePath);
+  let fd;
   let holder;
   try {
-    holder = JSON.parse(fs.readFileSync(leasePath, 'utf8'));
-  } catch {
-    throw new Error(`Repository lease is invalid: ${leasePath}`);
+    fd = fs.openSync(leasePath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.size > 4_096) {
+      throw new Error(`Repository lease is unsafe: ${leasePath}`);
+    }
+    try {
+      holder = JSON.parse(fs.readFileSync(fd, 'utf8'));
+    } catch {
+      throw new Error(`Repository lease is invalid: ${leasePath}`);
+    }
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    if (error.code === 'ELOOP') throw new Error(`Repository lease is unsafe: ${leasePath}`);
+    throw error;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
   }
   if (holder && holder.projectPath === undefined) holder.projectPath = '.';
   if (!holder || holder.version !== 1 || !Number.isInteger(holder.pid) || holder.pid < 1
@@ -585,31 +505,68 @@ function inspectLease(leasePath, dependencies = {}, expectedToken = null) {
   return { holder, live };
 }
 
-function reclaimStaleLease(leasePath, dependencies = {}) {
-  const recoveryPath = path.join(path.dirname(leasePath), '.reclaim.lock');
-  let recoveryFd;
+function sameLeaseIdentity(left, right) {
+  return Boolean(left && right
+    && left.version === right.version
+    && left.pid === right.pid
+    && left.processStart === right.processStart
+    && left.token === right.token
+    && left.project === right.project
+    && left.projectPath === right.projectPath
+    && left.taskId === right.taskId
+    && left.startedAt === right.startedAt);
+}
+
+function removeLeaseIfIdentity(leasePath, expected, dependencies = {}) {
+  const current = inspectLease(leasePath, dependencies);
+  if (!current || !sameLeaseIdentity(current.holder, expected)) return false;
   try {
-    recoveryFd = fs.openSync(recoveryPath, 'wx', 0o600);
-  } catch (error) {
-    if (error.code === 'EEXIST') return false;
-    throw error;
-  }
-  try {
-    if (!fs.existsSync(leasePath)) return true;
-    const inspected = inspectLease(leasePath, dependencies);
-    if (inspected.live) return false;
     fs.unlinkSync(leasePath);
     return true;
+  } catch (error) {
+    if (error.code === 'ENOENT') return false;
+    throw error;
+  }
+}
+
+function acquireRecoveryLease(recoveryPath, dependencies) {
+  for (;;) {
+    try {
+      return createOwnedLease(
+        recoveryPath,
+        { project: 'recovery', projectPath: '.', taskId: 'setup' },
+        dependencies
+      );
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw error;
+    }
+    const current = inspectLease(recoveryPath, dependencies);
+    if (!current) continue;
+    if (current.live) return null;
+    if (!removeLeaseIfIdentity(recoveryPath, current.holder, dependencies)) continue;
+  }
+}
+
+function reclaimStaleLease(leasePath, expected, dependencies = {}) {
+  const recoveryPath = path.join(path.dirname(leasePath), '.reclaim.lock');
+  const releaseRecovery = acquireRecoveryLease(recoveryPath, dependencies);
+  if (!releaseRecovery) return false;
+  try {
+    const inspected = inspectLease(leasePath, dependencies);
+    if (!inspected) return true;
+    if (!sameLeaseIdentity(inspected.holder, expected)) return false;
+    if (inspected.live) return false;
+    return removeLeaseIfIdentity(leasePath, expected, dependencies);
   } finally {
-    fs.closeSync(recoveryFd);
-    fs.unlinkSync(recoveryPath);
+    releaseRecovery();
   }
 }
 
 function readLiveLease(leasePath, dependencies = {}, expectedToken = null) {
   const inspected = inspectLease(leasePath, dependencies, expectedToken);
+  if (!inspected) return null;
   if (inspected.live) return inspected.holder;
-  reclaimStaleLease(leasePath, dependencies);
+  reclaimStaleLease(leasePath, inspected.holder, dependencies);
   return null;
 }
 
@@ -635,11 +592,13 @@ function createOwnedLease(leasePath, owner, dependencies = {}, requestedToken = 
     fs.closeSync(fd);
   }
   return () => {
-    const current = readLiveLease(leasePath, dependencies);
-    if (!current || current.token !== token || current.pid !== process.pid) {
+    const current = inspectLease(leasePath, dependencies);
+    if (!current || !sameLeaseIdentity(current.holder, record)) {
       throw new Error('Repository lease ownership changed before release');
     }
-    fs.unlinkSync(leasePath);
+    if (!removeLeaseIfIdentity(leasePath, record, dependencies)) {
+      throw new Error('Repository lease disappeared before release');
+    }
   };
 }
 
@@ -674,6 +633,7 @@ function liveLeaseFiles(directory, dependencies = {}, expectedName = null) {
   const stat = fs.lstatSync(directory);
   if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error(`Repository gate is unsafe: ${directory}`);
   const entries = [];
+  if (dependencies.beforeLeaseDirectoryScan) dependencies.beforeLeaseDirectoryScan(directory);
   for (const name of fs.readdirSync(directory)) {
     if (name === '.reclaim.lock') continue;
     if (!/^[0-9a-f]{48}\.lock$/.test(name)) {
@@ -687,7 +647,29 @@ function liveLeaseFiles(directory, dependencies = {}, expectedName = null) {
   return entries;
 }
 
-function activeProjectOwners(commonDir, dependencies = {}) {
+function readPeerCheckpoint(checkpointFile) {
+  let fd;
+  try {
+    fd = fs.openSync(checkpointFile, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.size > MAX_CHECKPOINT_BYTES) {
+      throw new Error(`Runner checkpoint is invalid: ${checkpointFile}`);
+    }
+    try {
+      return JSON.parse(fs.readFileSync(fd, 'utf8'));
+    } catch {
+      throw new Error(`Runner checkpoint is not valid JSON: ${checkpointFile}`);
+    }
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    if (error.code === 'ELOOP') throw new Error(`Runner checkpoint is invalid: ${checkpointFile}`);
+    throw error;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+}
+
+function activeProjectOwners(commonDir, repoRoot, dependencies = {}) {
   const directory = path.join(commonDir, 'groundwork', 'projects');
   if (!fs.existsSync(directory)) return [];
   const stat = fs.lstatSync(directory);
@@ -705,7 +687,34 @@ function activeProjectOwners(commonDir, dependencies = {}) {
     if (!holder) continue;
     const expected = `${crypto.createHash('sha256').update(holder.project).digest('hex').slice(0, 32)}.lock`;
     if (name !== expected) throw new Error(`Project lease filename does not match its owner: ${file}`);
-    owners.push(holder);
+    const projectKey = crypto.createHash('sha256').update(holder.projectPath).digest('hex').slice(0, 16);
+    const checkpointFile = path.join(commonDir, 'groundwork', 'runner', projectKey, `${holder.taskId}.json`);
+    const checkpoint = readPeerCheckpoint(checkpointFile);
+    if (!checkpoint || checkpoint.taskId !== holder.taskId || checkpoint.project !== holder.projectPath
+        || !checkpoint.workspace || typeof checkpoint.workspace.branch !== 'string'
+        || typeof checkpoint.workspace.worktreePath !== 'string') continue;
+    const candidates = [{
+      branch: `task/${holder.taskId}`,
+      worktreePath: path.join(repoRoot, '.worktrees', holder.taskId),
+    }];
+    if (holder.project !== '.') {
+      candidates.push({
+        branch: `task/${holder.project}/${holder.taskId}`,
+        worktreePath: path.join(repoRoot, '.worktrees', `${holder.project}-${holder.taskId}`),
+      });
+    }
+    if (!candidates.some((candidate) => candidate.branch === checkpoint.workspace.branch
+        && candidate.worktreePath === checkpoint.workspace.worktreePath)) continue;
+    let peerWorktree;
+    try {
+      peerWorktree = fs.realpathSync(checkpoint.workspace.worktreePath);
+    } catch (error) {
+      if (error.code === 'ENOENT') continue;
+      throw error;
+    }
+    const registered = registeredWorktrees(repoRoot).find((entry) => entry.path === peerWorktree);
+    if (!registered || registered.branch !== `refs/heads/${checkpoint.workspace.branch}`) continue;
+    owners.push({ ...holder, branch: checkpoint.workspace.branch });
   }
   return owners;
 }
@@ -746,8 +755,13 @@ function acquireRepositoryGate(commonDir, mode, owner, dependencies = {}) {
         if (error.code !== 'EEXIST') throw error;
         continue;
       }
-      if (!fs.existsSync(writer)
-          && liveLeaseFiles(waitingWriters, dependencies, 'token').length === 0) return release;
+      try {
+        if (!readLiveLease(writer, dependencies)
+            && liveLeaseFiles(waitingWriters, dependencies, 'token').length === 0) return release;
+      } catch (error) {
+        try { release(); } catch {}
+        throw error;
+      }
       release();
     }
   }
@@ -766,14 +780,19 @@ function acquireRepositoryGate(commonDir, mode, owner, dependencies = {}) {
         waitForLease(dependencies);
         continue;
       }
-      for (;;) {
-        const activeReaders = liveLeaseFiles(readers, dependencies, 'token');
-        if (activeReaders.length === 0) {
-          releaseIntent();
-          return releaseWriter;
+      try {
+        for (;;) {
+          const activeReaders = liveLeaseFiles(readers, dependencies, 'token');
+          if (activeReaders.length === 0) {
+            releaseIntent();
+            return releaseWriter;
+          }
+          report('readers', activeReaders[0].holder);
+          waitForLease(dependencies);
         }
-        report('readers', activeReaders[0].holder);
-        waitForLease(dependencies);
+      } catch (error) {
+        try { releaseWriter(); } catch {}
+        throw error;
       }
     }
   } catch (error) {
@@ -954,9 +973,8 @@ function refSnapshotMap(snapshot) {
 function allowedPeerTaskRefs(peerOwners) {
   const refs = new Set();
   for (const owner of peerOwners) {
-    if (!TASK_ID.test(owner.taskId)) continue;
-    refs.add(`refs/heads/task/${owner.taskId}`);
-    if (owner.project !== '.') refs.add(`refs/heads/task/${owner.project}/${owner.taskId}`);
+    if (!TASK_ID.test(owner.taskId) || typeof owner.branch !== 'string') continue;
+    refs.add(`refs/heads/${owner.branch}`);
   }
   return refs;
 }
@@ -2069,7 +2087,7 @@ function runTasks(options, dependencies = {}) {
       leaseOwner(input.taskId),
       leaseDependencies
     );
-    const peerOwnersBefore = activeProjectOwners(commonDir, leaseDependencies)
+    const peerOwnersBefore = activeProjectOwners(commonDir, repoRoot, leaseDependencies)
       .filter((owner) => owner.projectPath !== projectRelative || owner.taskId !== input.taskId);
     const repositoryState = {
       refs: snapshotRepositoryRefs(repoRoot),
@@ -2085,15 +2103,9 @@ function runTasks(options, dependencies = {}) {
           log(`[${formatLocalTimestamp(now())}] [${input.taskId}] restored transient task-worktree core.hooksPath`);
         }
         assertGitControls(commonDir, gitControls);
-        const peerOwners = new Map(peerOwnersBefore.map((owner) => [owner.token, owner]));
-        for (const owner of activeProjectOwners(commonDir, leaseDependencies)) {
-          if (owner.projectPath !== projectRelative || owner.taskId !== input.taskId) {
-            peerOwners.set(owner.token, owner);
-          }
-        }
-        assertRunnerTransition(repositoryState.runner, snapshotRunnerFiles(commonDir), [...peerOwners.values()]);
+        assertRunnerTransition(repositoryState.runner, snapshotRunnerFiles(commonDir), peerOwnersBefore);
         assertPlanTree(input.projectRoot);
-        assertRepositoryTransition(repoRoot, repositoryState, input, [...peerOwners.values()]);
+        assertRepositoryTransition(repoRoot, repositoryState, input, peerOwnersBefore);
       } finally {
         releaseGate();
       }
@@ -2582,7 +2594,6 @@ module.exports = {
   forEachGitRecord,
   invokePhase,
   assertRegisteredWorktree,
-  acquireRunnerLease,
   acquireProjectLease,
   acquireRepositoryGate,
   processStartIdentity,
