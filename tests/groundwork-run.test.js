@@ -854,7 +854,7 @@ describe('module and CLI contract', () => {
     }
   });
 
-  test('waits for a live main-version runner before admitting a new writer', () => {
+  test('rejects startup when it detects a live pre-upgrade runner', () => {
     const { acquireRepositoryGate } = require(RUNNER);
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-main-version-overlap-'));
     const legacyRunner = path.join(root, 'legacy-groundwork-run.js');
@@ -875,27 +875,20 @@ describe('module and CLI contract', () => {
         { project: 'legacy', taskId: 'TASK-004' },
         { log: () => {} }
       );
-      let waits = 0;
-      const releaseWriter = acquireRepositoryGate(
-        commonDir,
-        'write',
-        { project: 'new', projectPath: '.', taskId: 'TASK-005' },
-        {
-          log: () => {},
-          wait() {
-            waits++;
-            assert.strictEqual(
-              fs.existsSync(path.join(commonDir, 'groundwork', 'repository-gate', 'writer.lock')),
-              false,
-              'new writer entered its mutation gate while the main-version runner owned the legacy lease'
-            );
-            releaseLegacy();
-            releaseLegacy = null;
-          },
-        }
+      assert.throws(
+        () => acquireRepositoryGate(
+          commonDir,
+          'write',
+          { project: 'new', projectPath: '.', taskId: 'TASK-005' },
+          {
+            log: () => {},
+            wait() {
+              throw new Error('v2 must not wait inside a mixed-version repository');
+            },
+          }
+        ),
+        /drained upgrade.*stop all earlier runners and launchers/i
       );
-      assert.strictEqual(waits, 1);
-      releaseWriter();
     } finally {
       if (releaseLegacy) {
         try { releaseLegacy(); } catch {}
@@ -904,61 +897,25 @@ describe('module and CLI contract', () => {
     }
   });
 
-  test('rechecks the main-version lease at the new writer boundary', () => {
+  test('new writers do not publish a legacy runner lock', () => {
     const { acquireRepositoryGate } = require(RUNNER);
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-main-version-boundary-'));
-    const legacyRunner = path.join(root, 'legacy-groundwork-run.js');
-    let releaseLegacy;
     try {
       initRepo(root);
-      write(
-        legacyRunner,
-        execFileSync('git', ['show', 'main:bin/groundwork-run.js'], {
-          cwd: PLUGIN_ROOT,
-          encoding: 'utf8',
-        })
-      );
-      const { acquireRunnerLease } = require(legacyRunner);
       const commonDir = path.join(root, '.git');
-      let boundaryChecks = 0;
-      let legacyStarted = false;
-      let waits = 0;
       const releaseWriter = acquireRepositoryGate(
         commonDir,
         'write',
         { project: 'new', projectPath: '.', taskId: 'TASK-005' },
-        {
-          log: () => {},
-          beforeLegacyRunnerBoundaryAcquire() {
-            boundaryChecks++;
-            if (!legacyStarted) {
-              legacyStarted = true;
-              releaseLegacy = acquireRunnerLease(
-                commonDir,
-                { project: 'legacy', taskId: 'TASK-004' },
-                { log: () => {} }
-              );
-            }
-          },
-          wait() {
-            waits++;
-            assert.strictEqual(
-              fs.existsSync(path.join(commonDir, 'groundwork', 'repository-gate', 'writer.lock')),
-              true,
-              'the new writer lost its protocol gate while waiting to establish legacy compatibility'
-            );
-            releaseLegacy();
-            releaseLegacy = null;
-          },
-        }
+        { log: () => {} }
       );
-      assert.ok(boundaryChecks >= 2, 'writer boundary was not rechecked after the initial compatibility check');
-      assert.strictEqual(waits, 1);
+      assert.strictEqual(
+        fs.existsSync(path.join(commonDir, 'groundwork', 'runner.lock')),
+        false,
+        'v2 writers must not advertise an atomic compatibility barrier to legacy launchers'
+      );
       releaseWriter();
     } finally {
-      if (releaseLegacy) {
-        try { releaseLegacy(); } catch {}
-      }
       fs.rmSync(root, { recursive: true, force: true });
     }
   });

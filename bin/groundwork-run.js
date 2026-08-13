@@ -546,29 +546,21 @@ function inspectLegacyRunnerLease(leasePath) {
     if (error.code === 'ESRCH') live = false;
     else if (error.code !== 'EPERM') throw error;
   }
-  return { holder, live, compatible: holder.protocol === 'repository-gate-v2' };
+  return { holder, live };
 }
 
-function waitForLegacyRunnerDrain(commonDir, dependencies = {}) {
-  const log = dependencies.log || console.log;
-  const now = dependencies.now || Date.now;
+function requireDrainedLegacyRunner(commonDir) {
   const leasePath = path.join(commonDir, 'groundwork', 'runner.lock');
-  let lastProgressAt = -Infinity;
-  for (;;) {
-    const legacy = inspectLegacyRunnerLease(leasePath);
-    if (!legacy) return;
-    if (legacy.compatible) return;
-    if (!legacy.live) {
-      throw new Error(`Legacy runner lease is stale and cannot be safely reclaimed: ${leasePath}; remove it manually after confirming no pre-upgrade runner remains`);
-    }
-    const current = now();
-    if (current - lastProgressAt >= (dependencies.heartbeatMs || 30_000)) {
-      const heldBy = [legacy.holder.project, legacy.holder.taskId].filter(Boolean).join(' ');
-      log(`[${formatLocalTimestamp(current)}] waiting for pre-upgrade repository runner${heldBy ? ` — ${heldBy}` : ''} (pid ${legacy.holder.pid})`);
-      lastProgressAt = current;
-    }
-    waitForLease(dependencies);
+  const legacy = inspectLegacyRunnerLease(leasePath);
+  if (!legacy) return;
+  if (!legacy.live) {
+    throw new Error(`Legacy runner lease is stale and cannot be safely reclaimed: ${leasePath}; remove it manually after confirming no pre-upgrade runner remains`);
   }
+  const heldBy = [legacy.holder.project, legacy.holder.taskId].filter(Boolean).join(' ');
+  throw new Error(
+    `Detected pre-upgrade runner${heldBy ? ` (${heldBy}, pid ${legacy.holder.pid})` : ` (pid ${legacy.holder.pid})`} at ${leasePath}. ` +
+    'Groundwork runner v2 requires a drained upgrade: stop all earlier runners and launchers before installing or starting v2; mixed-version operation is unsupported.'
+  );
 }
 
 function sameLeaseIdentity(left, right) {
@@ -949,32 +941,6 @@ function createOwnedLease(leasePath, owner, dependencies = {}, requestedToken = 
   };
 }
 
-function acquireLegacyRunnerBoundary(commonDir, owner, dependencies = {}) {
-  const directory = path.join(commonDir, 'groundwork');
-  const leasePath = path.join(directory, 'runner.lock');
-  createContainedDirectory(commonDir, directory, 'Legacy runner lease directory');
-  for (;;) {
-    if (dependencies.beforeLegacyRunnerBoundaryAcquire) {
-      dependencies.beforeLegacyRunnerBoundaryAcquire(leasePath);
-    }
-    try {
-      return createOwnedLease(leasePath, owner, {
-        ...dependencies,
-        mutationRoot: directory,
-        recordExtensions: { protocol: 'repository-gate-v2' },
-      });
-    } catch (error) {
-      if (error.code !== 'EEXIST') throw error;
-    }
-    const legacy = inspectLegacyRunnerLease(leasePath);
-    if (!legacy) continue;
-    if (!legacy.live) {
-      throw new Error(`Legacy runner lease is stale and cannot be safely reclaimed: ${leasePath}; remove it manually after confirming no pre-upgrade runner remains`);
-    }
-    waitForLease(dependencies);
-  }
-}
-
 function acquireProjectLease(commonDir, owner, dependencies = {}) {
   const log = dependencies.log || console.log;
   const now = dependencies.now || Date.now;
@@ -1109,9 +1075,10 @@ function acquireRepositoryGate(commonDir, mode, owner, dependencies = {}) {
   const readerPath = path.join(readers, `${token}.lock`);
   const leaseDependencies = { ...dependencies, mutationRoot: root };
   let lastProgressAt = -Infinity;
-  // Pre-upgrade runners use this single, repository-wide lease.  Do not enter
-  // the new protocol while one is live: it cannot observe repository-gate.
-  waitForLegacyRunnerDrain(commonDir, leaseDependencies);
+  // A detected predecessor lease makes the upgrade precondition observable.
+  // This check cannot make a hot mixed-version launch atomic, so callers must
+  // drain old runners and launchers before installing or starting v2.
+  requireDrainedLegacyRunner(commonDir);
   createContainedDirectory(commonDir, readers, 'Runner checkpoint and repository gate directory');
   createContainedDirectory(commonDir, waitingWriters, 'Runner checkpoint and repository gate directory');
 
@@ -1166,24 +1133,12 @@ function acquireRepositoryGate(commonDir, mode, owner, dependencies = {}) {
         for (;;) {
           const activeReaders = liveLeaseFiles(readers, leaseDependencies, 'token');
           if (activeReaders.length === 0) {
-            const releaseLegacyBoundary = acquireLegacyRunnerBoundary(
-              commonDir,
-              owner,
-              leaseDependencies
-            );
             try {
               releaseIntent();
             } catch (error) {
-              try { releaseLegacyBoundary(); } catch {}
               throw error;
             }
-            return () => {
-              try {
-                releaseWriter();
-              } finally {
-                releaseLegacyBoundary();
-              }
-            };
+            return releaseWriter;
           }
           report('readers', activeReaders[0].holder);
           waitForLease(dependencies);

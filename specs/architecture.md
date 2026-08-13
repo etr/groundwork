@@ -12,9 +12,9 @@ Publication acquires the writer gate and rechecks unrelated worktrees, the base 
 
 `info/exclude` initialization is a writer-gated setup responsibility. In a configured monorepo, a runner installs all project plan-ignore entries in one update so later concurrent project setup does not mutate Git controls during another project's reader phase.
 
-### In-place upgrade compatibility
+### Upgrade boundary
 
-Before joining the repository-gate protocol, a runner inspects the deployed predecessor's `groundwork/runner.lock`. A structurally valid live legacy lease causes the new runner to wait; a malformed or stale legacy record fails closed and is preserved for manual recovery. At every repository-writer boundary, the new runner also holds a legacy-compatible `runner.lock` until it has released its writer gate. Consequently, a main-version runner and a new writer cannot both enter repository-wide mutation: each sees the other version's live lease before proceeding. The compatibility barrier exists only for writer boundaries, so it does not serialize independent new-protocol reader phases.
+The repository-gate protocol is a v2-only protocol. Before installing or starting v2, operators must stop and drain every earlier-version runner process and launcher targeting the repository; hot mixed-version operation is unsupported. On startup, v2 inspects the predecessor's `groundwork/runner.lock` and fails closed if it detects a live, malformed, or stale record, preserving stale records for manual recovery. This inspection is best-effort defense and diagnostics, not an atomic coexistence guarantee: a predecessor can start after the check and cannot observe v2 reader leases. V2 therefore does not create `runner.lock` at writer boundaries, which preserves concurrent v2 reader phases rather than introducing a global legacy barrier.
 
 ### Model-process threat boundary
 

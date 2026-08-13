@@ -409,6 +409,8 @@ In monorepos, runner-created workspaces are project-qualified (for example, `tas
 
 Multiple runner commands may be launched against the same repository. A project lease serializes complete tasks for one project, while different projects may execute model phases concurrently. Shared Git setup, linked-worktree lifecycle, publication, and recovery use a writer-preferred repository reader/writer gate; model phases use reader access and wait diagnostics identify the holder. This prevents a waiting writer from starvation without serializing independent projects.
 
+When upgrading to this parallel runner, first stop and drain every older runner process and launcher for the repository, then install and start the new version. Running the predecessor and v2 together is unsupported: v2 rejects a detected live `groundwork/runner.lock`, but that startup check cannot prevent an old launcher from starting afterward. Once the upgrade is drained, v2 runners may safely use their repository gate together.
+
 If the base branch advances, `finalize-task` integrates it into the task branch and returns control for a fresh validation session. Before publication, the runner revalidates the exact base/task heads under writer access; a moved base preserves the task workspace and re-enters the bounded finalize/revalidate flow. Once the tree is clean, it supplies the task commit and merge message; the harness verifies that only task-status bookkeeping changed after validation, then performs the outward merge and cleanup.
 
 The same four skills remain manually callable. In a monorepo, pass `--project <name>` to each phase.

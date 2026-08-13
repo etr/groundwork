@@ -78,6 +78,8 @@ Monorepo workspaces include the project name, such as `task/api/TASK-004` and `.
 
 If multiple runner commands target the same repository, each project has its own task lease, so different projects may run model phases concurrently while tasks for one project remain ordered. Runner-owned setup, worktree lifecycle, publication, and recovery use a writer-preferred repository gate; model phases hold reader access. Waiting commands print periodic status. This avoids shared-Git races while keeping separate batch commands resumable.
 
+Before upgrading an existing runner installation, stop and drain all earlier runner processes and launchers for that repository. Do not run an older runner beside this v2 runner: a detected old `groundwork/runner.lock` makes v2 refuse startup, but the check is diagnostic rather than a hot-upgrade compatibility protocol. After the drain, v2 commands can run concurrently with other v2 commands.
+
 The runner prints the machine's local date, time, timezone, relative phase timing, sanitized commands, selected tool activity, validation iteration launches and per-reviewer verdicts, and a 30-second heartbeat while Claude Code or Codex is quiet. Generic turn events and successful short-command completions are suppressed; command failures and commands lasting at least 10 seconds remain visible. Explicit task arguments form a list; `--from` and `--to` select inclusive range bounds and may be used independently.
 
 The final phase prepares task bookkeeping, handles a moved base, and chooses the merge message. The harness rechecks the exact base and task heads under writer access before publication; if the base moved, it preserves the task worktree and returns to bounded revalidation before merging and cleanup.
