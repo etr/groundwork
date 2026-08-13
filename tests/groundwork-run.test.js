@@ -262,6 +262,73 @@ describe('module and CLI contract', () => {
     }
   });
 
+  test('reclaims expired startup phase-child records for project and reader leases', () => {
+    const { acquireProjectLease, acquireRepositoryGate, processStartIdentity } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-expired-startup-child-'));
+    try {
+      initRepo(root);
+      const commonDir = path.join(root, '.git');
+      const projectKey = crypto.createHash('sha256').update('api').digest('hex').slice(0, 32);
+      const projectParent = {
+        version: 1,
+        pid: 999999,
+        processStart: 'proc:stale-project-parent',
+        token: 'c'.repeat(48),
+        project: 'api',
+        projectPath: 'apps/api',
+        taskId: 'TASK-004',
+        startedAt: 1_000,
+      };
+      const readerParent = {
+        ...projectParent,
+        token: 'd'.repeat(48),
+        processStart: 'proc:stale-reader-parent',
+      };
+      const projectLease = path.join(commonDir, 'groundwork', 'projects', `${projectKey}.lock`);
+      const projectChild = path.join(commonDir, 'groundwork', 'projects', '.phase-children', `${projectParent.token}.json`);
+      const readerLease = path.join(commonDir, 'groundwork', 'repository-gate', 'readers', `${readerParent.token}.lock`);
+      const readerChild = path.join(commonDir, 'groundwork', 'repository-gate', 'readers', '.phase-children', `${readerParent.token}.json`);
+      const expiredStartup = (parent) => ({
+        version: 1,
+        token: parent.token,
+        parent,
+        startup: true,
+        startupDeadline: 1_500,
+        startedAt: 1_000,
+      });
+      write(projectLease, `${JSON.stringify(projectParent)}\n`);
+      write(projectChild, `${JSON.stringify(expiredStartup(projectParent))}\n`);
+      write(readerLease, `${JSON.stringify(readerParent)}\n`);
+      write(readerChild, `${JSON.stringify(expiredStartup(readerParent))}\n`);
+
+      const dependencies = {
+        log: () => {},
+        now: () => 2_000,
+        processStartIdentity(pid) {
+          return pid === process.pid ? processStartIdentity(process.pid) : null;
+        },
+      };
+      const releaseProject = acquireProjectLease(
+        commonDir,
+        { project: 'api', projectPath: 'apps/api', taskId: 'TASK-005' },
+        dependencies
+      );
+      const releaseWriter = acquireRepositoryGate(
+        commonDir,
+        'write',
+        { project: 'web', projectPath: 'apps/web', taskId: 'TASK-005' },
+        dependencies
+      );
+
+      assert.strictEqual(fs.existsSync(projectChild), false);
+      assert.strictEqual(fs.existsSync(readerChild), false);
+      releaseWriter();
+      releaseProject();
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('defers a different-project repository writer while an orphaned phase child holds its reader lease', () => {
     const { acquireRepositoryGate, processStartIdentity } = require(RUNNER);
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-orphan-reader-child-'));
@@ -2076,7 +2143,23 @@ for (let index = 0; index < 100000; index++) fs.writeSync(1, record);
       write(claude, `#!/usr/bin/env node
 const fs = require('fs');
 const records = JSON.parse(Buffer.from(process.env.GROUNDWORK_PHASE_CHILD_RECORDS || '', 'base64').toString('utf8'));
-if (!Array.isArray(records) || records.length !== 2 || !records.every((record) => fs.existsSync(record.path))) process.exit(8);
+function processStartIdentity(pid) {
+  try {
+    const fields = fs.readFileSync('/proc/' + pid + '/stat', 'utf8').trim().split(/\\s+/);
+    if (fields.length > 21 && /^\\d+$/.test(fields[21])) return 'proc:' + fields[21];
+  } catch {}
+  return null;
+}
+if (!Array.isArray(records) || records.length !== 2) process.exit(8);
+for (const record of records) {
+  if (!fs.existsSync(record.path)) process.exit(9);
+  const child = JSON.parse(fs.readFileSync(record.path, 'utf8'));
+  const ownProcessStart = processStartIdentity(process.pid);
+  if (child.startup === true || child.pid !== process.pid
+      || (ownProcessStart && child.processStart !== ownProcessStart)
+      || typeof child.processStart !== 'string' || child.processStart.length === 0
+      || JSON.stringify(child.parent) !== JSON.stringify(record.parent)) process.exit(10);
+}
 console.log(JSON.stringify({ type: 'result', result: 'RESULT: TEST' }));
 `);
       fs.chmodSync(claude, 0o755);

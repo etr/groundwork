@@ -21,6 +21,7 @@ const MAX_TASK_BYTES = 10 * 1024 * 1024;
 const DEFAULT_HEARTBEAT_MS = 30_000;
 const MAX_DIAGNOSTIC_BYTES = 64 * 1024;
 const MAX_CHECKPOINT_BYTES = 64 * 1024;
+const PHASE_CHILD_STARTUP_MS = 10_000;
 
 function formatElapsed(milliseconds) {
   const seconds = Math.max(0, Math.floor(milliseconds / 1000));
@@ -591,8 +592,13 @@ function readPhaseChildRecord(leasePath, parent, dependencies = {}) {
     }
     const child = JSON.parse(fs.readFileSync(fd, 'utf8'));
     const startup = child && child.startup === true;
+    const startupDeadlineIsValid = startup
+      && Number.isFinite(child.startupDeadline)
+      && child.startupDeadline >= child.startedAt
+      && child.startupDeadline <= child.startedAt + PHASE_CHILD_STARTUP_MS;
     if (!child || child.version !== 1 || !sameLeaseIdentity(child.parent, parent)
         || !Number.isFinite(child.startedAt) || child.startedAt <= 0
+        || (startup && !startupDeadlineIsValid)
         || (!startup && (!Number.isInteger(child.pid) || child.pid < 1
           || typeof child.processStart !== 'string' || !child.processStart || child.processStart.length > 256))) {
       throw new Error(`Phase child record has invalid ownership: ${recordPath}`);
@@ -610,7 +616,12 @@ function readPhaseChildRecord(leasePath, parent, dependencies = {}) {
 
 function phaseChildIsLive(leasePath, parent, dependencies = {}) {
   const child = readPhaseChildRecord(leasePath, parent, dependencies);
-  return Boolean(child && (child.startup || processStartIdentity(child.pid, dependencies) === child.processStart));
+  if (!child) return false;
+  if (child.startup) {
+    const parentIsLive = processStartIdentity(parent.pid, dependencies) === parent.processStart;
+    return parentIsLive || (dependencies.now || Date.now)() <= child.startupDeadline;
+  }
+  return processStartIdentity(child.pid, dependencies) === child.processStart;
 }
 
 function removePhaseChildRecord(leasePath, parent) {
@@ -2123,7 +2134,35 @@ function processStartIdentity(targetPid) {
     throw new Error("Cannot identify phase child process instance");
   }
 }
+function sameParent(left, right) {
+  return Boolean(left && right
+    && left.version === right.version
+    && left.pid === right.pid
+    && left.processStart === right.processStart
+    && left.token === right.token
+    && left.project === right.project
+    && left.projectPath === right.projectPath
+    && left.taskId === right.taskId
+    && left.startedAt === right.startedAt
+    && left.protocol === right.protocol);
+}
+function startupRecordIsCurrent(record) {
+  let startup;
+  try {
+    startup = JSON.parse(fs.readFileSync(record.path, "utf8"));
+  } catch {
+    return false;
+  }
+  const parentIsLive = processStartIdentity(record.parent.pid) === record.parent.processStart;
+  return startup && startup.version === 1 && startup.startup === true
+    && startup.startupDeadline === record.startupDeadline
+    && sameParent(startup.parent, record.parent)
+    && (parentIsLive || Date.now() <= record.startupDeadline);
+}
 for (const record of records) {
+  // Do not let a delayed shell replace a marker which a successor has already
+  // reclaimed after its parent died.  A live parent may finish a delayed handoff.
+  if (!startupRecordIsCurrent(record)) process.exit(75);
   const staging = record.path + ".staging-" + crypto.randomBytes(8).toString("hex");
   const fd = fs.openSync(staging, "wx", 0o600);
   try {
@@ -2145,14 +2184,17 @@ function phaseChildEnvironment(input) {
   const records = [];
   try {
     for (const lease of leases) {
+      const startedAt = Date.now();
+      const startupDeadline = startedAt + PHASE_CHILD_STARTUP_MS;
       publishRecordAtomically(lease.recordPath, {
         version: 1,
         token: lease.owner.token,
         parent: lease.owner,
         startup: true,
-        startedAt: Date.now(),
+        startupDeadline,
+        startedAt,
       });
-      records.push(lease);
+      records.push({ ...lease, startupDeadline });
     }
   } catch (error) {
     for (const lease of records) removePhaseChildRecord(lease.leasePath, lease.owner);
@@ -2163,7 +2205,9 @@ function phaseChildEnvironment(input) {
     environment: {
       GROUNDWORK_PHASE_CHILD_RECORD: records[0].recordPath,
       GROUNDWORK_PHASE_PARENT: Buffer.from(JSON.stringify(records[0].owner)).toString('base64'),
-      GROUNDWORK_PHASE_CHILD_RECORDS: Buffer.from(JSON.stringify(records.map(({ recordPath, owner }) => ({ path: recordPath, parent: owner })))).toString('base64'),
+      GROUNDWORK_PHASE_CHILD_RECORDS: Buffer.from(JSON.stringify(records.map(({ recordPath, owner, startupDeadline }) => ({
+        path: recordPath, parent: owner, startupDeadline,
+      })))).toString('base64'),
     },
   };
 }
