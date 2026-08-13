@@ -590,10 +590,11 @@ function readPhaseChildRecord(leasePath, parent, dependencies = {}) {
       throw new Error(`Phase child record is unsafe: ${recordPath}`);
     }
     const child = JSON.parse(fs.readFileSync(fd, 'utf8'));
+    const startup = child && child.startup === true;
     if (!child || child.version !== 1 || !sameLeaseIdentity(child.parent, parent)
-        || !Number.isInteger(child.pid) || child.pid < 1
-        || typeof child.processStart !== 'string' || !child.processStart || child.processStart.length > 256
-        || !Number.isFinite(child.startedAt) || child.startedAt <= 0) {
+        || !Number.isFinite(child.startedAt) || child.startedAt <= 0
+        || (!startup && (!Number.isInteger(child.pid) || child.pid < 1
+          || typeof child.processStart !== 'string' || !child.processStart || child.processStart.length > 256))) {
       throw new Error(`Phase child record has invalid ownership: ${recordPath}`);
     }
     return child;
@@ -609,7 +610,7 @@ function readPhaseChildRecord(leasePath, parent, dependencies = {}) {
 
 function phaseChildIsLive(leasePath, parent, dependencies = {}) {
   const child = readPhaseChildRecord(leasePath, parent, dependencies);
-  return Boolean(child && processStartIdentity(child.pid, dependencies) === child.processStart);
+  return Boolean(child && (child.startup || processStartIdentity(child.pid, dependencies) === child.processStart));
 }
 
 function removePhaseChildRecord(leasePath, parent) {
@@ -620,6 +621,22 @@ function removePhaseChildRecord(leasePath, parent) {
     if (error.code !== 'ENOENT') throw error;
   }
 }
+
+function phaseChildLeases(input) {
+  const leases = input.phaseLeases || (input.phaseLease ? [input.phaseLease] : []);
+  const paths = new Set();
+  return leases.map(({ leasePath, owner }) => {
+    if (!leasePath || !owner || !sameLeaseIdentity(owner, owner)) {
+      throw new Error('Phase child lease identity is invalid');
+    }
+    const recordPath = phaseChildRecordPath(leasePath, owner);
+    if (paths.has(recordPath)) throw new Error('Phase child lease record is duplicated');
+    paths.add(recordPath);
+    createContainedDirectory(path.dirname(leasePath), path.dirname(recordPath), 'Phase child record directory');
+    return { leasePath, owner, recordPath };
+  });
+}
+
 
 function fsyncDirectory(directory, dependencies = {}, finalPath = null) {
   let fd;
@@ -1025,7 +1042,7 @@ function liveLeaseFiles(directory, dependencies = {}, expectedName = null) {
   if (dependencies.beforeLeaseDirectoryScan) dependencies.beforeLeaseDirectoryScan(directory);
   reclaimStaleStagingEntries(directory, dependencies);
   for (const name of fs.readdirSync(directory)) {
-    if (name === '.reclaim.lock' || name.startsWith('.staging-')) continue;
+    if (name === '.reclaim.lock' || name === '.phase-children' || name.startsWith('.staging-')) continue;
     if (!/^[0-9a-f]{48}\.lock$/.test(name)) {
       throw new Error(`Repository lease filename is invalid: ${path.join(directory, name)}`);
     }
@@ -1071,7 +1088,7 @@ function activeProjectOwners(commonDir, repoRoot, dependencies = {}) {
   const worktrees = (dependencies.registeredWorktrees || registeredWorktrees)(repoRoot);
   const registeredByPath = new Map(worktrees.map((entry) => [entry.path, entry]));
   for (const name of fs.readdirSync(directory)) {
-    if (name === '.reclaim.lock' || name === '.lease-mutation' || name.startsWith('.staging-')) continue;
+    if (name === '.reclaim.lock' || name === '.lease-mutation' || name === '.phase-children' || name.startsWith('.staging-')) continue;
     if (!/^[0-9a-f]{32}\.lock$/.test(name)) {
       throw new Error(`Project lease filename is invalid: ${path.join(directory, name)}`);
     }
@@ -2081,8 +2098,8 @@ function buildInvocation({ harness, cwd, pluginRoot, prompt, resultFile }) {
 
 const PHASE_CHILD_SUPERVISOR = String.raw`GROUNDWORK_PHASE_CHILD_PID="$$" node -e '
 const fs = require("fs");
-const path = process.env.GROUNDWORK_PHASE_CHILD_RECORD;
-const parent = JSON.parse(Buffer.from(process.env.GROUNDWORK_PHASE_PARENT, "base64").toString("utf8"));
+const crypto = require("crypto");
+const records = JSON.parse(Buffer.from(process.env.GROUNDWORK_PHASE_CHILD_RECORDS, "base64").toString("utf8"));
 const pid = Number(process.env.GROUNDWORK_PHASE_CHILD_PID);
 function processStartIdentity(targetPid) {
   try {
@@ -2106,31 +2123,47 @@ function processStartIdentity(targetPid) {
     throw new Error("Cannot identify phase child process instance");
   }
 }
-const fd = fs.openSync(path, "wx", 0o600);
-try {
-  fs.writeFileSync(fd, JSON.stringify({
-    version: 1, parent, pid, processStart: processStartIdentity(pid), startedAt: Date.now(),
-  }) + "\n", "utf8");
-  fs.fsyncSync(fd);
-} finally {
-  fs.closeSync(fd);
+for (const record of records) {
+  const staging = record.path + ".staging-" + crypto.randomBytes(8).toString("hex");
+  const fd = fs.openSync(staging, "wx", 0o600);
+  try {
+    fs.writeFileSync(fd, JSON.stringify({
+      version: 1, parent: record.parent, pid, processStart: processStartIdentity(pid), startedAt: Date.now(),
+    }) + "\n", "utf8");
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+  fs.renameSync(staging, record.path);
 }
 ' || exit $?
 exec "$@"`;
 
 function phaseChildEnvironment(input) {
-  if (!input.phaseLease) return null;
-  const { leasePath, owner } = input.phaseLease;
-  if (!leasePath || !owner || !sameLeaseIdentity(owner, owner)) {
-    throw new Error('Phase child lease identity is invalid');
+  const leases = phaseChildLeases(input);
+  if (!leases.length) return null;
+  const records = [];
+  try {
+    for (const lease of leases) {
+      publishRecordAtomically(lease.recordPath, {
+        version: 1,
+        token: lease.owner.token,
+        parent: lease.owner,
+        startup: true,
+        startedAt: Date.now(),
+      });
+      records.push(lease);
+    }
+  } catch (error) {
+    for (const lease of records) removePhaseChildRecord(lease.leasePath, lease.owner);
+    throw error;
   }
-  const directory = path.dirname(phaseChildRecordPath(leasePath, owner));
-  createContainedDirectory(path.dirname(leasePath), directory, 'Phase child record directory');
   return {
-    recordPath: phaseChildRecordPath(leasePath, owner),
+    records,
     environment: {
-      GROUNDWORK_PHASE_CHILD_RECORD: phaseChildRecordPath(leasePath, owner),
-      GROUNDWORK_PHASE_PARENT: Buffer.from(JSON.stringify(owner)).toString('base64'),
+      GROUNDWORK_PHASE_CHILD_RECORD: records[0].recordPath,
+      GROUNDWORK_PHASE_PARENT: Buffer.from(JSON.stringify(records[0].owner)).toString('base64'),
+      GROUNDWORK_PHASE_CHILD_RECORDS: Buffer.from(JSON.stringify(records.map(({ recordPath, owner }) => ({ path: recordPath, parent: owner })))).toString('base64'),
     },
   };
 }
@@ -2185,7 +2218,9 @@ function invokePhase(input) {
     if (outputFd !== undefined) fs.closeSync(outputFd);
     if (errorFd !== undefined) fs.closeSync(errorFd);
     stopProgressMonitor(monitor);
-    if (phaseChild) removePhaseChildRecord(input.phaseLease.leasePath, input.phaseLease.owner);
+    if (phaseChild) {
+      for (const lease of phaseChild.records) removePhaseChildRecord(lease.leasePath, lease.owner);
+    }
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 }
@@ -2601,7 +2636,11 @@ function runTasks(options, dependencies = {}) {
         runner: snapshotRunnerFiles(commonDir),
         hooksPaths: readLocalHooksPaths(repoRoot),
       };
-      return callPhase(input);
+      const phaseLeases = input.phaseLeases || (input.phaseLease ? [input.phaseLease] : []);
+      return callPhase({
+        ...input,
+        phaseLeases: [...phaseLeases, { leasePath: releaseGate.leasePath, owner: releaseGate.record }],
+      });
     } finally {
       try {
         if (repositoryState) {
@@ -2682,10 +2721,6 @@ function runTasks(options, dependencies = {}) {
       );
       const expectedBranch = workspace.branch;
       const expectedWorktree = workspace.worktreePath;
-      if (!checkpoint.workspace) {
-        checkpoint.workspace = { branch: expectedBranch, worktreePath: expectedWorktree };
-        saveCheckpoint(commonDir, repoRoot, projectRoot, checkpoint);
-      }
       const releaseWorkspaceGate = acquireRepositoryGate(
         commonDir,
         'write',
@@ -2695,6 +2730,10 @@ function runTasks(options, dependencies = {}) {
       let preparedWorktree;
       try {
         preparedWorktree = prepareTaskWorkspace(repoRoot, workspace, baseSha);
+        if (!checkpoint.workspace) {
+          checkpoint.workspace = { branch: expectedBranch, worktreePath: expectedWorktree };
+          saveCheckpoint(commonDir, repoRoot, projectRoot, checkpoint);
+        }
         const inspectUnrelated = dependencies.inspectUnrelatedWorktrees || snapshotUnrelatedWorktrees;
         inspectUnrelated(repoRoot, projectRoot, preparedWorktree);
       } finally {

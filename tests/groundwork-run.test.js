@@ -262,6 +262,57 @@ describe('module and CLI contract', () => {
     }
   });
 
+  test('defers a different-project repository writer while an orphaned phase child holds its reader lease', () => {
+    const { acquireRepositoryGate, processStartIdentity } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-orphan-reader-child-'));
+    try {
+      initRepo(root);
+      const commonDir = path.join(root, '.git');
+      const token = 'b'.repeat(48);
+      const parent = {
+        version: 1,
+        pid: 999999,
+        processStart: 'proc:stale-parent',
+        token,
+        project: 'api',
+        projectPath: 'apps/api',
+        taskId: 'TASK-004',
+        startedAt: 1_000,
+      };
+      const readerPath = path.join(commonDir, 'groundwork', 'repository-gate', 'readers', `${token}.lock`);
+      const childPath = path.join(commonDir, 'groundwork', 'repository-gate', 'readers', '.phase-children', `${token}.json`);
+      write(readerPath, `${JSON.stringify(parent)}\n`);
+      write(childPath, `${JSON.stringify({
+        version: 1,
+        parent,
+        pid: process.pid,
+        processStart: processStartIdentity(process.pid),
+        startedAt: 1_001,
+      })}\n`);
+
+      assert.throws(
+        () => acquireRepositoryGate(
+          commonDir,
+          'write',
+          { project: 'web', projectPath: 'apps/web', taskId: 'TASK-005' },
+          { log: () => {}, now: () => 2_000, wait() { throw new Error('active orphan reader deferred writer'); } }
+        ),
+        /active orphan reader deferred writer/
+      );
+
+      fs.unlinkSync(childPath);
+      const release = acquireRepositoryGate(
+        commonDir,
+        'write',
+        { project: 'web', projectPath: 'apps/web', taskId: 'TASK-005' },
+        { log: () => {}, now: () => 2_000 }
+      );
+      release();
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('gives a waiting writer priority over new repository readers', () => {
     const { acquireRepositoryGate } = require(RUNNER);
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-repository-gate-'));
@@ -1999,6 +2050,59 @@ for (let index = 0; index < 100000; index++) fs.writeSync(1, record);
     }
   });
 
+  test('registers a phase child against both its project and repository-reader leases before exec', () => {
+    const { invokePhase, processStartIdentity } = require(RUNNER);
+    const fakeBin = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-phase-child-dual-bin-'));
+    const leaseRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-phase-child-dual-lease-'));
+    const previousPath = process.env.PATH;
+    const owner = (token, project) => ({
+      version: 1,
+      pid: process.pid,
+      processStart: processStartIdentity(process.pid),
+      token,
+      project,
+      projectPath: `apps/${project}`,
+      taskId: 'TASK-004',
+      startedAt: Date.now(),
+    });
+    const projectOwner = owner(crypto.randomBytes(24).toString('hex'), 'api');
+    const readerOwner = owner(crypto.randomBytes(24).toString('hex'), 'api');
+    const projectLease = path.join(leaseRoot, 'projects', 'api.lock');
+    const readerLease = path.join(leaseRoot, 'readers', 'api.lock');
+    try {
+      fs.mkdirSync(path.dirname(projectLease), { recursive: true });
+      fs.mkdirSync(path.dirname(readerLease), { recursive: true });
+      const claude = path.join(fakeBin, 'claude');
+      write(claude, `#!/usr/bin/env node
+const fs = require('fs');
+const records = JSON.parse(Buffer.from(process.env.GROUNDWORK_PHASE_CHILD_RECORDS || '', 'base64').toString('utf8'));
+if (!Array.isArray(records) || records.length !== 2 || !records.every((record) => fs.existsSync(record.path))) process.exit(8);
+console.log(JSON.stringify({ type: 'result', result: 'RESULT: TEST' }));
+`);
+      fs.chmodSync(claude, 0o755);
+      process.env.PATH = `${fakeBin}:${previousPath}`;
+      assert.strictEqual(invokePhase({
+        harness: 'claude',
+        phase: 'plan',
+        taskId: 'TASK-004',
+        cwd: process.cwd(),
+        pluginRoot: PLUGIN_ROOT,
+        prompt: 'test prompt',
+        env: {},
+        phaseLeases: [
+          { leasePath: projectLease, owner: projectOwner },
+          { leasePath: readerLease, owner: readerOwner },
+        ],
+      }).trim(), 'RESULT: TEST');
+      assert.strictEqual(fs.existsSync(path.join(path.dirname(projectLease), '.phase-children', `${projectOwner.token}.json`)), false);
+      assert.strictEqual(fs.existsSync(path.join(path.dirname(readerLease), '.phase-children', `${readerOwner.token}.json`)), false);
+    } finally {
+      process.env.PATH = previousPath;
+      fs.rmSync(fakeBin, { recursive: true, force: true });
+      fs.rmSync(leaseRoot, { recursive: true, force: true });
+    }
+  });
+
   test('reports streamed activity and a heartbeat while a phase is running', () => {
     const { invokePhase } = require(RUNNER);
     const fakeBin = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-progress-bin-'));
@@ -2431,6 +2535,64 @@ describe('filesystem safety', () => {
         try { releasePeer(); } catch {}
       }
       fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('does not publish a fresh peer checkpoint while an active phase reader blocks workspace registration', () => {
+    const { runTasks } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-fresh-peer-reader-interleaving-'));
+    const fakeBin = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-fresh-peer-bin-'));
+    const children = [];
+    const previousPath = process.env.PATH;
+    try {
+      git(root, 'init', '-b', 'main');
+      git(root, 'config', 'user.email', 'test@example.com');
+      git(root, 'config', 'user.name', 'Test User');
+      write(path.join(root, '.groundwork.yml'), 'version: 1\nprojects:\n  api:\n    path: apps/api\n  web:\n    path: apps/web\n');
+      write(path.join(root, 'apps', 'api', 'specs', 'tasks.md'), '### TASK-075: Peer\n**Status:** Not Started\n**Blocked by:** None\n');
+      write(path.join(root, 'apps', 'web', 'specs', 'tasks.md'), '### TASK-004: Current\n**Status:** Not Started\n**Blocked by:** None\n');
+      write(path.join(root, '.gitignore'), '.worktrees/\n.groundwork-plans/\n');
+      git(root, 'add', '.');
+      git(root, 'commit', '-m', 'base');
+      const codex = path.join(fakeBin, 'codex');
+      write(codex, '#!/bin/sh\nexit 99\n');
+      fs.chmodSync(codex, 0o755);
+      process.env.PATH = `${fakeBin}:${previousPath}`;
+      const commonDir = path.join(root, '.git');
+      const projectKey = crypto.createHash('sha256').update('apps/api').digest('hex').slice(0, 16);
+      const checkpoint = path.join(commonDir, 'groundwork', 'runner', projectKey, 'TASK-075.json');
+
+      assert.throws(
+        () => runTasks(
+          { command: 'task', harness: 'codex', repo: root, project: 'web', tasks: ['TASK-004'], dryRun: false },
+          {
+            log: () => {},
+            invokePhase(input) {
+              if (input.phase === 'plan') {
+                children.push(spawn(process.execPath, [
+                  RUNNER, 'task', 'TASK-075', '--harness', 'codex', '--repo', root, '--project', 'api',
+                ], { stdio: ['ignore', 'ignore', 'inherit'], env: process.env }));
+                const waitingWriters = path.join(commonDir, 'groundwork', 'repository-gate', 'writers-waiting');
+                const deadline = Date.now() + 5_000;
+                while (!fs.existsSync(waitingWriters) || !fs.readdirSync(waitingWriters).some((name) => name.endsWith('.lock'))) {
+                  if (Date.now() >= deadline) throw new Error('fresh peer did not wait for active phase reader');
+                  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+                }
+                assert.strictEqual(fs.existsSync(checkpoint), false, 'fresh peer checkpoint published before its workspace was registered');
+                writePlan(input.projectRoot);
+                return 'RESULT: PLANNED | plan_file_path=.groundwork-plans/TASK-004-plan.md | identifier=TASK-004 | branch_prefix=task';
+              }
+              throw new Error('implementation reached after accepting fresh blocked peer');
+            },
+          }
+        ),
+        /implementation reached after accepting fresh blocked peer/
+      );
+    } finally {
+      process.env.PATH = previousPath;
+      for (const child of children) child.kill();
+      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(fakeBin, { recursive: true, force: true });
     }
   });
 
