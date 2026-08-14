@@ -21,6 +21,7 @@ const MAX_TASK_BYTES = 10 * 1024 * 1024;
 const DEFAULT_HEARTBEAT_MS = 30_000;
 const MAX_DIAGNOSTIC_BYTES = 64 * 1024;
 const MAX_CHECKPOINT_BYTES = 64 * 1024;
+const PHASE_CHILD_STARTUP_MS = 10_000;
 
 function formatElapsed(milliseconds) {
   const seconds = Math.max(0, Math.floor(milliseconds / 1000));
@@ -394,100 +395,845 @@ function createContainedDirectory(parent, child, label) {
         throw new Error(`${label} contains a non-directory or symlink: ${current}`);
       }
     } else {
-      fs.mkdirSync(current, { mode: 0o700 });
+      try {
+        fs.mkdirSync(current, { mode: 0o700 });
+      } catch (error) {
+        if (error.code !== 'EEXIST') throw error;
+        const stat = fs.lstatSync(current);
+        if (stat.isSymbolicLink() || !stat.isDirectory()) {
+          throw new Error(`${label} contains a non-directory or symlink: ${current}`);
+        }
+      }
     }
   }
 }
 
-function acquireRunnerLease(commonDir, owner, dependencies = {}) {
-  const log = dependencies.log || console.log;
-  const now = dependencies.now || Date.now;
+function waitForLease(dependencies) {
   const wait = dependencies.wait || ((milliseconds) => {
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
   });
-  const heartbeatMs = dependencies.heartbeatMs || 30_000;
-  const leaseDirectory = path.join(commonDir, 'groundwork');
-  const leasePath = path.join(leaseDirectory, 'runner.lock');
-  const token = crypto.randomBytes(24).toString('hex');
-  let lastProgressAt = -Infinity;
+  wait(1_000);
+}
 
-  createContainedDirectory(commonDir, leaseDirectory, 'Runner lease directory');
-  for (;;) {
+function waitForLeaseMutation(dependencies, milliseconds = 10) {
+  const wait = dependencies.mutationWait || dependencies.wait || ((milliseconds) => {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
+  });
+  wait(milliseconds);
+}
+
+function processStartIdentity(pid, dependencies = {}) {
+  if (dependencies.processStartIdentity) return dependencies.processStartIdentity(pid);
+  const procStat = `/proc/${pid}/stat`;
+  try {
+    const fields = fs.readFileSync(procStat, 'utf8').trim().split(/\s+/);
+    if (fields.length > 21 && /^\d+$/.test(fields[21])) return `proc:${fields[21]}`;
+  } catch (error) {
+    if (!['ENOENT', 'EACCES', 'EPERM'].includes(error.code)) throw error;
+  }
+  try {
+    const value = execFileSync('ps', ['-o', 'lstart=', '-p', String(pid)], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    return value || null;
+  } catch {
     try {
-      const fd = fs.openSync(leasePath, 'wx', 0o600);
-      try {
-        fs.writeFileSync(fd, `${JSON.stringify({
-          version: 1,
-          pid: process.pid,
-          token,
-          project: String(owner.project || ''),
-          taskId: String(owner.taskId || ''),
-          startedAt: now(),
-        })}\n`, 'utf8');
-        fs.fsyncSync(fd);
-      } finally {
-        fs.closeSync(fd);
+      process.kill(pid, 0);
+      return `pid:${pid}`;
+    } catch (error) {
+      if (error.code === 'EPERM') return `pid:${pid}`;
+      if (error.code === 'ESRCH') return null;
+      throw error;
+    }
+  }
+}
+
+function validLeaseText(value, maximum = 128) {
+  return typeof value === 'string' && value.length <= maximum && !/[\x00-\x1f\x7f]/.test(value);
+}
+
+function normalizeLeaseOwner(owner) {
+  const project = String(owner.project || '.');
+  const projectPath = String(owner.projectPath || '.');
+  const taskId = String(owner.taskId || '');
+  if (!validLeaseText(project) || !project || !/^[A-Za-z0-9._-]+$/.test(project)) {
+    throw new Error('Repository lease project is invalid');
+  }
+  if (!validLeaseText(projectPath, 512) || path.isAbsolute(projectPath)
+      || projectPath.split(/[\\/]/).includes('..')) {
+    throw new Error('Repository lease project path is invalid');
+  }
+  if (taskId !== 'setup' && !TASK_ID.test(taskId)) {
+    throw new Error('Repository lease task identifier is invalid');
+  }
+  return { project, projectPath: projectPath || '.', taskId };
+}
+
+function inspectLease(leasePath, dependencies = {}, expectedToken = null) {
+  if (dependencies.beforeLeaseInspect) dependencies.beforeLeaseInspect(leasePath);
+  let fd;
+  let holder;
+  try {
+    fd = fs.openSync(leasePath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.size > 4_096) {
+      throw new Error(`Repository lease is unsafe: ${leasePath}`);
+    }
+    try {
+      holder = JSON.parse(fs.readFileSync(fd, 'utf8'));
+    } catch {
+      throw new Error(`Repository lease is invalid: ${leasePath}`);
+    }
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    if (error.code === 'ELOOP') throw new Error(`Repository lease is unsafe: ${leasePath}`);
+    throw error;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+  if (holder && holder.projectPath === undefined) holder.projectPath = '.';
+  if (!holder || holder.version !== 1 || !Number.isInteger(holder.pid) || holder.pid < 1
+      || typeof holder.token !== 'string' || !/^[0-9a-f]{48}$/.test(holder.token)
+      || !validLeaseText(holder.project) || !holder.project
+      || !/^[A-Za-z0-9._-]+$/.test(holder.project)
+      || !validLeaseText(holder.projectPath, 512) || path.isAbsolute(holder.projectPath)
+      || holder.projectPath.split(/[\\/]/).includes('..')
+      || (holder.taskId !== 'setup' && !TASK_ID.test(holder.taskId))
+      || !Number.isFinite(holder.startedAt) || holder.startedAt <= 0
+      || holder.startedAt > (dependencies.now || Date.now)() + 300_000
+      || (expectedToken && holder.token !== expectedToken)) {
+    throw new Error(`Repository lease has invalid ownership: ${leasePath}`);
+  }
+  const currentIdentity = processStartIdentity(holder.pid, dependencies);
+  const ownerLive = typeof holder.processStart === 'string'
+    && holder.processStart.length > 0
+    && holder.processStart.length <= 256
+    && holder.processStart === currentIdentity;
+  return { holder, live: ownerLive || phaseChildIsLive(leasePath, holder, dependencies) };
+}
+
+function inspectLegacyRunnerLease(leasePath) {
+  let fd;
+  let holder;
+  try {
+    fd = fs.openSync(leasePath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.size > 4_096) {
+      throw new Error(`Legacy runner lease is unsafe: ${leasePath}`);
+    }
+    try {
+      holder = JSON.parse(fs.readFileSync(fd, 'utf8'));
+    } catch {
+      throw new Error(`Legacy runner lease is invalid: ${leasePath}`);
+    }
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    if (error.code === 'ELOOP') throw new Error(`Legacy runner lease is unsafe: ${leasePath}`);
+    throw error;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+  if (!holder || holder.version !== 1 || !Number.isInteger(holder.pid) || holder.pid < 1
+      || typeof holder.token !== 'string' || !/^[0-9a-f]{48}$/.test(holder.token)
+      || !validLeaseText(holder.project) || !validLeaseText(holder.taskId)
+      || !Number.isFinite(holder.startedAt) || holder.startedAt <= 0) {
+    throw new Error(`Legacy runner lease has invalid ownership: ${leasePath}`);
+  }
+  let live = true;
+  try {
+    process.kill(holder.pid, 0);
+  } catch (error) {
+    if (error.code === 'ESRCH') live = false;
+    else if (error.code !== 'EPERM') throw error;
+  }
+  return { holder, live };
+}
+
+function requireDrainedLegacyRunner(commonDir) {
+  const leasePath = path.join(commonDir, 'groundwork', 'runner.lock');
+  const legacy = inspectLegacyRunnerLease(leasePath);
+  if (!legacy) return;
+  if (!legacy.live) {
+    throw new Error(`Legacy runner lease is stale and cannot be safely reclaimed: ${leasePath}; remove it manually after confirming no pre-upgrade runner remains`);
+  }
+  const heldBy = [legacy.holder.project, legacy.holder.taskId].filter(Boolean).join(' ');
+  throw new Error(
+    `Detected pre-upgrade runner${heldBy ? ` (${heldBy}, pid ${legacy.holder.pid})` : ` (pid ${legacy.holder.pid})`} at ${leasePath}. ` +
+    'Groundwork runner v2 requires a drained upgrade: stop all earlier runners and launchers before installing or starting v2; mixed-version operation is unsupported.'
+  );
+}
+
+function sameLeaseIdentity(left, right) {
+  return Boolean(left && right
+    && left.version === right.version
+    && left.pid === right.pid
+    && left.processStart === right.processStart
+    && left.token === right.token
+    && left.project === right.project
+    && left.projectPath === right.projectPath
+    && left.taskId === right.taskId
+    && left.startedAt === right.startedAt
+    && left.protocol === right.protocol);
+}
+
+function phaseChildRecordPath(leasePath, holder) {
+  return path.join(path.dirname(leasePath), '.phase-children', `${holder.token}.json`);
+}
+
+function readPhaseChildRecord(leasePath, parent, dependencies = {}) {
+  const recordPath = phaseChildRecordPath(leasePath, parent);
+  let fd;
+  try {
+    fd = fs.openSync(recordPath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.size > 4_096) {
+      throw new Error(`Phase child record is unsafe: ${recordPath}`);
+    }
+    const child = JSON.parse(fs.readFileSync(fd, 'utf8'));
+    const startup = child && child.startup === true;
+    const startupDeadlineIsValid = startup
+      && Number.isFinite(child.startupDeadline)
+      && child.startupDeadline >= child.startedAt
+      && child.startupDeadline <= child.startedAt + PHASE_CHILD_STARTUP_MS;
+    if (!child || child.version !== 1 || !sameLeaseIdentity(child.parent, parent)
+        || !Number.isFinite(child.startedAt) || child.startedAt <= 0
+        || (startup && !startupDeadlineIsValid)
+        || (!startup && (!Number.isInteger(child.pid) || child.pid < 1
+          || typeof child.processStart !== 'string' || !child.processStart || child.processStart.length > 256))) {
+      throw new Error(`Phase child record has invalid ownership: ${recordPath}`);
+    }
+    return child;
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    if (error.code === 'ELOOP') throw new Error(`Phase child record is unsafe: ${recordPath}`);
+    if (error instanceof SyntaxError) throw new Error(`Phase child record is invalid: ${recordPath}`);
+    throw error;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+}
+
+function phaseChildIsLive(leasePath, parent, dependencies = {}) {
+  const child = readPhaseChildRecord(leasePath, parent, dependencies);
+  if (!child) return false;
+  if (child.startup) {
+    const parentIsLive = processStartIdentity(parent.pid, dependencies) === parent.processStart;
+    return parentIsLive || (dependencies.now || Date.now)() <= child.startupDeadline;
+  }
+  return processStartIdentity(child.pid, dependencies) === child.processStart;
+}
+
+function removePhaseChildRecord(leasePath, parent) {
+  const recordPath = phaseChildRecordPath(leasePath, parent);
+  try {
+    fs.unlinkSync(recordPath);
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+}
+
+function phaseChildLeases(input) {
+  const leases = input.phaseLeases || (input.phaseLease ? [input.phaseLease] : []);
+  const paths = new Set();
+  return leases.map(({ leasePath, owner }) => {
+    if (!leasePath || !owner || !sameLeaseIdentity(owner, owner)) {
+      throw new Error('Phase child lease identity is invalid');
+    }
+    const recordPath = phaseChildRecordPath(leasePath, owner);
+    if (paths.has(recordPath)) throw new Error('Phase child lease record is duplicated');
+    paths.add(recordPath);
+    createContainedDirectory(path.dirname(leasePath), path.dirname(recordPath), 'Phase child record directory');
+    return { leasePath, owner, recordPath };
+  });
+}
+
+
+function fsyncDirectory(directory, dependencies = {}, finalPath = null) {
+  let fd;
+  try {
+    if (dependencies.beforeLeaseDirectorySync) {
+      dependencies.beforeLeaseDirectorySync(finalPath, directory);
+    }
+    fd = fs.openSync(directory, fs.constants.O_RDONLY);
+    fs.fsyncSync(fd);
+  } catch (error) {
+    if (!['EINVAL', 'ENOTSUP', 'EISDIR'].includes(error.code)) throw error;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+}
+
+function publishRecordAtomically(finalPath, record, dependencies = {}, notify = false) {
+  const stagingPath = path.join(
+    path.dirname(finalPath),
+    `.staging-${record.token}-${crypto.randomBytes(8).toString('hex')}.tmp`
+  );
+  let fd;
+  let published = false;
+  try {
+    fd = fs.openSync(stagingPath, 'wx', 0o600);
+    if (notify && dependencies.afterLeaseStagingCreate) {
+      dependencies.afterLeaseStagingCreate(finalPath, stagingPath, fd);
+    }
+    fs.writeFileSync(fd, `${JSON.stringify(record)}\n`, 'utf8');
+    if (notify && dependencies.afterLeaseStagingWrite) {
+      dependencies.afterLeaseStagingWrite(finalPath, stagingPath, fd);
+    }
+    fs.fsyncSync(fd);
+    if (notify && dependencies.afterLeaseStagingSync) {
+      dependencies.afterLeaseStagingSync(finalPath, stagingPath, fd);
+    }
+    fs.closeSync(fd);
+    fd = undefined;
+    if (notify && dependencies.beforeLeasePublish) {
+      dependencies.beforeLeasePublish(finalPath, stagingPath);
+    }
+    fs.linkSync(stagingPath, finalPath);
+    published = true;
+    fsyncDirectory(path.dirname(finalPath), dependencies, finalPath);
+  } catch (error) {
+    if (fd !== undefined) {
+      try { fs.closeSync(fd); } catch {}
+    }
+    if (published) {
+      try { fs.unlinkSync(finalPath); } catch (cleanupError) {
+        if (cleanupError.code !== 'ENOENT') throw cleanupError;
       }
+    }
+    try { fs.unlinkSync(stagingPath); } catch (cleanupError) {
+      if (cleanupError.code !== 'ENOENT') throw cleanupError;
+    }
+    throw error;
+  }
+  try {
+    fs.unlinkSync(stagingPath);
+    fsyncDirectory(path.dirname(finalPath), dependencies, finalPath);
+  } catch (error) {
+    // The final hard link is durable and owned by the caller.  Do not turn a
+    // recoverable staging cleanup failure into an acquisition without a release handle.
+    if (error.code !== 'ENOENT' && dependencies.onLeaseStagingCleanupError) {
+      try { dependencies.onLeaseStagingCleanupError(finalPath, stagingPath, error); } catch {}
+    }
+  }
+  return record;
+}
+
+function inspectMutationEntry(entryPath) {
+  let fd;
+  let entry;
+  try {
+    fd = fs.openSync(entryPath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.size > 4_096) {
+      throw new Error(`Repository lease mutation entry is unsafe: ${entryPath}`);
+    }
+    entry = JSON.parse(fs.readFileSync(fd, 'utf8'));
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    if (error.code === 'ELOOP') {
+      throw new Error(`Repository lease mutation entry is unsafe: ${entryPath}`);
+    }
+    if (error instanceof SyntaxError) {
+      throw new Error(`Repository lease mutation entry is invalid: ${entryPath}`);
+    }
+    throw error;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+  const expectedToken = path.basename(entryPath, '.lock');
+  if (!entry || entry.version !== 1 || !Number.isInteger(entry.pid) || entry.pid < 1
+      || entry.token !== expectedToken || !/^[0-9a-f]{48}$/.test(entry.token)
+      || !Number.isInteger(entry.ticket) || entry.ticket < 0
+      || typeof entry.processStart !== 'string' || !entry.processStart
+      || entry.processStart.length > 256) {
+    throw new Error(`Repository lease mutation entry has invalid ownership: ${entryPath}`);
+  }
+  return entry;
+}
+
+function reclaimStaleStagingEntries(directory, dependencies = {}) {
+  const reclaimAfter = dependencies.stagingReclaimMs === undefined
+    ? 5 * 60 * 1000
+    : dependencies.stagingReclaimMs;
+  const now = dependencies.now || Date.now;
+  for (const name of fs.readdirSync(directory)) {
+    const match = /^\.staging-([0-9a-f]{48})-[0-9a-f]{16}\.tmp$/.exec(name);
+    if (!match) continue;
+    const file = path.join(directory, name);
+    let initial;
+    try {
+      initial = fs.lstatSync(file);
+    } catch (error) {
+      if (error.code === 'ENOENT') continue;
+      throw error;
+    }
+    if (initial.isSymbolicLink() || !initial.isFile()) {
+      throw new Error(`Repository lease staging record is unsafe: ${file}`);
+    }
+    let stale = false;
+    try {
+      const current = inspectLease(file, dependencies, match[1]);
+      stale = Boolean(current && !current.live);
+    } catch {
+      stale = now() - initial.mtimeMs >= reclaimAfter;
+    }
+    if (!stale) continue;
+    try {
+      const current = fs.lstatSync(file);
+      if (current.isSymbolicLink() || !current.isFile()
+          || current.ino !== initial.ino || current.size !== initial.size
+          || current.mtimeMs !== initial.mtimeMs) continue;
+      fs.unlinkSync(file);
+      fsyncDirectory(directory, dependencies, file);
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    }
+  }
+}
+
+function mutationEntries(directory) {
+  const entries = [];
+  for (const name of fs.readdirSync(directory)) {
+    if (name.startsWith('.staging-')) continue;
+    if (!/^[0-9a-f]{48}\.lock$/.test(name)) {
+      throw new Error(`Repository lease mutation filename is invalid: ${path.join(directory, name)}`);
+    }
+    const file = path.join(directory, name);
+    const entry = inspectMutationEntry(file);
+    if (entry) entries.push({ file, ...entry });
+  }
+  return entries;
+}
+
+function waitForMutationEntry(entryPath, localProcessStart, dependencies = {}) {
+  let retryDelay = 10;
+  for (;;) {
+    const current = inspectMutationEntry(entryPath);
+    if (!current) return;
+    const localOwner = current.pid === process.pid && current.processStart === localProcessStart;
+    const live = localOwner || processStartIdentity(current.pid, dependencies) === current.processStart;
+    if (!live) {
+      try { fs.unlinkSync(entryPath); } catch (error) {
+        if (error.code !== 'ENOENT') throw error;
+      }
+      return;
+    }
+    waitForLeaseMutation(dependencies, retryDelay);
+    retryDelay = Math.min(retryDelay * 2, 250);
+  }
+}
+
+function acquireLeaseMutation(mutationRoot, dependencies = {}) {
+  const mutationDirectory = path.join(mutationRoot, '.lease-mutation');
+  const choosingDirectory = path.join(mutationDirectory, 'choosing');
+  const ticketsDirectory = path.join(mutationDirectory, 'tickets');
+  createContainedDirectory(path.dirname(mutationRoot), choosingDirectory, 'Repository lease mutation directory');
+  createContainedDirectory(path.dirname(mutationRoot), ticketsDirectory, 'Repository lease mutation directory');
+  const token = crypto.randomBytes(24).toString('hex');
+  const processStart = processStartIdentity(process.pid, dependencies);
+  if (!processStart) throw new Error('Cannot identify the runner process instance');
+  const baseRecord = {
+    version: 1,
+    pid: process.pid,
+    processStart,
+    token,
+    startedAt: (dependencies.now || Date.now)(),
+  };
+  const choosingPath = path.join(choosingDirectory, `${token}.lock`);
+  const ticketPath = path.join(ticketsDirectory, `${token}.lock`);
+  let ticketPublished = false;
+  try {
+    publishRecordAtomically(choosingPath, { ...baseRecord, ticket: 0 }, dependencies);
+    reclaimStaleStagingEntries(choosingDirectory, dependencies);
+    reclaimStaleStagingEntries(ticketsDirectory, dependencies);
+    const currentTickets = mutationEntries(ticketsDirectory);
+    const ticket = currentTickets.reduce((maximum, entry) => Math.max(maximum, entry.ticket), 0) + 1;
+    publishRecordAtomically(ticketPath, { ...baseRecord, ticket }, dependencies);
+    ticketPublished = true;
+    fs.unlinkSync(choosingPath);
+
+    const choosing = mutationEntries(choosingDirectory)
+      .filter((entry) => entry.token !== token);
+    for (const contender of choosing) {
+      waitForMutationEntry(contender.file, processStart, dependencies);
+    }
+
+    const predecessors = mutationEntries(ticketsDirectory)
+      .filter((entry) => entry.token !== token
+        && (entry.ticket < ticket || (entry.ticket === ticket && entry.token < token)))
+      .sort((left, right) => right.ticket - left.ticket || right.token.localeCompare(left.token));
+    for (const predecessor of predecessors) {
+      waitForMutationEntry(predecessor.file, processStart, dependencies);
+    }
+    return () => {
+      try {
+        fs.unlinkSync(ticketPath);
+      } catch (error) {
+        if (error.code !== 'ENOENT') throw error;
+      }
+    };
+  } catch (error) {
+    let cleanupError = null;
+    try { fs.unlinkSync(choosingPath); } catch (currentError) {
+      if (currentError.code !== 'ENOENT') cleanupError = currentError;
+    }
+    if (ticketPublished) {
+      try { fs.unlinkSync(ticketPath); } catch (currentError) {
+        if (currentError.code !== 'ENOENT' && !cleanupError) cleanupError = currentError;
+      }
+    }
+    if (cleanupError) throw cleanupError;
+    throw error;
+  }
+}
+
+function removeLeaseIfIdentity(leasePath, expected, dependencies = {}) {
+  const current = inspectLease(leasePath, dependencies);
+  if (!current || !sameLeaseIdentity(current.holder, expected)) return false;
+  if (dependencies.beforeLeaseRemove) dependencies.beforeLeaseRemove(leasePath, expected);
+  try {
+    fs.unlinkSync(leasePath);
+    removePhaseChildRecord(leasePath, expected);
+    return true;
+  } catch (error) {
+    if (error.code === 'ENOENT') return false;
+    throw error;
+  }
+}
+
+function acquireLegacyRecoveryLease(recoveryPath, dependencies = {}) {
+  const token = crypto.randomBytes(24).toString('hex');
+  const processStart = processStartIdentity(process.pid, dependencies);
+  if (!processStart) throw new Error('Cannot identify the runner process instance');
+  const record = {
+    version: 1,
+    pid: process.pid,
+    processStart,
+    token,
+    project: 'recovery',
+    projectPath: '.',
+    taskId: 'setup',
+    startedAt: (dependencies.now || Date.now)(),
+  };
+  for (;;) {
+    if (dependencies.beforeLegacyRecoveryPublish) {
+      dependencies.beforeLegacyRecoveryPublish(recoveryPath);
+    }
+    try {
+      publishRecordAtomically(recoveryPath, record, dependencies);
       break;
     } catch (error) {
       if (error.code !== 'EEXIST') throw error;
     }
+    const current = inspectLease(recoveryPath, dependencies);
+    if (!current) continue;
+    if (current.live) return null;
+    throw new Error('Cannot safely reclaim while a stale legacy recovery record exists; wait for legacy runners to drain or remove it manually');
+  }
+  return () => {
+    const current = inspectLease(recoveryPath, dependencies);
+    if (!current || !sameLeaseIdentity(current.holder, record)) {
+      throw new Error('Repository recovery lease ownership changed before release');
+    }
+    if (!removeLeaseIfIdentity(recoveryPath, record, dependencies)) {
+      throw new Error('Repository recovery lease disappeared before release');
+    }
+  };
+}
 
-    const stat = fs.lstatSync(leasePath);
-    if (stat.isSymbolicLink() || !stat.isFile() || stat.size > 4_096) {
-      throw new Error(`Runner lease is unsafe: ${leasePath}`);
-    }
-    let holder;
+function reclaimStaleLease(leasePath, expected, dependencies = {}) {
+  const mutationRoot = dependencies.mutationRoot || path.dirname(leasePath);
+  for (;;) {
+    const releaseMutation = acquireLeaseMutation(mutationRoot, dependencies);
+    let releaseRecovery;
+    let result;
     try {
-      holder = JSON.parse(fs.readFileSync(leasePath, 'utf8'));
-    } catch {
-      throw new Error(`Runner lease is invalid: ${leasePath}`);
-    }
-    if (!holder || holder.version !== 1 || !Number.isInteger(holder.pid) || holder.pid < 1) {
-      throw new Error(`Runner lease has invalid ownership: ${leasePath}`);
-    }
-    let active = true;
-    try {
-      process.kill(holder.pid, 0);
-    } catch (error) {
-      if (error.code === 'ESRCH') active = false;
-      else if (error.code !== 'EPERM') throw error;
-    }
-    if (!active) {
-      try {
-        fs.unlinkSync(leasePath);
-      } catch (error) {
-        if (error.code !== 'ENOENT') throw error;
+      const legacyRecoveryPath = path.join(mutationRoot, '.reclaim.lock');
+      releaseRecovery = acquireLegacyRecoveryLease(legacyRecoveryPath, dependencies);
+      if (releaseRecovery) {
+        const inspected = inspectLease(leasePath, dependencies);
+        if (!inspected) result = true;
+        else if (!sameLeaseIdentity(inspected.holder, expected) || inspected.live) result = false;
+        else result = removeLeaseIfIdentity(leasePath, expected, dependencies);
       }
-      continue;
+    } finally {
+      try {
+        if (releaseRecovery) releaseRecovery();
+      } finally {
+        releaseMutation();
+      }
     }
+    if (releaseRecovery) return result;
+    waitForLeaseMutation(dependencies);
+  }
+}
 
+function readLiveLease(leasePath, dependencies = {}, expectedToken = null) {
+  const inspected = inspectLease(leasePath, dependencies, expectedToken);
+  if (!inspected) return null;
+  if (inspected.live) return inspected.holder;
+  reclaimStaleLease(leasePath, inspected.holder, dependencies);
+  return null;
+}
+
+function createOwnedLease(leasePath, owner, dependencies = {}, requestedToken = null) {
+  const now = dependencies.now || Date.now;
+  const token = requestedToken || crypto.randomBytes(24).toString('hex');
+  const normalizedOwner = normalizeLeaseOwner(owner);
+  const processStart = processStartIdentity(process.pid, dependencies);
+  if (!processStart) throw new Error('Cannot identify the runner process instance');
+  const record = {
+    version: 1,
+    pid: process.pid,
+    processStart,
+    token,
+    ...normalizedOwner,
+    startedAt: now(),
+    ...(dependencies.recordExtensions || {}),
+  };
+  const mutationRoot = dependencies.mutationRoot || path.dirname(leasePath);
+  const releaseMutation = acquireLeaseMutation(mutationRoot, dependencies);
+  try {
+    publishRecordAtomically(leasePath, record, dependencies, true);
+  } finally {
+    releaseMutation();
+  }
+  const release = () => {
+    const releaseRemoval = acquireLeaseMutation(mutationRoot, dependencies);
+    try {
+      const current = inspectLease(leasePath, dependencies);
+      if (!current || !sameLeaseIdentity(current.holder, record)) {
+        throw new Error('Repository lease ownership changed before release');
+      }
+      if (!removeLeaseIfIdentity(leasePath, record, dependencies)) {
+        throw new Error('Repository lease disappeared before release');
+      }
+    } finally {
+      releaseRemoval();
+    }
+  };
+  release.record = record;
+  release.leasePath = leasePath;
+  return release;
+}
+
+function acquireProjectLease(commonDir, owner, dependencies = {}) {
+  const log = dependencies.log || console.log;
+  const now = dependencies.now || Date.now;
+  const project = String(owner.project || '.');
+  const projectKey = crypto.createHash('sha256').update(project).digest('hex').slice(0, 32);
+  const directory = path.join(commonDir, 'groundwork', 'projects');
+  const leasePath = path.join(directory, `${projectKey}.lock`);
+  const leaseDependencies = { ...dependencies, mutationRoot: directory };
+  let lastProgressAt = -Infinity;
+  createContainedDirectory(commonDir, directory, 'Project lease directory');
+  for (;;) {
+    try {
+      return createOwnedLease(leasePath, owner, leaseDependencies);
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw error;
+    }
+    const holder = readLiveLease(leasePath, leaseDependencies);
+    if (!holder) continue;
     const current = now();
-    if (current - lastProgressAt >= heartbeatMs) {
-      const heldBy = [holder.project, holder.taskId].filter(Boolean).join(' ');
-      log(`[${formatLocalTimestamp(current)}] waiting for repository runner${heldBy ? ` — ${heldBy}` : ''} (pid ${holder.pid})`);
+    if (current - lastProgressAt >= (dependencies.heartbeatMs || 30_000)) {
+      log(`[${formatLocalTimestamp(current)}] waiting for project ${project} task lease — ${holder.taskId || 'unknown'} (pid ${holder.pid})`);
       lastProgressAt = current;
     }
-    wait(1_000);
+    waitForLease(dependencies);
+  }
+}
+
+function liveLeaseFiles(directory, dependencies = {}, expectedName = null) {
+  if (!fs.existsSync(directory)) return [];
+  const stat = fs.lstatSync(directory);
+  if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error(`Repository gate is unsafe: ${directory}`);
+  const entries = [];
+  if (dependencies.beforeLeaseDirectoryScan) dependencies.beforeLeaseDirectoryScan(directory);
+  reclaimStaleStagingEntries(directory, dependencies);
+  for (const name of fs.readdirSync(directory)) {
+    if (name === '.reclaim.lock' || name === '.phase-children' || name.startsWith('.staging-')) continue;
+    if (!/^[0-9a-f]{48}\.lock$/.test(name)) {
+      throw new Error(`Repository lease filename is invalid: ${path.join(directory, name)}`);
+    }
+    const file = path.join(directory, name);
+    const token = name.slice(0, -'.lock'.length);
+    const holder = readLiveLease(file, dependencies, expectedName === 'token' ? token : null);
+    if (holder) entries.push({ file, holder });
+  }
+  return entries;
+}
+
+function readPeerCheckpoint(checkpointFile) {
+  let fd;
+  try {
+    fd = fs.openSync(checkpointFile, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.size > MAX_CHECKPOINT_BYTES) {
+      throw new Error(`Runner checkpoint is invalid: ${checkpointFile}`);
+    }
+    try {
+      return JSON.parse(fs.readFileSync(fd, 'utf8'));
+    } catch {
+      throw new Error(`Runner checkpoint is not valid JSON: ${checkpointFile}`);
+    }
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    if (error.code === 'ELOOP') throw new Error(`Runner checkpoint is invalid: ${checkpointFile}`);
+    throw error;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+}
+
+function activeProjectOwners(commonDir, repoRoot, dependencies = {}) {
+  const directory = path.join(commonDir, 'groundwork', 'projects');
+  if (!fs.existsSync(directory)) return [];
+  const stat = fs.lstatSync(directory);
+  if (stat.isSymbolicLink() || !stat.isDirectory()) {
+    throw new Error(`Project lease directory is unsafe: ${directory}`);
+  }
+  const owners = [];
+  reclaimStaleStagingEntries(directory, dependencies);
+  const worktrees = (dependencies.registeredWorktrees || registeredWorktrees)(repoRoot);
+  const registeredByPath = new Map(worktrees.map((entry) => [entry.path, entry]));
+  for (const name of fs.readdirSync(directory)) {
+    if (name === '.reclaim.lock' || name === '.lease-mutation' || name === '.phase-children' || name.startsWith('.staging-')) continue;
+    if (!/^[0-9a-f]{32}\.lock$/.test(name)) {
+      throw new Error(`Project lease filename is invalid: ${path.join(directory, name)}`);
+    }
+    const file = path.join(directory, name);
+    const holder = readLiveLease(file, dependencies);
+    if (!holder) continue;
+    const expected = `${crypto.createHash('sha256').update(holder.project).digest('hex').slice(0, 32)}.lock`;
+    if (name !== expected) throw new Error(`Project lease filename does not match its owner: ${file}`);
+    const projectKey = crypto.createHash('sha256').update(holder.projectPath).digest('hex').slice(0, 16);
+    const checkpointFile = path.join(commonDir, 'groundwork', 'runner', projectKey, `${holder.taskId}.json`);
+    const checkpoint = readPeerCheckpoint(checkpointFile);
+    if (!checkpoint || checkpoint.taskId !== holder.taskId || checkpoint.project !== holder.projectPath
+        || !checkpoint.workspace || typeof checkpoint.workspace.branch !== 'string'
+        || typeof checkpoint.workspace.worktreePath !== 'string') continue;
+    const candidates = [{
+      branch: `task/${holder.taskId}`,
+      worktreePath: path.join(repoRoot, '.worktrees', holder.taskId),
+    }];
+    if (holder.project !== '.') {
+      candidates.push({
+        branch: `task/${holder.project}/${holder.taskId}`,
+        worktreePath: path.join(repoRoot, '.worktrees', `${holder.project}-${holder.taskId}`),
+      });
+    }
+    if (!candidates.some((candidate) => candidate.branch === checkpoint.workspace.branch
+        && candidate.worktreePath === checkpoint.workspace.worktreePath)) continue;
+    let peerWorktree;
+    try {
+      peerWorktree = fs.realpathSync(checkpoint.workspace.worktreePath);
+    } catch (error) {
+      if (error.code === 'ENOENT') continue;
+      throw error;
+    }
+    const registered = registeredByPath.get(peerWorktree);
+    if (!registered || registered.branch !== `refs/heads/${checkpoint.workspace.branch}`) continue;
+    owners.push({
+      ...holder,
+      branch: checkpoint.workspace.branch,
+      worktreePath: peerWorktree,
+      checkpointPath: checkpointFile,
+    });
+  }
+  return owners;
+}
+
+function acquireRepositoryGate(commonDir, mode, owner, dependencies = {}) {
+  if (!['read', 'write'].includes(mode)) throw new Error(`Invalid repository gate mode: ${mode}`);
+  const log = dependencies.log || console.log;
+  const now = dependencies.now || Date.now;
+  const root = path.join(commonDir, 'groundwork', 'repository-gate');
+  const readers = path.join(root, 'readers');
+  const waitingWriters = path.join(root, 'writers-waiting');
+  const writer = path.join(root, 'writer.lock');
+  const token = crypto.randomBytes(24).toString('hex');
+  const readerPath = path.join(readers, `${token}.lock`);
+  const leaseDependencies = { ...dependencies, mutationRoot: root };
+  let lastProgressAt = -Infinity;
+  // A detected predecessor lease makes the upgrade precondition observable.
+  // This check cannot make a hot mixed-version launch atomic, so callers must
+  // drain old runners and launchers before installing or starting v2.
+  requireDrainedLegacyRunner(commonDir);
+  createContainedDirectory(commonDir, readers, 'Runner checkpoint and repository gate directory');
+  createContainedDirectory(commonDir, waitingWriters, 'Runner checkpoint and repository gate directory');
+
+  function report(kind, holder) {
+    const current = now();
+    if (current - lastProgressAt < (dependencies.heartbeatMs || 30_000)) return;
+    log(`[${formatLocalTimestamp(current)}] waiting for repository ${kind} gate — ${holder.project || 'unknown'} ${holder.taskId || ''} (pid ${holder.pid})`);
+    lastProgressAt = current;
   }
 
-  return () => {
-    if (!fs.existsSync(leasePath)) throw new Error('Runner lease disappeared before release');
-    const stat = fs.lstatSync(leasePath);
-    if (stat.isSymbolicLink() || !stat.isFile() || stat.size > 4_096) {
-      throw new Error(`Runner lease changed before release: ${leasePath}`);
+  if (mode === 'read') {
+    for (;;) {
+      const queued = liveLeaseFiles(waitingWriters, leaseDependencies, 'token');
+      if (queued.length) { report('writer', queued[0].holder); waitForLease(dependencies); continue; }
+      if (fs.existsSync(writer)) {
+        const holder = readLiveLease(writer, leaseDependencies);
+        if (holder) { report('writer', holder); waitForLease(dependencies); continue; }
+      }
+      let release;
+      try {
+        release = createOwnedLease(readerPath, owner, leaseDependencies, token);
+      } catch (error) {
+        if (error.code !== 'EEXIST') throw error;
+        continue;
+      }
+      try {
+        if (!readLiveLease(writer, leaseDependencies)
+            && liveLeaseFiles(waitingWriters, leaseDependencies, 'token').length === 0) return release;
+      } catch (error) {
+        try { release(); } catch {}
+        throw error;
+      }
+      release();
     }
-    let current;
-    try {
-      current = JSON.parse(fs.readFileSync(leasePath, 'utf8'));
-    } catch {
-      throw new Error(`Runner lease became invalid before release: ${leasePath}`);
+  }
+
+  const writerIntent = path.join(waitingWriters, `${token}.lock`);
+  const releaseIntent = createOwnedLease(writerIntent, owner, leaseDependencies, token);
+  try {
+    for (;;) {
+      let releaseWriter;
+      try {
+        releaseWriter = createOwnedLease(writer, owner, leaseDependencies);
+      } catch (error) {
+        if (error.code !== 'EEXIST') throw error;
+        const holder = readLiveLease(writer, leaseDependencies);
+        if (holder) report('writer', holder);
+        waitForLease(dependencies);
+        continue;
+      }
+      try {
+        for (;;) {
+          const activeReaders = liveLeaseFiles(readers, leaseDependencies, 'token');
+          if (activeReaders.length === 0) {
+            try {
+              releaseIntent();
+            } catch (error) {
+              throw error;
+            }
+            return releaseWriter;
+          }
+          report('readers', activeReaders[0].holder);
+          waitForLease(dependencies);
+        }
+      } catch (error) {
+        try { releaseWriter(); } catch {}
+        throw error;
+      }
     }
-    if (current.token !== token || current.pid !== process.pid) {
-      throw new Error('Runner lease ownership changed before release');
-    }
-    fs.unlinkSync(leasePath);
-  };
+  } catch (error) {
+    try { releaseIntent(); } catch {}
+    throw error;
+  }
 }
 
 function snapshotGitControls(commonDir) {
@@ -652,21 +1398,37 @@ function withoutWorktree(snapshot, worktreePath) {
   return snapshot.split('\n').filter((entry) => !entry.startsWith(`${worktreePath}\0`)).join('\n');
 }
 
-function assertRepositoryTransition(repoRoot, before, input) {
+function refSnapshotMap(snapshot) {
+  return new Map(snapshot.split('\n').filter(Boolean).map((entry) => {
+    const separator = entry.indexOf('\0');
+    return [entry.slice(0, separator), entry.slice(separator + 1)];
+  }));
+}
+
+function allowedPeerTaskRefs(peerOwners) {
+  const refs = new Set();
+  for (const owner of peerOwners) {
+    if (!TASK_ID.test(owner.taskId) || typeof owner.branch !== 'string') continue;
+    refs.add(`refs/heads/${owner.branch}`);
+  }
+  return refs;
+}
+
+function assertRepositoryTransition(repoRoot, before, input, peerOwners = []) {
   const afterRefs = snapshotRepositoryRefs(repoRoot);
   const afterWorktrees = snapshotWorktreeRegistry(repoRoot);
-  const taskRef = `refs/heads/${input.branch}`;
-  const taskWorktree = input.worktreePath;
-  const mutableTaskRef = input.phase !== 'plan';
-  if ((mutableTaskRef ? withoutRef(before.refs, taskRef) : before.refs)
-      !== (mutableTaskRef ? withoutRef(afterRefs, taskRef) : afterRefs)) {
-    throw new Error(`Repository refs outside ${taskRef} changed during ${input.phase}`);
-  }
-  if (input.phase === 'implement') {
-    if (withoutWorktree(before.worktrees, taskWorktree) !== withoutWorktree(afterWorktrees, taskWorktree)) {
-      throw new Error('An unrelated registered worktree changed during implementation');
+  const allowedRefs = allowedPeerTaskRefs(peerOwners);
+  if (input.phase !== 'plan') allowedRefs.add(`refs/heads/${input.branch}`);
+  const beforeRefs = refSnapshotMap(before.refs);
+  const currentRefs = refSnapshotMap(afterRefs);
+  const changedRefs = new Set([...beforeRefs.keys(), ...currentRefs.keys()]);
+  for (const ref of changedRefs) {
+    if (beforeRefs.get(ref) !== currentRefs.get(ref) && !allowedRefs.has(ref)) {
+      const taskLabel = ref.startsWith('refs/heads/task/') ? 'inactive task branch' : 'repository refs';
+      throw new Error(`${taskLabel} changed during ${input.phase}: ${ref}`);
     }
-  } else if (before.worktrees !== afterWorktrees) {
+  }
+  if (before.worktrees !== afterWorktrees) {
     throw new Error(`Registered worktrees changed during ${input.phase}`);
   }
 }
@@ -711,6 +1473,108 @@ function snapshotRunnerState(commonDir) {
 function assertRunnerState(commonDir, expected) {
   if (snapshotRunnerState(commonDir) !== expected) {
     throw new Error('Runner checkpoint state changed during a model phase');
+  }
+}
+
+function snapshotTaskRunnerState(commonDir, repoRoot, projectRoot, taskId) {
+  const location = checkpointPath(commonDir, repoRoot, projectRoot, taskId);
+  if (!fs.existsSync(location.file)) return 'missing';
+  assertNoSymlinkComponents(commonDir, location.file, 'Runner checkpoint');
+  const stat = fs.lstatSync(location.file);
+  if (stat.isSymbolicLink() || !stat.isFile() || stat.size > MAX_CHECKPOINT_BYTES) {
+    throw new Error(`Runner checkpoint is invalid: ${location.file}`);
+  }
+  return crypto.createHash('sha256').update(fs.readFileSync(location.file)).digest('hex');
+}
+
+function assertTaskRunnerState(commonDir, repoRoot, projectRoot, taskId, expected) {
+  if (snapshotTaskRunnerState(commonDir, repoRoot, projectRoot, taskId) !== expected) {
+    throw new Error('Runner checkpoint state changed during a model phase');
+  }
+}
+
+function snapshotRunnerFiles(commonDir) {
+  const root = path.join(commonDir, 'groundwork', 'runner');
+  const files = new Map();
+  if (!fs.existsSync(root)) return files;
+  let totalBytes = 0;
+  const stack = [root];
+  while (stack.length) {
+    const directory = stack.pop();
+    const stat = fs.lstatSync(directory);
+    if (stat.isSymbolicLink() || !stat.isDirectory()) {
+      throw new Error(`Runner checkpoint path is unsafe: ${directory}`);
+    }
+    for (const entry of fs.readdirSync(directory)) {
+      const absolute = path.join(directory, entry);
+      const entryStat = fs.lstatSync(absolute);
+      if (entryStat.isSymbolicLink()) {
+        throw new Error(`Runner checkpoint path must not be a symlink: ${absolute}`);
+      }
+      if (entryStat.isDirectory()) {
+        stack.push(absolute);
+        continue;
+      }
+      if (!entryStat.isFile() || entryStat.size > MAX_CHECKPOINT_BYTES) {
+        throw new Error(`Runner checkpoint is invalid: ${absolute}`);
+      }
+      totalBytes += entryStat.size;
+      if (totalBytes > MAX_CHECKPOINT_BYTES * 100) {
+        throw new Error('Runner checkpoint state exceeds its size limit');
+      }
+      const relative = path.relative(root, absolute).split(path.sep).join('/');
+      files.set(relative, crypto.createHash('sha256').update(fs.readFileSync(absolute)).digest('hex'));
+    }
+  }
+  return files;
+}
+
+function peerCheckpointPaths(peerOwners) {
+  return peerOwners.filter((owner) => TASK_ID.test(owner.taskId)).map((owner) => ({
+    projectKey: crypto.createHash('sha256').update(owner.projectPath || '.').digest('hex').slice(0, 16),
+    taskId: owner.taskId,
+  }));
+}
+
+function exactPeerIdentity(owner) {
+  if (!owner || typeof owner.branch !== 'string' || typeof owner.worktreePath !== 'string'
+      || typeof owner.checkpointPath !== 'string') return null;
+  return [
+    owner.version,
+    owner.pid,
+    owner.processStart,
+    owner.token,
+    owner.project,
+    owner.projectPath,
+    owner.taskId,
+    owner.startedAt,
+    owner.protocol === undefined ? '' : owner.protocol,
+    owner.branch,
+    owner.worktreePath,
+    owner.checkpointPath,
+  ].join('\0');
+}
+
+function reconcilePhasePeers(before, after) {
+  const peers = new Map();
+  for (const owner of [...before, ...after]) {
+    const identity = exactPeerIdentity(owner);
+    if (identity) peers.set(identity, owner);
+  }
+  return [...peers.values()];
+}
+
+function assertRunnerTransition(before, after, peerOwners) {
+  const allowed = peerCheckpointPaths(peerOwners);
+  const paths = new Set([...before.keys(), ...after.keys()]);
+  for (const relative of paths) {
+    const activePeerCheckpoint = allowed.some(({ projectKey, taskId }) => (
+      relative === `${projectKey}/${taskId}.json`
+      || new RegExp(`^${projectKey}/\\.${taskId}\\.\\d+\\.\\d+\\.tmp$`).test(relative)
+    ));
+    if (!activePeerCheckpoint && before.get(relative) !== after.get(relative)) {
+      throw new Error(`Inactive task checkpoint state changed during a model phase: ${relative}`);
+    }
   }
 }
 
@@ -822,7 +1686,7 @@ function snapshotUnrelatedWorktrees(repoRoot, projectRoot, taskWorktree) {
       } else {
         assertClean(entry.path, `Unrelated worktree ${entry.path}`);
       }
-      return `${entry.path}\0${execGit(entry.path, ['rev-parse', 'HEAD'])}`;
+      return entry.path;
     })
     .join('\n');
 }
@@ -1243,6 +2107,111 @@ function buildInvocation({ harness, cwd, pluginRoot, prompt, resultFile }) {
   throw new Error(`Unsupported harness: ${harness}`);
 }
 
+const PHASE_CHILD_SUPERVISOR = String.raw`GROUNDWORK_PHASE_CHILD_PID="$$" node -e '
+const fs = require("fs");
+const crypto = require("crypto");
+const records = JSON.parse(Buffer.from(process.env.GROUNDWORK_PHASE_CHILD_RECORDS, "base64").toString("utf8"));
+const pid = Number(process.env.GROUNDWORK_PHASE_CHILD_PID);
+function processStartIdentity(targetPid) {
+  try {
+    const fields = fs.readFileSync("/proc/" + targetPid + "/stat", "utf8").trim().split(/\s+/);
+    if (fields.length > 21 && /^\d+$/.test(fields[21])) return "proc:" + fields[21];
+  } catch (error) {
+    if (!["ENOENT", "EACCES", "EPERM"].includes(error.code)) throw error;
+  }
+  try {
+    const { execFileSync } = require("child_process");
+    const value = execFileSync("ps", ["-o", "lstart=", "-p", String(targetPid)], {
+      encoding: "utf8", stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    if (value) return value;
+  } catch {}
+  try {
+    process.kill(targetPid, 0);
+    return "pid:" + targetPid;
+  } catch (error) {
+    if (error.code === "EPERM") return "pid:" + targetPid;
+    throw new Error("Cannot identify phase child process instance");
+  }
+}
+function sameParent(left, right) {
+  return Boolean(left && right
+    && left.version === right.version
+    && left.pid === right.pid
+    && left.processStart === right.processStart
+    && left.token === right.token
+    && left.project === right.project
+    && left.projectPath === right.projectPath
+    && left.taskId === right.taskId
+    && left.startedAt === right.startedAt
+    && left.protocol === right.protocol);
+}
+function startupRecordIsCurrent(record) {
+  let startup;
+  try {
+    startup = JSON.parse(fs.readFileSync(record.path, "utf8"));
+  } catch {
+    return false;
+  }
+  const parentIsLive = processStartIdentity(record.parent.pid) === record.parent.processStart;
+  return startup && startup.version === 1 && startup.startup === true
+    && startup.startupDeadline === record.startupDeadline
+    && sameParent(startup.parent, record.parent)
+    && (parentIsLive || Date.now() <= record.startupDeadline);
+}
+for (const record of records) {
+  // Do not let a delayed shell replace a marker which a successor has already
+  // reclaimed after its parent died.  A live parent may finish a delayed handoff.
+  if (!startupRecordIsCurrent(record)) process.exit(75);
+  const staging = record.path + ".staging-" + crypto.randomBytes(8).toString("hex");
+  const fd = fs.openSync(staging, "wx", 0o600);
+  try {
+    fs.writeFileSync(fd, JSON.stringify({
+      version: 1, parent: record.parent, pid, processStart: processStartIdentity(pid), startedAt: Date.now(),
+    }) + "\n", "utf8");
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+  fs.renameSync(staging, record.path);
+}
+' || exit $?
+exec "$@"`;
+
+function phaseChildEnvironment(input) {
+  const leases = phaseChildLeases(input);
+  if (!leases.length) return null;
+  const records = [];
+  try {
+    for (const lease of leases) {
+      const startedAt = Date.now();
+      const startupDeadline = startedAt + PHASE_CHILD_STARTUP_MS;
+      publishRecordAtomically(lease.recordPath, {
+        version: 1,
+        token: lease.owner.token,
+        parent: lease.owner,
+        startup: true,
+        startupDeadline,
+        startedAt,
+      });
+      records.push({ ...lease, startupDeadline });
+    }
+  } catch (error) {
+    for (const lease of records) removePhaseChildRecord(lease.leasePath, lease.owner);
+    throw error;
+  }
+  return {
+    records,
+    environment: {
+      GROUNDWORK_PHASE_CHILD_RECORD: records[0].recordPath,
+      GROUNDWORK_PHASE_PARENT: Buffer.from(JSON.stringify(records[0].owner)).toString('base64'),
+      GROUNDWORK_PHASE_CHILD_RECORDS: Buffer.from(JSON.stringify(records.map(({ recordPath, owner, startupDeadline }) => ({
+        path: recordPath, parent: owner, startupDeadline,
+      })))).toString('base64'),
+    },
+  };
+}
+
 function invokePhase(input) {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'groundwork-phase-'));
   const resultFile = path.join(tempDir, 'result.txt');
@@ -1252,15 +2221,22 @@ function invokePhase(input) {
   let errorFd;
   let monitor;
   let result;
+  let phaseChild;
   try {
     outputFd = fs.openSync(outputPath, 'wx', 0o600);
     errorFd = fs.openSync(errorPath, 'wx', 0o600);
     const invocation = buildInvocation({ ...input, resultFile });
     const env = buildChildEnv(input.harness, input.env);
+    phaseChild = phaseChildEnvironment(input);
     monitor = startProgressMonitor(input, outputPath, Date.now());
-    result = spawnSync(invocation.command, invocation.args, {
+    result = spawnSync(phaseChild ? '/bin/sh' : invocation.command, phaseChild ? [
+      '-c', PHASE_CHILD_SUPERVISOR, 'groundwork-phase', invocation.command, ...invocation.args,
+    ] : invocation.args, {
       cwd: invocation.cwd,
-      env,
+      env: phaseChild ? {
+        ...env,
+        ...phaseChild.environment,
+      } : env,
       input: invocation.input,
       encoding: 'utf8',
       stdio: ['pipe', outputFd, errorFd],
@@ -1286,6 +2262,9 @@ function invokePhase(input) {
     if (outputFd !== undefined) fs.closeSync(outputFd);
     if (errorFd !== undefined) fs.closeSync(errorFd);
     stopProgressMonitor(monitor);
+    if (phaseChild) {
+      for (const lease of phaseChild.records) removePhaseChildRecord(lease.leasePath, lease.owner);
+    }
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 }
@@ -1332,6 +2311,21 @@ function assertRegisteredWorktree(repoRoot, worktreePath, branch) {
   });
   if (!matched) throw new Error(`Model-reported worktree is not registered for branch ${branch}: ${worktreePath}`);
   return canonicalPath;
+}
+
+function prepareTaskWorkspace(repoRoot, workspace, baseHead) {
+  const branchRef = `refs/heads/${workspace.branch}`;
+  const branchExists = refExists(repoRoot, branchRef);
+  const worktreeExists = fs.existsSync(workspace.worktreePath);
+  if (branchExists !== worktreeExists) {
+    throw new Error(`Task resume state is incomplete; expected both branch and worktree: ${workspace.branch}, ${workspace.worktreePath}`);
+  }
+  if (branchExists) return assertRegisteredWorktree(repoRoot, workspace.worktreePath, workspace.branch);
+
+  const parent = path.dirname(workspace.worktreePath);
+  createContainedDirectory(repoRoot, parent, 'Task worktree parent');
+  execGit(repoRoot, ['worktree', 'add', '-b', workspace.branch, workspace.worktreePath, baseHead]);
+  return assertRegisteredWorktree(repoRoot, workspace.worktreePath, workspace.branch);
 }
 
 function initializedSubmodules(cwd) {
@@ -1406,17 +2400,34 @@ function assertPlanFile(projectRoot, reportedPath) {
   return absolute;
 }
 
+function assertRunnerPlanFile(taskProjectRoot, baseProjectRoot, reportedPath) {
+  const taskCandidate = path.resolve(taskProjectRoot, reportedPath);
+  const baseCandidate = path.resolve(baseProjectRoot, reportedPath);
+  if (fs.existsSync(taskCandidate)) return assertPlanFile(taskProjectRoot, reportedPath);
+  if (fs.existsSync(baseCandidate)) return assertPlanFile(baseProjectRoot, reportedPath);
+  return assertPlanFile(taskProjectRoot, reportedPath);
+}
+
 function ensureLocalPlanIgnore(repoRoot, projectRoot) {
   const gitPath = execGit(repoRoot, ['rev-parse', '--git-path', 'info/exclude']);
   const excludePath = path.resolve(repoRoot, gitPath);
+  const patterns = [];
+  const configPath = path.join(repoRoot, '.groundwork.yml');
+  if (fs.existsSync(configPath) && projectRoot !== repoRoot) {
+    const projects = parseGroundworkConfig(fs.readFileSync(configPath, 'utf8'));
+    for (const project of Object.values(projects)) {
+      if (project.path) patterns.push(`/${project.path.replace(/^\.\//, '').replace(/\/$/, '')}/.groundwork-plans/`);
+    }
+  }
   const relativeProject = path.relative(repoRoot, projectRoot).split(path.sep).join('/');
-  const pattern = relativeProject
+  patterns.push(relativeProject
     ? `/${relativeProject}/.groundwork-plans/`
-    : '/.groundwork-plans/';
+    : '/.groundwork-plans/');
   const existing = fs.existsSync(excludePath) ? fs.readFileSync(excludePath, 'utf8') : '';
-  if (!existing.split('\n').includes(pattern)) {
+  const missing = [...new Set(patterns)].filter((pattern) => !existing.split('\n').includes(pattern));
+  if (missing.length) {
     fs.mkdirSync(path.dirname(excludePath), { recursive: true });
-    fs.appendFileSync(excludePath, `${existing && !existing.endsWith('\n') ? '\n' : ''}${pattern}\n`);
+    fs.appendFileSync(excludePath, `${existing && !existing.endsWith('\n') ? '\n' : ''}${missing.join('\n')}\n`);
   }
 }
 
@@ -1442,12 +2453,12 @@ function phasePrompt(phase, input) {
   } else if (phase === 'implement') {
     header.push(`Skill arguments: ${input.planFile}${projectArg}`);
     header.push(`Task branch: ${input.branch}`);
+    header.push(`Verify and reuse the precreated registered worktree at exactly ${input.worktreePath}.`);
+    header.push('The runner exclusively owns task-worktree creation, removal, and recovery.');
     if (input.resumeExistingWorktree) {
       header.push('RESUME EXISTING WORKTREE=true');
       header.push(`Reuse the existing registered worktree at exactly ${input.worktreePath}.`);
       header.push('Inspect the plan, commits, working state, and tests; do not repeat completed implementation work. Finish and commit only what remains.');
-    } else {
-      header.push(`Create the task worktree at exactly ${input.worktreePath} on exactly branch ${input.branch}.`);
     }
     header.push('The task status must be changed to In Progress inside the task worktree and included in the implementation commit.');
   } else if (phase === 'validate') {
@@ -1589,9 +2600,11 @@ function runTasks(options, dependencies = {}) {
     now: dependencies.leaseNow || now,
     wait: dependencies.leaseWait,
     heartbeatMs: dependencies.leaseHeartbeatMs,
+    processStartIdentity: dependencies.processStartIdentity,
   };
-  const releaseSetupLease = acquireRunnerLease(
+  const releaseSetupLease = acquireRepositoryGate(
     commonDir,
+    'write',
     { project: options.project || '.', taskId: 'setup' },
     leaseDependencies
   );
@@ -1640,30 +2653,54 @@ function runTasks(options, dependencies = {}) {
     taskIds.forEach((taskId) => log(taskId));
     return taskIds;
   }
+  const projectRelative = path.relative(repoRoot, projectRoot).split(path.sep).join('/') || '.';
+  const leaseOwner = (taskId) => ({
+    project: project.projectName || '.',
+    projectPath: projectRelative,
+    taskId,
+  });
   let gitControls;
   const callPhase = dependencies.invokePhase || invokePhase;
   function invokeChecked(input) {
     if (dependencies.beforePhase) dependencies.beforePhase(input);
-    const taskWorktree = input.worktreePath;
-    const repositoryState = {
-      refs: snapshotRepositoryRefs(repoRoot),
-      worktrees: snapshotWorktreeRegistry(repoRoot),
-      unrelated: snapshotUnrelatedWorktrees(repoRoot, projectRoot, taskWorktree),
-      runner: snapshotRunnerState(commonDir),
-      hooksPaths: readLocalHooksPaths(repoRoot),
-    };
+    const releaseGate = acquireRepositoryGate(
+      commonDir,
+      'read',
+      leaseOwner(input.taskId),
+      leaseDependencies
+    );
+    let peerOwnersBefore;
+    let repositoryState;
     try {
-      return callPhase(input);
+      peerOwnersBefore = activeProjectOwners(commonDir, repoRoot, leaseDependencies)
+        .filter((owner) => owner.projectPath !== projectRelative || owner.taskId !== input.taskId);
+      repositoryState = {
+        refs: snapshotRepositoryRefs(repoRoot),
+        worktrees: snapshotWorktreeRegistry(repoRoot),
+        runner: snapshotRunnerFiles(commonDir),
+        hooksPaths: readLocalHooksPaths(repoRoot),
+      };
+      const phaseLeases = input.phaseLeases || (input.phaseLease ? [input.phaseLease] : []);
+      return callPhase({
+        ...input,
+        phaseLeases: [...phaseLeases, { leasePath: releaseGate.leasePath, owner: releaseGate.record }],
+      });
     } finally {
-      if (restoreTransientTaskHooksPath(repoRoot, input, repositoryState.hooksPaths)) {
-        log(`[${formatLocalTimestamp(now())}] [${input.taskId}] restored transient task-worktree core.hooksPath`);
-      }
-      assertGitControls(commonDir, gitControls);
-      assertRunnerState(commonDir, repositoryState.runner);
-      assertPlanTree(projectRoot);
-      assertRepositoryTransition(repoRoot, repositoryState, input);
-      if (snapshotUnrelatedWorktrees(repoRoot, projectRoot, taskWorktree) !== repositoryState.unrelated) {
-        throw new Error(`An unrelated worktree changed during ${input.phase}`);
+      try {
+        if (repositoryState) {
+          if (restoreTransientTaskHooksPath(repoRoot, input, repositoryState.hooksPaths)) {
+            log(`[${formatLocalTimestamp(now())}] [${input.taskId}] restored transient task-worktree core.hooksPath`);
+          }
+          assertGitControls(commonDir, gitControls);
+          const peerOwnersAfter = activeProjectOwners(commonDir, repoRoot, leaseDependencies)
+            .filter((owner) => owner.projectPath !== projectRelative || owner.taskId !== input.taskId);
+          const phasePeers = reconcilePhasePeers(peerOwnersBefore, peerOwnersAfter);
+          assertRunnerTransition(repositoryState.runner, snapshotRunnerFiles(commonDir), phasePeers);
+          assertPlanTree(input.projectRoot);
+          assertRepositoryTransition(repoRoot, repositoryState, input, phasePeers);
+        }
+      } finally {
+        releaseGate();
       }
     }
   }
@@ -1671,9 +2708,9 @@ function runTasks(options, dependencies = {}) {
   const completed = [];
 
   for (const taskId of taskIds) {
-    const releaseTaskLease = acquireRunnerLease(
+    const releaseTaskLease = acquireProjectLease(
       commonDir,
-      { project: project.projectName || '.', taskId },
+      leaseOwner(taskId),
       leaseDependencies
     );
     let implementation = null;
@@ -1696,6 +2733,12 @@ function runTasks(options, dependencies = {}) {
       activePhase = null;
     }
     try {
+      const refreshedCatalog = parseTaskCatalog(readTasks(projectRoot));
+      const eligibleTaskIds = orderTasks(refreshedCatalog, [taskId]);
+      if (!eligibleTaskIds.includes(taskId)) {
+        taskLog(`[${taskId}] skipped — completed while awaiting project lease`);
+        continue;
+      }
       if (execGit(repoRoot, ['branch', '--show-current']) !== baseBranch) {
         throw new Error(`Primary worktree moved from base branch ${baseBranch}`);
       }
@@ -1722,19 +2765,47 @@ function runTasks(options, dependencies = {}) {
       );
       const expectedBranch = workspace.branch;
       const expectedWorktree = workspace.worktreePath;
-      if (!checkpoint.workspace) {
-        checkpoint.workspace = { branch: expectedBranch, worktreePath: expectedWorktree };
-        saveCheckpoint(commonDir, repoRoot, projectRoot, checkpoint);
+      const releaseWorkspaceGate = acquireRepositoryGate(
+        commonDir,
+        'write',
+        leaseOwner(taskId),
+        leaseDependencies
+      );
+      let preparedWorktree;
+      try {
+        preparedWorktree = prepareTaskWorkspace(repoRoot, workspace, baseSha);
+        if (!checkpoint.workspace) {
+          checkpoint.workspace = { branch: expectedBranch, worktreePath: expectedWorktree };
+          saveCheckpoint(commonDir, repoRoot, projectRoot, checkpoint);
+        }
+        const inspectUnrelated = dependencies.inspectUnrelatedWorktrees || snapshotUnrelatedWorktrees;
+        inspectUnrelated(repoRoot, projectRoot, preparedWorktree);
+      } finally {
+        releaseWorkspaceGate();
       }
+      const taskProjectRelativePath = path.relative(repoRoot, projectRoot);
+      const lexicalPreparedProject = path.join(preparedWorktree, taskProjectRelativePath);
+      assertNoSymlinkComponents(preparedWorktree, lexicalPreparedProject, 'Task project');
+      const preparedTaskProjectRoot = fs.realpathSync(lexicalPreparedProject);
+      if (!isContained(preparedWorktree, preparedTaskProjectRoot)) {
+        throw new Error('Selected project resolves outside the task worktree');
+      }
+      assertNoSymlinkComponents(preparedWorktree, preparedTaskProjectRoot, 'Task project');
+      const preparedTaskSpecsDir = path.join(preparedTaskProjectRoot, 'specs');
+      assertNoSymlinkComponents(preparedTaskProjectRoot, preparedTaskSpecsDir, 'Task specs');
       const common = {
         harness: options.harness,
         taskId,
         repoRoot,
         projectName: project.projectName,
-        projectRoot,
-        specsDir: project.specsDir,
+        projectRoot: preparedTaskProjectRoot,
+        specsDir: preparedTaskSpecsDir,
         branch: expectedBranch,
         worktreePath: expectedWorktree,
+        phaseLease: {
+          leasePath: releaseTaskLease.leasePath,
+          owner: releaseTaskLease.record,
+        },
       };
       const env = {
         GROUNDWORK_HARNESS: options.harness,
@@ -1742,27 +2813,30 @@ function runTasks(options, dependencies = {}) {
         GROUNDWORK_RUNNER_MODE: 'true',
         GROUNDWORK_BATCH_MODE: 'true',
         GROUNDWORK_PROJECT: project.projectName || '',
-        GROUNDWORK_PROJECT_ROOT: projectRoot,
+        GROUNDWORK_PROJECT_ROOT: preparedTaskProjectRoot,
       };
 
-      const conventionalPlan = path.join(projectRoot, '.groundwork-plans', `${taskId}-plan.md`);
+      const conventionalTaskPlan = path.join(preparedTaskProjectRoot, '.groundwork-plans', `${taskId}-plan.md`);
+      const conventionalBasePlan = path.join(projectRoot, '.groundwork-plans', `${taskId}-plan.md`);
       let planFile;
-      if (fs.existsSync(conventionalPlan)) {
-        planFile = assertPlanFile(projectRoot, conventionalPlan);
+      if (fs.existsSync(conventionalTaskPlan) || fs.existsSync(conventionalBasePlan)) {
+        planFile = fs.existsSync(conventionalTaskPlan)
+          ? assertPlanFile(preparedTaskProjectRoot, conventionalTaskPlan)
+          : assertPlanFile(projectRoot, conventionalBasePlan);
         taskLog(`[${taskId}] plan skipped — existing plan`);
       } else {
         beginPhase('plan');
         const planOutput = invokeChecked({
           ...common,
           phase: 'plan',
-          cwd: projectRoot,
+          cwd: preparedTaskProjectRoot,
           pluginRoot,
           env,
           prompt: phasePrompt('plan', common),
         });
         const plan = parsePlanResult(planOutput);
         if (plan.identifier !== taskId) throw new Error(`plan-task returned ${plan.identifier}, expected ${taskId}`);
-        planFile = assertPlanFile(projectRoot, plan.planFilePath);
+        planFile = assertRunnerPlanFile(preparedTaskProjectRoot, projectRoot, plan.planFilePath);
         if (execGit(repoRoot, ['rev-parse', 'HEAD']) !== baseSha) throw new Error('Base branch changed during planning');
         if (execGit(repoRoot, ['branch', '--show-current']) !== baseBranch) throw new Error('Base branch switched during planning');
         assertClean(repoRoot, 'Base worktree');
@@ -1849,7 +2923,7 @@ function runTasks(options, dependencies = {}) {
         const implementOutput = invokeChecked({
           ...implementInput,
           phase: 'implement',
-          cwd: projectRoot,
+          cwd: preparedTaskProjectRoot,
           pluginRoot,
           env,
           prompt: phasePrompt('implement', implementInput),
@@ -1971,7 +3045,7 @@ function runTasks(options, dependencies = {}) {
 
         beginPhase('finalize');
         const finalizeInput = { ...validateInput, validatedHead };
-        const finalization = parseFinalizeResult(invokeChecked({
+        let finalization = parseFinalizeResult(invokeChecked({
           ...finalizeInput,
           phase: 'finalize',
           cwd: taskProjectRoot,
@@ -1988,27 +3062,53 @@ function runTasks(options, dependencies = {}) {
         assertNoSymlinkComponents(taskProjectRoot, taskSpecsDir, 'Task specs');
 
         if (finalization.outcome === 'ready') {
-          mergeAndCleanup(
-            repoRoot,
-            projectRoot,
-            taskId,
-            implementation,
-            finalization,
-            implementationHead,
-            validatedHead,
-            baseBranch
+          if (dependencies.beforePublication) dependencies.beforePublication(finalization);
+          const releasePublicationGate = acquireRepositoryGate(
+            commonDir,
+            'write',
+            leaseOwner(taskId),
+            leaseDependencies
           );
-          const completedTask = parseTaskCatalog(readTasks(projectRoot)).get(taskId);
-          if (!completedTask || completedTask.status !== 'Complete') {
-            throw new Error(`${taskId} is not Complete after finalization`);
+          let baseMovedBeforePublication = false;
+          try {
+            const inspectUnrelated = dependencies.inspectUnrelatedWorktrees || snapshotUnrelatedWorktrees;
+            inspectUnrelated(repoRoot, projectRoot, implementation.worktreePath);
+            baseMovedBeforePublication = execGit(repoRoot, ['rev-parse', baseBranch]) !== finalization.baseHead;
+            if (!baseMovedBeforePublication) {
+              mergeAndCleanup(
+                repoRoot,
+                projectRoot,
+                taskId,
+                implementation,
+                finalization,
+                implementationHead,
+                validatedHead,
+                baseBranch
+              );
+            }
+          } finally {
+            releasePublicationGate();
           }
-          clearCheckpoint(commonDir, repoRoot, projectRoot, taskId);
-          gitControls = snapshotGitControls(commonDir);
-          completePhase();
-          const { validatedHead: _validatedHead, ...validationSummary } = validation;
-          completed.push({ taskId, validation: validationSummary });
-          implementation = null;
-          break;
+          if (baseMovedBeforePublication) {
+            finalization = {
+              outcome: 'revalidate',
+              taskHead: execGit(implementation.worktreePath, ['rev-parse', 'HEAD']),
+              baseHead: execGit(repoRoot, ['rev-parse', baseBranch]),
+              reason: 'base advanced before publication',
+            };
+          } else {
+            const completedTask = parseTaskCatalog(readTasks(projectRoot)).get(taskId);
+            if (!completedTask || completedTask.status !== 'Complete') {
+              throw new Error(`${taskId} is not Complete after finalization`);
+            }
+            clearCheckpoint(commonDir, repoRoot, projectRoot, taskId);
+            gitControls = snapshotGitControls(commonDir);
+            completePhase();
+            const { validatedHead: _validatedHead, ...validationSummary } = validation;
+            completed.push({ taskId, validation: validationSummary });
+            implementation = null;
+            break;
+          }
         }
 
         implementation.worktreePath = assertRegisteredWorktree(
@@ -2097,7 +3197,11 @@ module.exports = {
   forEachGitRecord,
   invokePhase,
   assertRegisteredWorktree,
-  acquireRunnerLease,
+  acquireProjectLease,
+  acquireRepositoryGate,
+  activeProjectOwners,
+  processStartIdentity,
+  snapshotUnrelatedWorktrees,
   resolveProject,
   runTasks,
   main,

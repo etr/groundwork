@@ -72,15 +72,17 @@ node /path/to/groundwork/bin/groundwork-run.js all --harness codex --project api
 node /path/to/groundwork/bin/groundwork-run.js all --from TASK-010 --to TASK-025 --harness codex --project api
 ```
 
-It invokes `plan-task`, `implement-task`, `validate`, and `finalize-task` in separate fresh processes as needed. Existing verified work is reconciled first: conventional plans, clean completed implementation worktrees, and validation checkpoints bound to unchanged Git heads are skipped. Ambiguous worktrees are resumed instead of recreated. Checkpoints are stored outside the working tree under `<git-common-dir>/groundwork/runner/`. Use the same skills directly when stepping through the workflow manually.
+It creates the linked task worktree before planning, then invokes `plan-task`, `implement-task`, `validate`, and `finalize-task` from that task-worktree project root in separate fresh processes as needed. Existing verified work is reconciled first: conventional plans, clean completed implementation worktrees, and validation checkpoints bound to unchanged Git heads are skipped. Ambiguous worktrees are resumed instead of recreated. Checkpoints are stored outside the working tree under `<git-common-dir>/groundwork/runner/`. Use the same skills directly when stepping through the workflow manually.
 
 Monorepo workspaces include the project name, such as `task/api/TASK-004` and `.worktrees/api-TASK-004`. This prevents overlapping task numbers from colliding and allows another project's linked worktree to retain in-progress changes. The selected project must remain clean in unrelated worktrees.
 
-If multiple runner commands target the same repository, they coordinate through a repository lease. One complete task owns shared Git state at a time; waiting commands print periodic status and continue at task boundaries. This avoids invalidating completed model work while keeping separate batch commands resumable.
+If multiple runner commands target the same repository, each project has its own task lease, so different projects may run model phases concurrently while tasks for one project remain ordered. Runner-owned setup, worktree lifecycle, publication, and recovery use a writer-preferred repository gate; model phases hold reader access. Waiting commands print periodic status. This avoids shared-Git races while keeping separate batch commands resumable.
+
+Before upgrading an existing runner installation, stop and drain all earlier runner processes and launchers for that repository. Do not run an older runner beside this v2 runner: a detected old `groundwork/runner.lock` makes v2 refuse startup, but the check is diagnostic rather than a hot-upgrade compatibility protocol. After the drain, v2 commands can run concurrently with other v2 commands.
 
 The runner prints the machine's local date, time, timezone, relative phase timing, sanitized commands, selected tool activity, validation iteration launches and per-reviewer verdicts, and a 30-second heartbeat while Claude Code or Codex is quiet. Generic turn events and successful short-command completions are suppressed; command failures and commands lasting at least 10 seconds remain visible. Explicit task arguments form a list; `--from` and `--to` select inclusive range bounds and may be used independently.
 
-The final phase prepares task bookkeeping, handles a moved base, and chooses the merge message. The harness verifies that prepared state before it performs the outward merge and cleanup.
+The final phase prepares task bookkeeping, handles a moved base, and chooses the merge message. The harness rechecks the exact base and task heads under writer access before publication; if the base moved, it preserves the task worktree and returns to bounded revalidation before merging and cleanup.
 
 ### Skill Categories
 
