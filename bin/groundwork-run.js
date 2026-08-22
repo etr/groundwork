@@ -3338,7 +3338,7 @@ function runTasks(options, dependencies = {}) {
         return output;
       } catch (error) {
         if (error.hardRecoveryBoundary || input.phase === 'recovery'
-            || (dependencies.invokePhase && !error.recoverablePhaseResult)) throw error;
+            || (dependencies.invokePhase && (!dependencies.enableRecovery || !error.recoverablePhaseResult))) throw error;
         const recovery = invokeRecovery(input, error, attemptsWithoutProgress > 0);
         if (recovery.mutated && input.phase === 'finalize') {
           const revalidate = new Error('Recovery changed the task tree; validation is required before finalization');

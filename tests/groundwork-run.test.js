@@ -3957,6 +3957,7 @@ describe('four-phase orchestration', () => {
         {
           pluginRoot: PLUGIN_ROOT,
           log: () => {},
+          enableRecovery: true,
           invokePhase(input) {
             phases.push(input.phase);
             if (input.phase === 'recovery') {
@@ -4002,6 +4003,7 @@ describe('four-phase orchestration', () => {
         {
           pluginRoot: PLUGIN_ROOT,
           log: () => {},
+          enableRecovery: true,
           invokePhase(input) {
             phases.push(input.phase);
             if (input.phase === 'plan') {
@@ -4046,6 +4048,7 @@ describe('four-phase orchestration', () => {
           {
             pluginRoot: PLUGIN_ROOT,
             log: () => {},
+            enableRecovery: true,
             invokePhase(input) {
               phases.push(input.phase);
               if (input.phase === 'recovery') {
