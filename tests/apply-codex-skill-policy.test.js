@@ -48,14 +48,25 @@ test('preserves complete gate failures as stable manifest findings', () => {
   assert.ok(exported.includes('category` as `gate:<normalized-command>:<normalized-check>'));
 });
 
+test('keeps unrelated monorepo gate failures outside fixer authority', () => {
+  const exported = applyPolicy('validate', validateSource);
+
+  assert.ok(exported.includes('A failed repository-wide gate is evidence, not automatic repair authority'));
+  assert.ok(exported.includes('selected project root'));
+  assert.ok(exported.includes('original task diff'));
+  assert.ok(exported.includes('Never put an out-of-scope baseline failure in a fixer manifest'));
+  assert.ok(exported.includes('all in-scope checks passed'));
+  assert.ok(exported.includes('stop validation without source mutation'));
+});
+
 test('limits fixer scope and passes complete targeted re-review context', () => {
   const exported = applyPolicy('validate', validateSource);
 
   assert.ok(exported.includes('Only findings owned by `request-changes` reviews'));
   assert.ok(exported.includes('Approved major findings remain unworked findings'));
-  assert.ok(exported.includes('prior finding IDs and status'));
-  assert.ok(exported.includes('validated fixer result'));
-  assert.ok(exported.includes('post-fix changed paths and diff stat'));
+  assert.ok(exported.includes('prior finding records and status'));
+  assert.ok(exported.includes('validated semantic repair claims'));
+  assert.ok(exported.includes('repair delta'));
   assert.ok(exported.includes('current project-gate result'));
   assert.ok(exported.includes('Reviewer prompts may contain only'));
   assert.ok(exported.includes('prior finding IDs/status'));
@@ -64,6 +75,24 @@ test('limits fixer scope and passes complete targeted re-review context', () => 
   assert.ok(!exported.includes('Build the list of `findings_file` paths'));
   assert.ok(!exported.includes('FINDINGS FILES:'));
   assert.ok(exported.includes('Pass only `findings_dir`, the manifest basename, and `fixer_result_file`'));
+});
+
+test('turns Codex rechecks into causal closure reviews', () => {
+  const exported = applyPolicy('validate', validateSource);
+
+  assert.ok(exported.includes('review_mode: initial-audit'));
+  assert.ok(exported.includes('review_mode: closure-review'));
+  assert.ok(exported.includes('coordinator-authored closure brief'));
+  assert.ok(exported.includes('Do not re-audit unchanged code'));
+  assert.ok(exported.includes('introduced-by-fix'));
+  assert.ok(exported.includes('exposed-by-fix'));
+  assert.ok(exported.includes('invalidated-prior-assumption'));
+  assert.ok(exported.includes('initial-audit-miss'));
+  assert.ok(exported.includes('scope-expansion'));
+  assert.ok(exported.includes('causal reference to the fixer delta'));
+  assert.ok(exported.includes('A concrete `initial-audit-miss` inside the frozen baseline may still request changes'));
+  assert.ok(!exported.includes('REPLAN_REQUIRED'));
+  assert.ok(!exported.includes('BASELINE_INVALIDATED'));
 });
 
 test('makes cross-domain Sol elevation and concurrent fan-out executable', () => {
@@ -84,6 +113,41 @@ test('fixer consumes only validator-authorized requested findings', () => {
   assert.ok(!exported.includes('Address all `critical` and `major` findings across all files'));
   assert.ok(!exported.includes('If a prompt explicitly asks for a different scope'));
   assert.ok(!exported.includes('build it as `{agent}-iter{iteration}-{id}` from each file'));
+});
+
+test('fixer independently rejects unrelated project-gate mutations', () => {
+  const exported = applyAgentPolicy('validation-fixer', fixerSource);
+
+  assert.ok(exported.includes('A project-gate finding does not expand the frozen validation baseline'));
+  assert.ok(exported.includes('outside the selected project and original task diff'));
+  assert.ok(exported.includes('concrete causal chain from the task delta'));
+  assert.ok(exported.includes('make no source mutation'));
+});
+
+test('Codex fixer reports semantic repairs without treating repair size as a blocker', () => {
+  const exported = applyAgentPolicy('validation-fixer', fixerSource);
+
+  assert.ok(exported.includes('repair envelope'));
+  assert.ok(exported.includes('repair_claims'));
+  assert.ok(exported.includes('contracts_changed'));
+  assert.ok(exported.includes('baseline-compatible-repair'));
+  assert.ok(exported.includes('Repair size alone'));
+  assert.ok(!exported.includes('baseline_invalidated'));
+  assert.ok(!exported.includes('replan-required'));
+});
+
+test('Codex reviewers enforce closure mode independently of coordinator wording', () => {
+  const securitySource = fs.readFileSync(
+    path.join(ROOT, 'agents', 'security-reviewer', 'AGENT.md'),
+    'utf8'
+  );
+  const exported = applyAgentPolicy('security-reviewer', securitySource);
+
+  assert.ok(exported.includes('Codex Closure Enforcement'));
+  assert.ok(exported.includes('closure-review'));
+  assert.ok(exported.includes('causal_ref'));
+  assert.ok(exported.includes('scope-expansion'));
+  assert.ok(exported.includes('Approve immediately'));
 });
 
 console.log(`\nTests: ${passed} passed, ${failed} failed`);

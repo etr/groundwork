@@ -84,9 +84,21 @@ Read `${CLAUDE_PLUGIN_ROOT}/references/clean-code-principles.md` and apply its g
 
 **Rule of thumb:** Every view should have at least one element that makes it visually distinctive. If everything is the same white card with the same border, it needs more visual variety.
 
-### 5. Commit and Return Result
+### 5. Prepare or Commit and Return Result
 
-Commit all changes:
+If the calling prompt contains `GROUNDWORK_RUNNER_MODE=true`, do not stage, commit, amend, or rebase. The external runner owns every Git commit. Inspect the complete working-tree diff and status, then choose:
+
+- `action: "commit"` when changes remain. Write an expressive subject beginning with `<task-id>: ` and a body explaining the outcome and important verification.
+- `action: "none"` only when the worktree is clean because resumed implementation was already complete. Omit `commit`.
+
+Capture the exact runner receipt token, task identity, worktree path, task branch, and base branch from the calling prompt. Emit compact JSON on one final line:
+
+```text
+RESULT: IMPLEMENTED | {"v":1,"token":"<exact-runner-token>","task_id":"TASK-NNN","phase":"implement","action":"commit","worktree_path":"<absolute-path>","branch":"<branch>","base_branch":"<base-branch>","commit":{"subject":"TASK-NNN: <expressive outcome>","body":"<why and verification summary>"}}
+```
+
+Otherwise, commit all changes:
+
 ```bash
 git add -A && git commit -m "<identifier>: Implementation complete"
 ```

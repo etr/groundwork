@@ -1214,7 +1214,7 @@ describe('Codex native agent export', () => {
     });
   }
 
-  test('rewrites Codex Agent calls to name the installed custom agents', () => {
+  test('rewrites Codex agents and preserves the shared batch validation route', () => {
     const root = runInstaller('codex');
     if (root === null) return;
     try {
@@ -1228,9 +1228,11 @@ describe('Codex native agent export', () => {
       );
 
       assert.ok(architecture.includes('Spawn the `researcher` custom agent'));
-      assert.ok(justDoIt.includes('Spawn these custom agents in parallel, each with `fork_turns="none"`:'));
-      assert.ok(justDoIt.includes('(custom agent: `code-quality-reviewer`)'));
-      assert.ok(!justDoIt.includes('(skill: `review-code-quality-reviewer`)'));
+      assert.ok(justDoIt.includes('the groundwork-validate workflow'));
+      assert.ok(justDoIt.includes('shared validation state machine'));
+      assert.ok(justDoIt.includes('`--noninteractive`'));
+      assert.ok(!justDoIt.includes('validation-fixer'));
+      assert.ok(!justDoIt.includes('(custom agent: `code-quality-reviewer`)'));
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -1306,7 +1308,7 @@ describe('Codex consumption guardrails', () => {
     }
   });
 
-  test('leaves validation uncapped and reruns only requesting or impacted reviewers', () => {
+  test('uses one uncapped audit baseline and reruns only causally impacted reviewers', () => {
     const root = runInstaller('codex');
     if (root === null) return;
     try {
@@ -1316,9 +1318,13 @@ describe('Codex consumption guardrails', () => {
       );
       assert.ok(!validate.includes('max_validation_iterations'));
       assert.ok(!validate.includes('iteration cap reached'));
-      assert.ok(validate.includes('until ALL agents return `approve`'));
+      assert.ok(validate.includes('single comprehensive first pass'));
+      assert.ok(validate.includes('Never restart an initial audit inside the same validation baseline'));
+      assert.ok(!validate.includes('REPLAN_REQUIRED'));
+      assert.ok(!validate.includes('BASELINE_INVALIDATED'));
+      assert.ok(validate.includes('Repair size never limits an envelope'));
       assert.ok(validate.includes('Do not rerun the full reviewer suite'));
-      assert.ok(validate.includes('request-changes` or whose owned files/domains changed'));
+      assert.ok(validate.includes('request-changes` or whose cleared invariants were disturbed'));
       assert.ok(validate.includes('`fork_turns="none"`'));
       assert.ok(!validate.includes('Always re-launch the code-simplifier and quality-reviewer'));
     } finally {
@@ -1374,18 +1380,19 @@ describe('Codex consumption guardrails', () => {
         fs.readFileSync(path.join(root, '.codex', 'agents', 'validation-fixer.toml'), 'utf8')
       ).developer_instructions;
 
-      assert.ok(validate.includes('original global ID'));
       assert.ok(validate.includes('artifact validator\'s `finding_refs`'));
-      assert.ok(validate.includes('`resolved`, `persists`, or `regressed`'));
-      assert.ok(validate.includes('prior stable fingerprint'));
-      assert.ok(validate.includes('prior finding IDs and status'));
-      assert.ok(validate.includes('validated fixer result'));
-      assert.ok(validate.includes('post-fix changed paths and diff stat'));
+      assert.ok(validate.includes('semantic coordinator ledger'));
+      assert.ok(validate.includes('prior finding records and status'));
+      assert.ok(validate.includes('validated semantic repair claims'));
+      assert.ok(validate.includes('repair delta'));
       assert.ok(validate.includes('current project-gate result'));
+      assert.ok(validate.includes('introduced-by-fix'));
+      assert.ok(validate.includes('initial-audit-miss'));
+      assert.ok(validate.includes('causal_ref'));
       assert.ok(validate.includes('Create `fixer_result_file` for each fixer pass'));
       assert.ok(validate.includes('coordinator-owned manifest'));
       assert.ok(validate.includes('Ignore the reviewer-returned `findings_file` value'));
-      assert.ok(validate.includes('Parse only the compact response metadata'));
+      assert.ok(validate.includes('Parse only compact response metadata'));
       assert.ok(!validate.includes('Read **only** these fields: `verdict`, `score`, `summary`, `counts.critical`, `counts.major`, `counts.minor`, and `findings_file`'));
       assert.ok(validate.includes('--manifest "fixer-manifest-iter<N>.json"'));
       assert.ok(!validate.includes('--finding-ids'));
@@ -1412,9 +1419,20 @@ describe('Codex consumption guardrails', () => {
       assert.ok(fixer.includes('fixer_result_file'));
       assert.ok(fixer.includes('validate-fixer-result.js'));
       assert.ok(fixer.includes('coordinator-owned manifest'));
+      assert.ok(fixer.includes('repair_claims'));
+      assert.ok(fixer.includes('contracts_changed'));
+      assert.ok(fixer.includes('baseline-compatible-repair'));
+      assert.ok(fixer.includes('Repair size alone is never a reason to skip'));
+      assert.ok(!fixer.includes('baseline_invalidated'));
+      assert.ok(!fixer.includes('replan-required'));
       assert.ok(!fixer.includes('--finding-ids'));
       assert.ok(!fixer.includes('FINDINGS FILES:'));
       assert.ok(fs.existsSync(path.join(fixerDir, 'scripts', 'validate-fixer-result.js')));
+      assert.ok(validate.includes('node <skill-directory>/scripts/persist-unworked-findings.js'));
+      assert.ok(fs.existsSync(path.join(validateDir, 'scripts', 'persist-unworked-findings.js')));
+      assert.ok(validate.includes('node <skill-directory>/scripts/validation-session.js open'));
+      assert.ok(fs.existsSync(path.join(validateDir, 'scripts', 'validation-session.js')));
+      assert.ok(fs.existsSync(path.join(root, '.codex', 'validation-session.js')));
 
       const findingsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'groundwork-validation-'));
       try {
