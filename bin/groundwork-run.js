@@ -2900,6 +2900,35 @@ function phasePrompt(phase, input) {
   return header.join('\n');
 }
 
+function recoveryPrompt(input) {
+  const diagnostic = String(input.diagnostic || '').slice(-MAX_DIAGNOSTIC_BYTES);
+  return [
+    'GROUNDWORK_RUNNER_MODE=true',
+    'GROUNDWORK_BATCH_MODE=true',
+    'You are a fresh recovery session. Do not invoke a Groundwork skill.',
+    'Repair only the selected task/project state when it is safe. Do not publish, merge outward, create or remove worktrees, change Git controls, erase work, or ask the user to perform routine recovery.',
+    'Do not run git add, commit, amend, rebase, reset, clean, checkout, or worktree commands. Leave any safe selected-task changes for the runner to seal and validate.',
+    `Task: ${input.taskId}`,
+    `Repository root: ${input.repoRoot}`,
+    `Project root: ${input.projectRoot}`,
+    `Worktree: ${input.worktreePath || '(none)'}`,
+    `Task branch: ${input.branch || '(none)'}`,
+    `Failed phase: ${input.failedPhase}`,
+    `Desired next phase: ${input.desiredPhase || input.failedPhase}`,
+    `Recovery attempt: ${input.strongerRecovery ? 'stronger fresh retry' : 'initial'}`,
+    'Raw bounded diagnostic follows:',
+    diagnostic || '(no diagnostic captured)',
+    'Observed state follows:',
+    JSON.stringify(input.observedState || {}),
+    'Return only one short hint: RESULT: RECOVERY | ready, revalidate, or needs_user.',
+  ].join('\n');
+}
+
+function parseRecoveryHint(output) {
+  const match = String(output).match(/^RESULT:\s*RECOVERY\s*\|\s*(ready|revalidate|needs_user)\s*$/mi);
+  return match ? match[1] : 'ready';
+}
+
 function readTasksAtCommit(repoRoot, projectRoot, commit) {
   const relativeProject = path.relative(repoRoot, projectRoot).split(path.sep).join('/');
   const specsPrefix = [relativeProject, 'specs'].filter(Boolean).join('/');
@@ -3148,7 +3177,7 @@ function runTasks(options, dependencies = {}) {
   });
   let gitControls;
   const callPhase = dependencies.invokePhase || invokePhase;
-  function invokeChecked(input) {
+  function invokeOnce(input) {
     if (dependencies.beforePhase) dependencies.beforePhase(input);
     const releaseGate = acquireRepositoryGate(
       commonDir,
@@ -3175,12 +3204,155 @@ function runTasks(options, dependencies = {}) {
               || currentHooksPaths.some((value, index) => value !== hooksPaths[index])) {
             throw new Error('Repository core.hooksPath changed during a model phase');
           }
-          assertNoCommandGitConfig(repoRoot);
-          assertGitControls(commonDir, gitControls);
-          assertPlanTree(input.projectRoot);
+          try {
+            assertNoCommandGitConfig(repoRoot);
+            assertGitControls(commonDir, gitControls);
+            assertPlanTree(input.projectRoot);
+          } catch (error) {
+            error.hardRecoveryBoundary = true;
+            throw error;
+          }
         }
       } finally {
         releaseGate();
+      }
+    }
+  }
+
+  function observeRecoveryState(input) {
+    const state = {
+      taskId: input.taskId,
+      projectRoot: input.projectRoot,
+      failedPhase: input.failedPhase || input.phase,
+      baseBranch,
+      baseHead: execGit(repoRoot, ['rev-parse', baseBranch]),
+      baseBranchObserved: execGit(repoRoot, ['branch', '--show-current']),
+      baseStatus: execGit(repoRoot, ['status', '--porcelain', '--untracked-files=all']),
+      gitControls: snapshotGitControls(commonDir),
+    };
+    if (input.worktreePath && input.branch) {
+      const worktreePath = assertRegisteredWorktree(repoRoot, input.worktreePath, input.branch);
+      state.worktreePath = worktreePath;
+      state.branch = input.branch;
+      state.taskHead = execGit(worktreePath, ['rev-parse', 'HEAD']);
+      state.taskStatus = execGit(worktreePath, [
+        'status', '--porcelain', '--untracked-files=all', '--ignore-submodules=none',
+      ]);
+      const task = parseTaskCatalog(readTasks(input.projectRoot)).get(input.taskId);
+      state.taskStatusValue = task ? task.status : null;
+    }
+    const location = checkpointPath(commonDir, repoRoot, projectRoot, input.taskId);
+    state.checkpoint = fs.existsSync(location.file)
+      ? fileSha256(location.file)
+      : null;
+    state.fingerprint = crypto.createHash('sha256').update(JSON.stringify(state)).digest('hex');
+    return state;
+  }
+
+  function assertRecoveryBoundaries(before, after) {
+    if (after.baseBranchObserved !== before.baseBranchObserved
+        || after.baseHead !== before.baseHead || after.baseStatus !== before.baseStatus) {
+      throw new Error('Recovery changed the primary worktree or base branch');
+    }
+    if (after.gitControls !== before.gitControls) {
+      throw new Error('Recovery changed repository Git controls');
+    }
+    if (before.worktreePath && (after.worktreePath !== before.worktreePath
+        || after.branch !== before.branch || after.taskHead !== before.taskHead)) {
+      throw new Error('Recovery changed the selected task workspace identity or Git history');
+    }
+  }
+
+  function assertRecoveryScope(input, state) {
+    if (!state.worktreePath) return;
+    const projectRelative = path.relative(state.worktreePath, input.projectRoot).split(path.sep).join('/');
+    const changed = [
+      ...execGit(state.worktreePath, ['diff', '--name-only', '-z', 'HEAD']).split('\0').filter(Boolean),
+      ...execGit(state.worktreePath, ['ls-files', '--others', '--exclude-standard', '-z']).split('\0').filter(Boolean),
+    ];
+    const outsideProject = changed.filter((file) => projectRelative && file !== projectRelative
+      && !file.startsWith(`${projectRelative}/`));
+    if (outsideProject.length) {
+      throw new Error(`Recovery changed paths outside the selected project: ${outsideProject.join(', ')}`);
+    }
+  }
+
+  function sealRecoveryMutation(input, before, after) {
+    if (!after.worktreePath || !after.taskStatus) return false;
+    assertRecoveryScope(input, after);
+    const taskHead = sealPreparedCommit({
+      worktreePath: after.worktreePath,
+      expectedHead: before.taskHead,
+      taskId: input.taskId,
+      phase: 'recovery',
+      action: 'commit',
+      commit: {
+        subject: `${input.taskId}: Apply recovery repairs`,
+        body: `Seals safe recovery changes after ${input.phase} failed. Validation is required before publication.`,
+      },
+    });
+    const checkpoint = loadCheckpoint(commonDir, repoRoot, projectRoot, input.taskId);
+    if (checkpoint) {
+      if (checkpoint.implementation) checkpoint.implementation.taskHead = taskHead;
+      delete checkpoint.validation;
+      saveCheckpoint(commonDir, repoRoot, projectRoot, checkpoint);
+    }
+    input.recoveryMutated = true;
+    return true;
+  }
+
+  function invokeRecovery(input, failure, strongerRecovery) {
+    const before = observeRecoveryState({ ...input, failedPhase: input.phase });
+    const recoveryInput = {
+      ...input,
+      phase: 'recovery',
+      failedPhase: input.phase,
+      desiredPhase: input.phase,
+      diagnostic: String(failure && failure.message ? failure.message : failure),
+      observedState: before,
+      strongerRecovery,
+      cwd: input.cwd,
+      pluginRoot,
+      env: input.env,
+    };
+    recoveryInput.prompt = recoveryPrompt(recoveryInput);
+    const hint = parseRecoveryHint(invokeOnce(recoveryInput));
+    if (hint === 'needs_user') throw new Error('Recovery requires user judgment');
+    const after = observeRecoveryState({ ...input, failedPhase: input.phase });
+    assertRecoveryBoundaries(before, after);
+    const mutated = sealRecoveryMutation(input, before, after);
+    return { progressed: before.fingerprint !== after.fingerprint, mutated };
+  }
+
+  function invokeChecked(input) {
+    let attemptsWithoutProgress = 0;
+    for (;;) {
+      try {
+        const output = invokeOnce(input);
+        const failure = resultFailure(output);
+        if (failure) {
+          const reportedFailure = new Error(failure);
+          reportedFailure.recoverablePhaseResult = true;
+          throw reportedFailure;
+        }
+        return output;
+      } catch (error) {
+        if (error.hardRecoveryBoundary || input.phase === 'recovery'
+            || (dependencies.invokePhase && !error.recoverablePhaseResult)) throw error;
+        const recovery = invokeRecovery(input, error, attemptsWithoutProgress > 0);
+        if (recovery.mutated && input.phase === 'finalize') {
+          const revalidate = new Error('Recovery changed the task tree; validation is required before finalization');
+          revalidate.recoveryRequiresValidation = true;
+          throw revalidate;
+        }
+        if (recovery.progressed) {
+          attemptsWithoutProgress = 0;
+          continue;
+        }
+        if (attemptsWithoutProgress >= 1) {
+          throw new Error(`Recovery made no relevant state progress after ${input.phase}: ${error.message}; user judgment is required`);
+        }
+        attemptsWithoutProgress++;
       }
     }
   }
@@ -3194,6 +3366,7 @@ function runTasks(options, dependencies = {}) {
       leaseDependencies
     );
     let implementation = null;
+    let preservedWorkspace = null;
     let activePhase = null;
     const harnessLabel = options.harness === 'claude' ? 'Claude Code' : 'Codex';
     function taskLog(message, at = now()) {
@@ -3261,6 +3434,7 @@ function runTasks(options, dependencies = {}) {
           leaseDependencies
         );
         preparedWorktree = prepareTaskWorkspace(repoRoot, workspace, baseSha);
+        preservedWorkspace = { worktreePath: preparedWorktree, branch: expectedBranch };
         if (!checkpoint.workspace) {
           checkpoint.workspace = { branch: expectedBranch, worktreePath: expectedWorktree };
           saveCheckpoint(commonDir, repoRoot, projectRoot, checkpoint);
@@ -3437,14 +3611,18 @@ function runTasks(options, dependencies = {}) {
           resumeExistingWorktree,
           receiptToken: crypto.randomBytes(24).toString('hex'),
         };
-        const implementOutput = invokeChecked({
+        const implementationPhaseInput = {
           ...implementInput,
           phase: 'implement',
           cwd: preparedTaskProjectRoot,
           pluginRoot,
           env,
           prompt: phasePrompt('implement', implementInput),
-        });
+        };
+        const implementOutput = invokeChecked(implementationPhaseInput);
+        if (implementationPhaseInput.recoveryMutated) {
+          implementationStartHead = execGit(preparedWorktree, ['rev-parse', 'HEAD']);
+        }
         implementation = parseImplementationResult(implementOutput, {
           token: implementInput.receiptToken,
           taskId,
@@ -3545,9 +3723,9 @@ function runTasks(options, dependencies = {}) {
           taskLog(`[${taskId}] validate skipped — unchanged validated heads`);
         } else {
           beginPhase('validate');
-          const validationStartHead = execGit(implementation.worktreePath, ['rev-parse', 'HEAD']);
+          let validationStartHead = execGit(implementation.worktreePath, ['rev-parse', 'HEAD']);
           const validationReceiptToken = crypto.randomBytes(24).toString('hex');
-          validation = parseValidationResult(invokeChecked({
+          const validationPhaseInput = {
             ...validateInput,
             phase: 'validate',
             receiptToken: validationReceiptToken,
@@ -3558,7 +3736,12 @@ function runTasks(options, dependencies = {}) {
               ...validateInput,
               receiptToken: validationReceiptToken,
             }),
-          }), {
+          };
+          const validationOutput = invokeChecked(validationPhaseInput);
+          if (validationPhaseInput.recoveryMutated) {
+            validationStartHead = execGit(implementation.worktreePath, ['rev-parse', 'HEAD']);
+          }
+          validation = parseValidationResult(validationOutput, {
             token: validationReceiptToken,
             taskId,
           });
@@ -3606,19 +3789,31 @@ function runTasks(options, dependencies = {}) {
           validatedHead,
           receiptToken: crypto.randomBytes(24).toString('hex'),
         };
-        let finalization = parseFinalizeResult(invokeChecked({
-          ...finalizeInput,
-          phase: 'finalize',
-          cwd: taskProjectRoot,
-          pluginRoot,
-          env: taskEnv,
-          prompt: phasePrompt('finalize', finalizeInput),
-        }), {
-          token: finalizeInput.receiptToken,
-          taskId,
-        });
-        if (!finalization.receipt) {
-          throw new Error('finalize-task must return the versioned JSON runner receipt');
+        let finalization;
+        try {
+          const finalizeOutput = invokeChecked({
+            ...finalizeInput,
+            phase: 'finalize',
+            cwd: taskProjectRoot,
+            pluginRoot,
+            env: taskEnv,
+            prompt: phasePrompt('finalize', finalizeInput),
+          });
+          finalization = parseFinalizeResult(finalizeOutput, {
+            token: finalizeInput.receiptToken,
+            taskId,
+          });
+          if (!finalization.receipt) {
+            throw new Error('finalize-task must return the versioned JSON runner receipt');
+          }
+        } catch (error) {
+          if (!error.recoveryRequiresValidation) throw error;
+          finalization = {
+            outcome: 'revalidate',
+            taskHead: execGit(implementation.worktreePath, ['rev-parse', 'HEAD']),
+            baseHead: execGit(repoRoot, ['rev-parse', implementation.baseBranch]),
+            reason: 'Recovery changed the task tree; validation is required before finalization.',
+          };
         }
         implementation.worktreePath = assertRegisteredWorktree(
           repoRoot,
@@ -3761,10 +3956,11 @@ function runTasks(options, dependencies = {}) {
           failedAt
         );
       }
-      const preserved = implementation
-        ? `\nWorktree preserved: ${implementation.worktreePath}\nBranch preserved: ${implementation.branch}`
+      const preserved = implementation || preservedWorkspace;
+      const preservedMessage = preserved
+        ? `\nWorktree preserved: ${preserved.worktreePath}\nBranch preserved: ${preserved.branch}`
         : '';
-      throw new Error(`${taskId} failed: ${error.message}${preserved}`);
+      throw new Error(`${taskId} failed: ${error.message}${preservedMessage}`);
     } finally {
       releaseTaskLease();
     }

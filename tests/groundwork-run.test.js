@@ -3944,6 +3944,130 @@ describe('four-phase orchestration', () => {
     }
   });
 
+  test('recovers an unclassified phase failure with raw context and retries it in a fresh session', () => {
+    const { runTasks } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-recovery-raw-'));
+    const worktree = path.join(root, '.worktrees', 'TASK-004');
+    const phases = [];
+    let planAttempts = 0;
+    try {
+      initRepo(root);
+      const completed = runTasks(
+        { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
+        {
+          pluginRoot: PLUGIN_ROOT,
+          log: () => {},
+          invokePhase(input) {
+            phases.push(input.phase);
+            if (input.phase === 'recovery') {
+              assert.strictEqual(input.failedPhase, 'plan');
+              assert.match(input.prompt, /arbitrary encoder faltered/);
+              assert.match(input.prompt, /Desired next phase: plan/);
+              assert.match(input.prompt, /Task: TASK-004/);
+              assert.match(input.prompt, /Worktree:/);
+              return 'RESULT: RECOVERY | ready';
+            }
+            if (input.phase === 'plan') {
+              if (planAttempts++ === 0) return 'RESULT: FAILURE | arbitrary encoder faltered';
+              writePlan(root);
+              return 'RESULT: PLANNED | plan_file_path=.groundwork-plans/TASK-004-plan.md | identifier=TASK-004 | branch_prefix=task';
+            }
+            if (input.phase === 'implement') {
+              const taskFile = path.join(worktree, 'specs', 'tasks.md');
+              fs.writeFileSync(taskFile, fs.readFileSync(taskFile, 'utf8').replace('Not Started', 'In Progress'));
+              return implementationReceipt(input, worktree);
+            }
+            if (input.phase === 'validate') return validated(input);
+            return finalizeMock(input, root, worktree, 'TASK-004', 'task/TASK-004', 'main');
+          },
+        }
+      );
+      assert.deepStrictEqual(phases, ['plan', 'recovery', 'plan', 'implement', 'validate', 'finalize']);
+      assert.strictEqual(completed[0].taskId, 'TASK-004');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('seals recovery repairs and requires a fresh validation before finalization', () => {
+    const { runTasks } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-recovery-validation-'));
+    const worktree = path.join(root, '.worktrees', 'TASK-004');
+    const phases = [];
+    let validationAttempts = 0;
+    try {
+      initRepo(root);
+      runTasks(
+        { command: 'task', harness: 'claude', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
+        {
+          pluginRoot: PLUGIN_ROOT,
+          log: () => {},
+          invokePhase(input) {
+            phases.push(input.phase);
+            if (input.phase === 'plan') {
+              writePlan(root);
+              return 'RESULT: PLANNED | plan_file_path=.groundwork-plans/TASK-004-plan.md | identifier=TASK-004 | branch_prefix=task';
+            }
+            if (input.phase === 'implement') {
+              const taskFile = path.join(worktree, 'specs', 'tasks.md');
+              fs.writeFileSync(taskFile, fs.readFileSync(taskFile, 'utf8').replace('Not Started', 'In Progress'));
+              return implementationReceipt(input, worktree);
+            }
+            if (input.phase === 'recovery') {
+              assert.strictEqual(input.failedPhase, 'validate');
+              write(path.join(worktree, 'repaired.txt'), 'safe repair\n');
+              return 'RESULT: RECOVERY | ready';
+            }
+            if (input.phase === 'validate') {
+              if (validationAttempts++ === 0) return 'RESULT: FAILURE | arbitrary validation failure';
+              return validated(input);
+            }
+            return finalizeMock(input, root, worktree, 'TASK-004', 'task/TASK-004', 'main');
+          },
+        }
+      );
+      assert.deepStrictEqual(phases, ['plan', 'implement', 'validate', 'recovery', 'validate', 'finalize']);
+      assert.strictEqual(fs.readFileSync(path.join(root, 'repaired.txt'), 'utf8'), 'safe repair\n');
+      assert.match(git(root, 'log', '--format=%s'), /TASK-004: Apply recovery repairs/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('stops safely after the stronger recovery retry makes no relevant progress', () => {
+    const { runTasks } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-recovery-stall-'));
+    const phases = [];
+    try {
+      initRepo(root);
+      assert.throws(
+        () => runTasks(
+          { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
+          {
+            pluginRoot: PLUGIN_ROOT,
+            log: () => {},
+            invokePhase(input) {
+              phases.push(input.phase);
+              if (input.phase === 'recovery') {
+                if (phases.filter((phase) => phase === 'recovery').length === 2) {
+                  assert.match(input.prompt, /stronger fresh retry/);
+                }
+                return 'RESULT: RECOVERY | ready';
+              }
+              return 'RESULT: FAILURE | unexpected blank failure';
+            },
+          }
+        ),
+        /made no relevant state progress[\s\S]*Worktree preserved/
+      );
+      assert.deepStrictEqual(phases, ['plan', 'recovery', 'plan', 'recovery']);
+      assert.ok(fs.existsSync(path.join(root, '.worktrees', 'TASK-004')));
+      assert.ok(git(root, 'show-ref', '--verify', '--quiet', 'refs/heads/task/TASK-004') === '');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('runs plan, implement, validate, and finalize in separate calls with explicit project context', () => {
     const { runTasks } = require(RUNNER);
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-four-phases-'));
