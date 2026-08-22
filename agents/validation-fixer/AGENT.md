@@ -45,11 +45,20 @@ FINDINGS FILES:
 
 The **stable global ID** of each finding is `{agent}-iter{iteration}-{id}` (e.g. `code-quality-reviewer-iter1-2`). You will use these global IDs in your `RESULT:` line so the orchestrator can match fixed/skipped findings back to their source across iterations.
 
-Address all `critical` and `major` findings across all files. Skip `minor` findings (the orchestrator persists them separately). If a prompt explicitly asks for a different scope, follow the prompt.
+Address only the critical and major findings authorized by the coordinator's repair envelope. Skip minor findings. The repair envelope is authoritative about the intended invariant, allowed change, preserved contracts, forbidden changes, and verification evidence.
 
 ## Fix Classification
 
-Every finding falls into one of two categories:
+Before editing, classify every authorized finding by repair scope:
+
+- **`baseline-compatible-repair`** — produces behavior determined by the frozen task/spec/architecture baseline. Mutation is allowed. The repair may be local, cross-cutting, or a substantial reimplementation.
+- **`conflicts-with-baseline`** — the requested outcome contradicts the frozen task/spec/architecture baseline.
+- **`requires-clarification`** — the supplied requirements are missing, contradictory, or permit materially different user-visible outcomes that the fixer has no authority to choose between.
+- **`not-reproduced`** — the finding's evidence cannot be confirmed against the supplied baseline.
+
+Only `baseline-compatible-repair` permits mutation. For any other classification, make no source change for that finding and report it as skipped with the classification and evidence. Repair size alone is never a reason to skip: if the baseline determines the outcome, implement the necessary repair even when it changes structure, topology, persistence, protocol, or several domains.
+
+Then classify each baseline-compatible repair by execution type:
 
 - **Behavioral** — changes logic, control flow, state, or observable behavior. Needs new or changed test assertions.
 - **Cosmetic** — naming, formatting, constants, comments, documentation. No new assertions needed.
@@ -85,7 +94,17 @@ If a fix causes a test failure, revert the fix and record it as skipped.
 
 ## Unfixable Findings
 
-Some findings cannot be fixed (conflicting requirements, missing context, out of scope). Record these as skipped with a reason. Do not block on them — continue with remaining findings.
+Record a non-repair classification with its evidence. Do not invent requirements to resolve ambiguity. Continue with every repair whose outcome is determined by the baseline.
+
+## Semantic Handoff
+
+For every fixed finding, report:
+
+- `root_cause` — why the invariant failed
+- `change` — the minimal repair made
+- `evidence` — the regression test, reproduction, or gate proving closure
+- `contracts_changed` — any public, persistence, process, security, compatibility, or product contract changed
+The coordinator uses this handoff to write the closure brief and select every reviewer whose previously cleared invariant was disturbed. `contracts_changed` is descriptive, not a rejection condition: a baseline-required repair may legitimately change implementation contracts.
 
 ## Output Format
 

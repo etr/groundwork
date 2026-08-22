@@ -202,144 +202,18 @@ Parse the result:
 
 #### Phase C: Validate
 
-**Findings storage prologue (run FIRST):** Create a per-task findings directory and initialize an iteration counter. Validation agents will write their full review JSON to per-iteration files inside this directory; the orchestrator will only see compact one-line responses.
-
-```bash
-cd <worktree_path>
-mktemp -d -t groundwork-validation-XXXXXX     # save the printed path as findings_dir
-git diff --name-only HEAD~1                    # changed file paths
-git diff --stat HEAD~1                         # diff stat summary
-```
-
-Initialize `iteration_number = 1`. Maintain orchestrator working notes (in-context, NOT in any project file) of the form:
+Run the shared validation state machine from the task worktree in noninteractive mode (`--noninteractive`):
 
 ```
-findings_dir: /tmp/groundwork-validation-XXXXXX
-iteration_number: 1
-iterations:
-  1:
-    agent_files:
-      code-quality-reviewer: /tmp/groundwork-validation-XXXXXX/findings-code-quality-reviewer-iter1.json
-      security-reviewer:     /tmp/groundwork-validation-XXXXXX/findings-security-reviewer-iter1.json
-      ...
-    findings_fixed: []
-    findings_skipped: []
+Skill(skill="groundwork:validate", args="--noninteractive")
 ```
 
-Then launch all 10 validation agents **in parallel** using the Agent tool:
+Parse its terminal line:
 
-```
-Agent(subagent_type="groundwork:code-quality-reviewer:code-quality-reviewer", description="Review TASK-NNN quality", prompt="...")
-Agent(subagent_type="groundwork:security-reviewer:security-reviewer", description="Review TASK-NNN security", prompt="...")
-Agent(subagent_type="groundwork:spec-alignment-checker:spec-alignment-checker", description="Check TASK-NNN spec alignment", prompt="...")
-Agent(subagent_type="groundwork:architecture-alignment-checker:architecture-alignment-checker", description="Check TASK-NNN arch alignment", prompt="...")
-Agent(subagent_type="groundwork:code-simplifier:code-simplifier", description="Simplify TASK-NNN code", prompt="...")
-Agent(subagent_type="groundwork:housekeeper:housekeeper", description="Check TASK-NNN housekeeping", prompt="...")
-Agent(subagent_type="groundwork:performance-reviewer:performance-reviewer", description="Review TASK-NNN performance", prompt="...")
-Agent(subagent_type="groundwork:test-quality-reviewer:test-quality-reviewer", description="Review TASK-NNN test quality", prompt="...")
-Agent(subagent_type="groundwork:design-consistency-checker:design-consistency-checker", description="Check TASK-NNN design", prompt="...")
-Agent(subagent_type="groundwork:cloud-infrastructure-reviewer:cloud-infrastructure-reviewer", description="Check TASK-NNN cloud infra", prompt="...")
-Agent(subagent_type="groundwork:conventions-reviewer:conventions-reviewer", description="Check TASK-NNN cloud infra", prompt="...")
-```
+- `Validation PASSED (...)` → proceed to Phase E.
+- `Validation INCOMPLETE (...)` or an unparseable result → stop the batch. Report the reason and preserved worktree.
 
-Each agent receives: changed file paths, diff stat, task definition, and relevant spec/architecture/design paths. **Each prompt MUST also include:**
-
-```
-findings_file: {findings_dir}/findings-{agent_name}-iter{iteration_number}.json
-agent_name: {agent_name}
-iteration: {iteration_number}
-```
-
-Substitute `{agent_name}` with the agent's short name (`code-quality-reviewer`, etc.). Also include in each prompt: "Use the Read tool to examine these files. Do NOT expect file contents in this prompt — read them yourself. Write your full review JSON to the `findings_file` path above using the Write tool, then return ONLY the compact one-line JSON response. Do NOT print findings inline."
-
-**Each agent's compact response is a single JSON line:**
-
-```json
-{"verdict":"approve","score":85,"summary":"...","findings_file":"/tmp/groundwork-validation-XXXXXX/findings-<agent>-iter1.json","counts":{"critical":0,"major":1,"minor":2}}
-```
-
-The full review file format (written by the agent to `findings_file`) is:
-
-```json
-{
-  "agent": "code-quality-reviewer",
-  "iteration": 1,
-  "summary": "...",
-  "score": 85,
-  "verdict": "approve",
-  "findings": [
-    {"id": 1, "severity": "major", "category": "...", "file": "...", "line": 42, "finding": "...", "recommendation": "..."}
-  ]
-}
-```
-
-The **stable global ID** of a finding is `{agent_name}-iter{N}-{id}` (e.g. `code-quality-reviewer-iter1-2`).
-
-Parse only the compact line. Record each agent's `findings_file` path in the iteration tracking notes. Do NOT read finding bodies into context.
-
-#### Phase D: Fix Loop (if needed)
-
-If any agent returns `request-changes`:
-
-1. Build the list of `findings_file` paths from agents whose verdict in this iteration is `request-changes` (look them up in your iteration tracking notes for the current `iteration_number`). **Do NOT inline the contents of those files into the prompt.**
-2. Spawn the validation-fixer agent:
-   ```
-   Agent(
-     subagent_type="groundwork:validation-fixer:validation-fixer",
-     description="Fix TASK-NNN validation findings",
-     prompt="Working directory: <worktree_path>
-   Iteration: N
-
-   FINDINGS FILES:
-   - [path to findings-<agent>-iter<N>.json]
-   - [path to findings-<other-agent>-iter<N>.json]
-   ...
-
-   Read each file with the Read tool. Each is a JSON object with shape:
-     { agent, iteration, summary, score, verdict, findings: [{id, severity, category, file, line, finding, recommendation}, ...] }
-
-   Address all critical and major findings across these files. Skip minor findings.
-   Reference each finding by its global ID: {agent}-iter{iteration}-{id} (e.g. code-quality-reviewer-iter1-2)."
-   )
-   ```
-3. Parse the fix agent result. Its `RESULT:` line uses **global IDs** (`{agent}-iter{N}-{id}`):
-   - `RESULT: FIXED | files_touched: [...] | findings_fixed: [global-id, ...]` → all findings addressed, proceed to re-validation
-   - `RESULT: PARTIAL | files_touched: [...] | findings_fixed: [global-id, ...] | findings_skipped: [global-id: reason, ...]` → log skipped findings, proceed to re-validation with fixed subset; skipped findings feed stuck detection
-   - `RESULT: FAILURE | [reason]` → log failure, report and continue
-
-   Record `findings_fixed` and `findings_skipped` (as global ID lists) in the iteration tracking notes under the current `iteration_number`. These are what Phase D.5 uses to compute the unexecuted set.
-4. Re-run validation agents (same as Phase C). **Bump `iteration_number` by 1 first**, append a new iteration block to your tracking notes, and pass each re-run agent a *new* `findings_file` path (`...-iter{N+1}.json`) so the previous iteration's file is preserved on disk for Phase D.5.
-5. Repeat until all agents approve
-6. **Stuck detection:** Track findings by their global ID prefix `[Agent]-[Category]-[File]-[Line]`. If the same finding persists after 3 iterations (including findings repeatedly skipped by the fix agent), report it and continue (do not block indefinitely). If you need to surface body details for the report, Read the relevant `findings_file` once.
-
-#### Phase D.5: Persist Unexecuted Findings
-
-After all agents approve, persist any unfixed findings via the helper script. The orchestrator does **not** `Read` any findings file itself, and does **not** `Read` the file the script produces. The helper does all of the file I/O outside the orchestrator's context window.
-
-1. Build `fixed_ids_csv` by joining (with commas, no spaces) every global ID in `findings_fixed` across every iteration of the tracking notes. (Free — these IDs are already in context.) If no findings were fixed, pass an empty string.
-2. Use the current task's identifier (e.g. `TASK-042: Title`) as `task_id`.
-3. Run:
-   ```bash
-   node ${CLAUDE_PLUGIN_ROOT}/lib/persist-unworked-findings.js \
-     --findings-dir "<findings_dir>" \
-     --specs-dir   "{{specs_dir}}" \
-     --task-id     "<task_id>" \
-     --fixed-ids   "<fixed_ids_csv>"
-   ```
-4. **Do NOT print, echo, `cat`, or `Read` the contents of the file the script produces** — that would re-pollute the orchestrator's context with the very findings the script exists to keep out. The single-line JSON the script writes to stdout is the only thing to look at.
-5. Parse that one-line JSON:
-   - `status: "written"` → record `Unexecuted findings: <total> persisted to <written>` in the per-task log line, where `<total>` is `counts.critical + counts.major + counts.minor` and `<written>` is the path the script returned.
-   - `status: "empty"` or `status: "no-findings-files"` → record `Unexecuted findings: 0`.
-   - **Stop there — do not summarize what's in the file.**
-
-**Cleanup (run at the very end of Phase D.5, before proceeding to Phase E):** delete the per-task findings directory created at the start of Phase C. Only delete the `findings_dir` path that was returned by `mktemp -d -t groundwork-validation-XXXXXX`:
-
-```bash
-rm -rf "<findings_dir>"
-```
-
-If `findings_dir` was never created (e.g., Phase C bailed out before creating it), skip cleanup.
-
+Do not implement a separate reviewer/fixer loop here. The `validate` skill owns the frozen baseline, repair envelopes, causal closure reviews, unworked-finding persistence, and cleanup.
 #### Phase E: Merge
 
 From the project root (NOT the worktree):

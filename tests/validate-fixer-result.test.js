@@ -96,6 +96,7 @@ function createArtifacts(options = {}) {
       score: review.score,
       verdict: review.verdict,
       counts: countsFor(review.findings),
+      ...(review.review_mode ? { review_mode: review.review_mode } : {}),
     })),
   };
 
@@ -158,6 +159,55 @@ test('accepts a complete fixed result derived from validated findings files', ()
   });
 });
 
+test('accepts semantic repair claims for every fixed finding', () => {
+  const ids = ['code-quality-reviewer-iter1-1', 'security-reviewer-iter1-3'];
+  withArtifacts({
+    result: {
+      status: 'fixed',
+      files_touched: ['lib/example.js'],
+      findings_fixed: ids,
+      findings_skipped: [],
+      repair_claims: ids.map((id) => ({
+        id,
+        root_cause: 'A validated invariant was not enforced.',
+        change: 'Enforce the invariant at the existing boundary.',
+        evidence: ['Focused regression test passes.'],
+      })),
+      contracts_changed: ['worker topology required by the task baseline'],
+    },
+  }, (result) => {
+    assert.strictEqual(result.status, 0, result.stderr);
+    const output = JSON.parse(result.stdout);
+    assert.deepStrictEqual(output.repair_claims.map((claim) => claim.id), ids);
+    assert.deepStrictEqual(output.contracts_changed, ['worker topology required by the task baseline']);
+  });
+});
+
+test('accepts a semantic partial result only for genuine clarification or invalid findings', () => {
+  withArtifacts({
+    result: {
+      status: 'partial',
+      files_touched: ['lib/example.js'],
+      findings_fixed: ['code-quality-reviewer-iter1-1'],
+      findings_skipped: [{
+        id: 'security-reviewer-iter1-3',
+        classification: 'requires-clarification',
+        reason: 'Two contradictory authentication outcomes are specified.',
+      }],
+      repair_claims: [{
+        id: 'code-quality-reviewer-iter1-1',
+        root_cause: 'A validated invariant was not enforced.',
+        change: 'Enforce the invariant using the implementation selected by the task.',
+        evidence: ['Focused regression test passes.'],
+      }],
+      contracts_changed: [],
+    },
+  }, (result) => {
+    assert.strictEqual(result.status, 0, result.stderr);
+    assert.strictEqual(JSON.parse(result.stdout).findings_skipped[0].classification, 'requires-clarification');
+  });
+});
+
 test('validates findings independently before fixer use', () => {
   const artifacts = createArtifacts();
   try {
@@ -167,6 +217,79 @@ test('validates findings independently before fixer use', () => {
       'code-quality-reviewer-iter1-1',
       'security-reviewer-iter1-3',
     ]);
+  } finally {
+    fs.rmSync(artifacts.dir, { recursive: true, force: true });
+  }
+});
+
+test('accepts a causal blocking finding in closure-review mode', () => {
+  const reviews = [defaultReviews()[0]];
+  reviews[0].review_mode = 'closure-review';
+  reviews[0].findings = [{
+    ...reviews[0].findings[0],
+    origin: 'introduced-by-fix',
+    causal_ref: 'lib/example.js:12 invalidates the bounded parser invariant',
+  }];
+  const artifacts = createArtifacts({ reviews });
+  try {
+    const result = validate(artifacts, ['--check-findings']);
+    assert.strictEqual(result.status, 0, result.stderr);
+    const output = JSON.parse(result.stdout);
+    assert.deepStrictEqual(output.finding_ids, ['code-quality-reviewer-iter1-1']);
+    assert.strictEqual(output.finding_refs[0].origin, 'introduced-by-fix');
+  } finally {
+    fs.rmSync(artifacts.dir, { recursive: true, force: true });
+  }
+});
+
+test('keeps closure scope expansion out of fixer scope', () => {
+  const reviews = [defaultReviews()[0]];
+  reviews[0].review_mode = 'closure-review';
+  reviews[0].verdict = 'approve';
+  reviews[0].findings = [{
+    ...reviews[0].findings[0],
+    origin: 'scope-expansion',
+    causal_ref: null,
+  }];
+  const artifacts = createArtifacts({ reviews });
+  try {
+    const output = JSON.parse(validate(artifacts, ['--check-findings']).stdout);
+    assert.deepStrictEqual(output.finding_ids, []);
+    assert.strictEqual(output.finding_refs[0].requested, false);
+  } finally {
+    fs.rmSync(artifacts.dir, { recursive: true, force: true });
+  }
+});
+
+test('keeps a concrete closure initial-audit miss in normal fixer scope', () => {
+  const reviews = [defaultReviews()[1]];
+  reviews[0].review_mode = 'closure-review';
+  reviews[0].findings = [{
+    ...reviews[0].findings[0],
+    origin: 'initial-audit-miss',
+    causal_ref: null,
+  }];
+  const artifacts = createArtifacts({ reviews });
+  try {
+    const output = JSON.parse(validate(artifacts, ['--check-findings']).stdout);
+    assert.deepStrictEqual(output.finding_ids, ['security-reviewer-iter1-3']);
+    assert.strictEqual(output.finding_refs[0].origin, 'initial-audit-miss');
+  } finally {
+    fs.rmSync(artifacts.dir, { recursive: true, force: true });
+  }
+});
+
+test('rejects a closure blocker without a causal reference', () => {
+  const reviews = [defaultReviews()[0]];
+  reviews[0].review_mode = 'closure-review';
+  reviews[0].findings = [{
+    ...reviews[0].findings[0],
+    origin: 'exposed-by-fix',
+    causal_ref: null,
+  }];
+  const artifacts = createArtifacts({ reviews });
+  try {
+    expectRejected(validate(artifacts, ['--check-findings']), 'blocking closure finding requires causal_ref');
   } finally {
     fs.rmSync(artifacts.dir, { recursive: true, force: true });
   }

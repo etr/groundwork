@@ -1,6 +1,6 @@
 ---
 name: finalize-task
-description: Use when a task worktree has passed validation - commits remaining validated changes, marks the task complete, merges it into the base branch, and cleans up safely
+description: Use when a task worktree has passed validation - manually commits, merges, and cleans up, or prepares runner-owned commits and publication
 argument-hint: "[task-id] [--project name]"
 allowed-tools: ["Read", "Edit", "Bash", "Glob", "Grep"]
 ---
@@ -48,11 +48,11 @@ Within the selected project's task files:
 
 Inspect the actual remaining diff. Include validation fixes and task bookkeeping belonging to this task.
 
-- In runner mode, validation has already committed every validated change. Only task-status bookkeeping may remain; reject any other changed path.
-- If bookkeeping changes remain, commit them on the task branch as `<task-id>: Mark task complete`.
+- In runner mode, validation has already been sealed by the runner. Only task-status bookkeeping may remain; reject any other changed path. Do not stage or commit it. Return it to the runner with `action: "commit"` and propose `<task-id>: Mark task complete` plus an explanatory body. Use `action: "none"` only when no bookkeeping change remains.
+- Outside runner mode, commit bookkeeping changes on the task branch as `<task-id>: Mark task complete`.
 - In manual mode, describe any validated remaining change in the subject.
 - Do not create an empty commit.
-- Require a clean task worktree afterward.
+- Require a clean task worktree afterward only in manual mode.
 
 In runner mode, never ask a question. Return `RESULT: FAILURE` for missing information or unsafe state.
 
@@ -62,10 +62,10 @@ Check whether the current base head is an ancestor of the task branch.
 
 If it is not:
 
-1. Merge the current base head into the task branch.
+1. Merge the current base head into the task branch with `--no-ff --no-commit`.
 2. Resolve conflicts only when the task definition and surrounding code make the resolution unambiguous.
-3. Commit any resolution and require a clean task worktree.
-4. Return `RESULT: REVALIDATE`. Do not merge the task into the base branch yet.
+3. In runner mode, do not run `git add` or create the merge commit. Leave the prepared merge for the runner and propose an expressive task-prefixed commit subject and body. Outside runner mode, commit the resolution and require a clean task worktree.
+4. Return `RESULT: REVALIDATE`. Do not merge the task into the base branch yet. In runner mode, bind the receipt to the exact integrated base head.
 
 If resolution needs product, architecture, or ownership judgment, safely abort the integration when possible and return `RESULT: NEEDS_INPUT`. Any base integration changes the validated tree and requires a fresh `validate` invocation.
 
@@ -73,9 +73,9 @@ If resolution needs product, architecture, or ownership judgment, safely abort t
 
 In runner mode:
 
-1. Reconfirm both worktrees are clean and the base branch is still at the head recorded in step 1.
+1. Reconfirm the primary worktree is clean, the task worktree contains only the permitted bookkeeping change, and the base branch is still at the head recorded in step 1.
 2. Choose a concise merge message containing the task ID and actual title or outcome.
-3. Return `RESULT: READY_TO_MERGE`. Do not merge outward, remove the worktree, or delete the branch; the harness verifies the prepared tree before performing those operations.
+3. Return the versioned JSON `RESULT: READY_TO_MERGE` receipt with the exact runner token, task identity, bookkeeping commit proposal when needed, and expressive outward merge subject/body. Do not merge outward, remove the worktree, or delete the branch; the runner verifies and commits the prepared tree before performing those operations.
 
 When invoked manually, merge with `--no-ff`, then continue to cleanup below. If an unexpected conflict occurs, abort it when safe and return `RESULT: NEEDS_INPUT`. Do not resolve it on the base branch because the resolution would not have been validated.
 
@@ -96,11 +96,16 @@ Make the final line exactly one of:
 
 ```text
 RESULT: FINALIZED | task_id=<id> | task_head=<sha> | merge_commit=<sha> | base_branch=<branch>
-RESULT: READY_TO_MERGE | task_id=<id> | task_head=<sha> | base_head=<sha> | merge_message=<one-line message>
-RESULT: REVALIDATE | task_head=<sha> | base_head=<sha> | reason=<one-line reason>
 RESULT: NEEDS_INPUT | reason=<one-line reason>
 RESULT: CLEANUP_REQUIRED | merge_commit=<sha> | worktree_path=<path> | branch=<branch> | reason=<one-line reason>
 RESULT: FAILURE | reason=<one-line reason> | worktree_path=<path> | branch=<branch>
 ```
 
-In runner mode, report only `READY_TO_MERGE`, `REVALIDATE`, or a failure result. Report `FINALIZED` only after a manual merge is present, both remaining worktrees are clean, and cleanup succeeded.
+In runner mode, report only one of these compact JSON receipts or a failure result:
+
+```text
+RESULT: READY_TO_MERGE | {"v":1,"token":"<exact-runner-token>","task_id":"TASK-NNN","phase":"finalize","action":"commit","commit":{"subject":"TASK-NNN: Mark task complete","body":"<bookkeeping summary>"},"merge":{"subject":"Merge TASK-NNN: <actual outcome>","body":"<publication summary>"}}
+RESULT: REVALIDATE | {"v":1,"token":"<exact-runner-token>","task_id":"TASK-NNN","phase":"finalize","action":"commit","base_head":"<full-integrated-base-sha>","reason":"<why revalidation is required>","commit":{"subject":"TASK-NNN: Integrate updated base branch","body":"<resolution summary>"}}
+```
+
+For `READY_TO_MERGE`, use `action: "none"` and omit `commit` when the task worktree is clean. `REVALIDATE` always uses `action: "commit"`. Report `FINALIZED` only after a manual merge is present, both remaining worktrees are clean, and cleanup succeeded.

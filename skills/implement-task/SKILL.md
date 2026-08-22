@@ -21,8 +21,9 @@ If session context contains `GROUNDWORK_RUNNER_MODE=true`:
 - Forward the runner-supplied absolute worktree path exactly; do not let the executor choose another directory.
 - Forward the runner-supplied task branch exactly; monorepos use a project-qualified branch to prevent overlapping task IDs from colliding.
 - When the runner supplies `RESUME EXISTING WORKTREE=true`, verify and reuse that exact registered worktree. Tell the executor to inspect existing commits, working state, tests, and plan progress; do not repeat completed implementation work.
-- The runner exclusively owns task-worktree creation, reconciliation, and cleanup. The task-executor owns implementation and its commit inside that precreated worktree.
-- Keep the existing terminal `RESULT: IMPLEMENTED` contract unchanged.
+- Forward the runner receipt token exactly.
+- The runner exclusively owns task-worktree creation, reconciliation, cleanup, staging, and commits. The task-executor edits and tests the precreated worktree, then proposes an expressive commit subject and body.
+- Return the task-executor's versioned JSON `RESULT: IMPLEMENTED` receipt unchanged.
 
 ## Token Discipline
 
@@ -116,6 +117,7 @@ Agent(
 
   [If GROUNDWORK_RUNNER_MODE=true: include both lines below]
   GROUNDWORK_RUNNER_MODE=true
+  RUNNER RECEIPT TOKEN: [runner-supplied exact token]
   WORKTREE PATH: [runner-supplied absolute worktree path]
   TASK BRANCH: [runner-supplied exact branch]
   The runner exclusively owns the task-worktree lifecycle. Verify and reuse the precreated registered worktree; never create, remove, move, or repair a worktree in runner mode.
@@ -135,10 +137,13 @@ Agent(
   Read this file first with the Read tool — it contains the validated implementation plan.
 
   INSTRUCTIONS:
-  1. Follow your preloaded skills to create or safely resume a worktree, implement with TDD, and commit. When WORKTREE PATH and TASK BRANCH are supplied, the runner exclusively owns the worktree lifecycle: verify and reuse the precreated registered worktree at exactly that path and branch; do not create, remove, move, or repair it. When RESUME EXISTING WORKTREE=true, inspect completed plan items and tests, and finish only remaining work.
+  1. Follow your preloaded skills to create or safely resume a worktree and implement with TDD. When WORKTREE PATH and TASK BRANCH are supplied, the runner exclusively owns the worktree lifecycle and all commits: verify and reuse the precreated registered worktree at exactly that path and branch; do not create, remove, move, repair, stage, commit, amend, or rebase it. When RESUME EXISTING WORKTREE=true, inspect completed plan items and tests, and finish only remaining work.
   2. Read the task section from tasks_path and the plan from PLAN FILE — they provide all session context. Do NOT re-ask the user for requirements.
-  [If GROUNDWORK_RUNNER_MODE=true: change this task's status to In Progress inside the task worktree and include that bookkeeping in the implementation commit.]
+  [If GROUNDWORK_RUNNER_MODE=true: change this task's status to In Progress inside the task worktree and include that bookkeeping in the prepared implementation changes.]
   3. When complete, output your final line in EXACTLY this format:
+     [If GROUNDWORK_RUNNER_MODE=true:]
+     RESULT: IMPLEMENTED | {"v":1,"token":"<exact-runner-token>","task_id":"TASK-NNN","phase":"implement","action":"commit","worktree_path":"<absolute-path>","branch":"<branch>","base_branch":"<base-branch>","commit":{"subject":"TASK-NNN: <expressive outcome>","body":"<why and verification summary>"}}
+     [Otherwise:]
      RESULT: IMPLEMENTED | <worktree_path> | <branch> | <base_branch>
      OR:
      RESULT: FAILURE | [one-line reason]
@@ -188,6 +193,7 @@ Agent(
 
 **After the subagent returns**, parse the result:
 
+- In runner mode, accept only the versioned JSON `RESULT: IMPLEMENTED` receipt with the exact runner token and task identity, then output that final line unchanged.
 - `RESULT: IMPLEMENTED | <path> | <branch> | <base-branch>` → Output:
   ```
   RESULT: IMPLEMENTED | worktree_path=<path> | branch=<branch> | base_branch=<base-branch>

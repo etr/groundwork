@@ -663,6 +663,12 @@ $new_body"
             new_body=$(printf '%s' "$new_body" | sed \
                 "s|node the plugin directory/lib/persist-project.js \"<selected-name>\"|node <skill-directory>/scripts/project-context-cli.js select \"<selected-name>\" --harness ${target}|")
         fi
+        if [[ "$skill_name" == "validate" ]]; then
+            new_body=$(printf '%s' "$new_body" | sed \
+                's|node the plugin directory/lib/persist-unworked-findings.js|node <skill-directory>/scripts/persist-unworked-findings.js|g')
+            new_body=$(printf '%s' "$new_body" | sed \
+                's|node the plugin directory/lib/validation-session.js|node <skill-directory>/scripts/validation-session.js|g')
+        fi
         if [[ "$raw_body" == *'{{project_name}}'* || "$raw_body" == *'{{project_root}}'* || "$raw_body" == *'{{specs_dir}}'* ]]; then
             needs_project_runtime=true
             new_body="$(portable_project_context_preamble "$target")
@@ -700,10 +706,17 @@ $new_body"
             runtime_dir="$(dirname "$dest")/scripts"
             write_codex_agent "$runtime_dir/runtime-context-cli.js" "$(<"$SOURCE_DIR/lib/runtime-context-cli.js")" "runtime context resolver" "$dest_base"
         fi
-        if [[ "$target" == "codex" && "$skill_name" == "validate" ]]; then
+        if [[ "$skill_name" == "validate" ]]; then
             local validator_dir
             validator_dir="$(dirname "$dest")/scripts"
-            write_codex_agent "$validator_dir/validate-fixer-result.js" "$(<"$SOURCE_DIR/lib/validate-fixer-result.js")" "fixer result validator" "$dest_base"
+            if [[ "$target" == "codex" ]]; then
+                write_codex_agent "$validator_dir/validate-fixer-result.js" "$(<"$SOURCE_DIR/lib/validate-fixer-result.js")" "fixer result validator" "$dest_base"
+                write_codex_agent "$validator_dir/persist-unworked-findings.js" "$(<"$SOURCE_DIR/lib/persist-unworked-findings.js")" "unworked findings persistence helper" "$dest_base"
+                write_codex_agent "$validator_dir/validation-session.js" "$(<"$SOURCE_DIR/lib/validation-session.js")" "validation session helper" "$dest_base"
+            else
+                write_file "$validator_dir/persist-unworked-findings.js" "$(<"$SOURCE_DIR/lib/persist-unworked-findings.js")" "unworked findings persistence helper"
+                write_file "$validator_dir/validation-session.js" "$(<"$SOURCE_DIR/lib/validation-session.js")" "validation session helper"
+            fi
         fi
         ((SKILL_COUNT++)) || true
     done
@@ -716,6 +729,7 @@ install_external_runner() {
     local dest_base
     dest_base=$(get_dest_base "$target")
     write_codex_agent "$dest_base/groundwork-run.js" "$(<"$SOURCE_DIR/bin/groundwork-run.js")" "external task runner" "$dest_base"
+    write_codex_agent "$dest_base/validation-session.js" "$(<"$SOURCE_DIR/lib/validation-session.js")" "external validation session helper" "$dest_base"
 }
 
 # ============================================================

@@ -32,24 +32,70 @@ try {
           const taskFile = path.join(input.projectRoot, 'specs', 'tasks.md');
           fs.writeFileSync(taskFile, fs.readFileSync(taskFile, 'utf8').replace('Not Started', 'In Progress'));
           fs.writeFileSync(path.join(input.projectRoot, 'feature.txt'), `${project}\n`);
-          git(input.worktreePath, 'add', '.');
-          git(input.worktreePath, 'commit', '-m', `Implement ${project}`);
-          return `RESULT: IMPLEMENTED | worktree_path=${input.worktreePath} | branch=${input.branch} | base_branch=main`;
+          return `RESULT: IMPLEMENTED | ${JSON.stringify({
+            v: 1,
+            token: input.receiptToken,
+            task_id: 'TASK-004',
+            phase: 'implement',
+            action: 'commit',
+            worktree_path: input.worktreePath,
+            branch: input.branch,
+            base_branch: 'main',
+            commit: {
+              subject: `TASK-004: Implement ${project} fixture`,
+              body: 'Prepares the parallel runner project for validation.',
+            },
+          })}`;
         }
         if (input.phase === 'validate') {
-          const base = git(root, 'rev-parse', 'main');
-          if (git(input.worktreePath, 'merge-base', 'HEAD', base) !== base) {
-            git(input.worktreePath, 'merge', 'main', '-m', `Integrate main for ${project}`);
-          }
-          return `RESULT: VALIDATED | iterations=1 | fixed=0 | unworked=0 | validated_head=${git(input.worktreePath, 'rev-parse', 'HEAD')}`;
+          return `RESULT: VALIDATED | ${JSON.stringify({
+            v: 1,
+            token: input.receiptToken,
+            task_id: 'TASK-004',
+            phase: 'validate',
+            action: 'none',
+            iterations: 1,
+            fixed: 0,
+            unworked: 0,
+          })}`;
+        }
+        const baseHead = git(root, 'rev-parse', 'main');
+        if (git(input.worktreePath, 'merge-base', 'HEAD', baseHead) !== baseHead) {
+          git(input.worktreePath, 'merge', '--no-commit', '--no-ff', baseHead);
+          return `RESULT: REVALIDATE | ${JSON.stringify({
+            v: 1,
+            token: input.receiptToken,
+            task_id: 'TASK-004',
+            phase: 'finalize',
+            action: 'commit',
+            base_head: baseHead,
+            reason: 'Another project advanced the base branch.',
+            commit: {
+              subject: `TASK-004: Integrate base for ${project}`,
+              body: 'Prepares the concurrent project for another validation pass.',
+            },
+          })}`;
         }
         const taskFile = path.join(input.projectRoot, 'specs', 'tasks.md');
         if (fs.readFileSync(taskFile, 'utf8').includes('In Progress')) {
           fs.writeFileSync(taskFile, fs.readFileSync(taskFile, 'utf8').replace('In Progress', 'Complete'));
-          git(input.worktreePath, 'add', '.');
-          git(input.worktreePath, 'commit', '-m', `Finalize ${project}`);
         }
-        return `RESULT: READY_TO_MERGE | task_id=TASK-004 | task_head=${git(input.worktreePath, 'rev-parse', 'HEAD')} | base_head=${git(root, 'rev-parse', 'main')} | merge_message=Merge ${project}`;
+        const action = git(input.worktreePath, 'status', '--porcelain') ? 'commit' : 'none';
+        return `RESULT: READY_TO_MERGE | ${JSON.stringify({
+          v: 1,
+          token: input.receiptToken,
+          task_id: 'TASK-004',
+          phase: 'finalize',
+          action,
+          ...(action === 'commit' ? { commit: {
+            subject: 'TASK-004: Mark task complete',
+            body: `Records successful validation for ${project}.`,
+          } } : {}),
+          merge: {
+            subject: `Merge TASK-004: Complete ${project} fixture`,
+            body: 'Publishes the runner-verified parallel project.',
+          },
+        })}`;
       },
     }
   );

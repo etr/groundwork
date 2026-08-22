@@ -62,17 +62,59 @@ function completeTaskFile(projectRoot, taskId) {
   fs.writeFileSync(taskFile, current.replace('**Status:** In Progress', '**Status:** Complete'));
 }
 
-function finalizeMock(root, worktree, taskId, branch, baseBranch, taskProjectRoot = worktree) {
-  completeTaskFile(taskProjectRoot, taskId);
-  git(worktree, 'add', '.');
-  git(worktree, 'commit', '-m', `Finalize ${taskId}`);
-  const taskHead = git(worktree, 'rev-parse', 'HEAD');
-  const baseHead = git(root, 'rev-parse', baseBranch);
-  return `RESULT: READY_TO_MERGE | task_id=${taskId} | task_head=${taskHead} | base_head=${baseHead} | merge_message=Merge ${taskId}: complete task`;
+function implementationReceipt(input, worktree, taskId = 'TASK-004', branch = `task/${taskId}`, baseBranch = 'main') {
+  return `RESULT: IMPLEMENTED | ${JSON.stringify({
+    v: 1,
+    token: input.receiptToken,
+    task_id: taskId,
+    phase: 'implement',
+    action: 'commit',
+    worktree_path: worktree,
+    branch,
+    base_branch: baseBranch,
+    commit: {
+      subject: `${taskId}: Implement test fixture`,
+      body: 'Prepares the test worktree for validation.',
+    },
+  })}`;
 }
 
-function validated(worktree, iterations = 1, fixed = 0, unworked = 0) {
-  return `RESULT: VALIDATED | iterations=${iterations} | fixed=${fixed} | unworked=${unworked} | validated_head=${git(worktree, 'rev-parse', 'HEAD')}`;
+function finalizeMock(input, root, worktree, taskId, branch, baseBranch, taskProjectRoot = worktree) {
+  completeTaskFile(taskProjectRoot, taskId);
+  const action = git(worktree, 'status', '--porcelain') ? 'commit' : 'none';
+  return `RESULT: READY_TO_MERGE | ${JSON.stringify({
+    v: 1,
+    token: input.receiptToken,
+    task_id: taskId,
+    phase: 'finalize',
+    action,
+    ...(action === 'commit' ? { commit: {
+      subject: `${taskId}: Mark task complete`,
+      body: 'Records successful validation and completion.',
+    } } : {}),
+    merge: {
+      subject: `Merge ${taskId}: Complete test fixture`,
+      body: 'Publishes the runner-verified test task.',
+    },
+  })}`;
+}
+
+function validated(input, iterations = 1, fixed = 0, unworked = 0) {
+  const action = git(input.worktreePath, 'status', '--porcelain') ? 'commit' : 'none';
+  return `RESULT: VALIDATED | ${JSON.stringify({
+    v: 1,
+    token: input.receiptToken,
+    task_id: input.taskId,
+    phase: 'validate',
+    action,
+    iterations,
+    fixed,
+    unworked,
+    ...(action === 'commit' ? { commit: {
+      subject: `${input.taskId}: Apply validation fixes`,
+      body: 'Records validated fixes and persisted findings.',
+    } } : {}),
+  })}`;
 }
 
 function writePlan(projectRoot, taskId = 'TASK-004') {
@@ -125,6 +167,7 @@ describe('module and CLI contract', () => {
       'parseImplementationResult',
       'parseValidationResult',
       'parseFinalizeResult',
+      'sealPreparedCommit',
       'buildInvocation',
       'formatElapsed',
       'formatLocalTimestamp',
@@ -1068,24 +1111,17 @@ describe('module and CLI contract', () => {
   test('rejects startup when it detects a live pre-upgrade runner', () => {
     const { acquireRepositoryGate } = require(RUNNER);
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-main-version-overlap-'));
-    const legacyRunner = path.join(root, 'legacy-groundwork-run.js');
-    let releaseLegacy;
     try {
       initRepo(root);
-      write(
-        legacyRunner,
-        execFileSync('git', ['show', 'main:bin/groundwork-run.js'], {
-          cwd: PLUGIN_ROOT,
-          encoding: 'utf8',
-        })
-      );
-      const { acquireRunnerLease } = require(legacyRunner);
       const commonDir = path.join(root, '.git');
-      releaseLegacy = acquireRunnerLease(
-        commonDir,
-        { project: 'legacy', taskId: 'TASK-004' },
-        { log: () => {} }
-      );
+      write(path.join(commonDir, 'groundwork', 'runner.lock'), `${JSON.stringify({
+        version: 1,
+        pid: process.pid,
+        token: crypto.randomBytes(24).toString('hex'),
+        project: 'legacy',
+        taskId: 'TASK-004',
+        startedAt: Date.now(),
+      })}\n`);
       assert.throws(
         () => acquireRepositoryGate(
           commonDir,
@@ -1101,9 +1137,6 @@ describe('module and CLI contract', () => {
         /drained upgrade.*stop all earlier runners and launchers/i
       );
     } finally {
-      if (releaseLegacy) {
-        try { releaseLegacy(); } catch {}
-      }
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
@@ -1477,7 +1510,7 @@ describe('module and CLI contract', () => {
     }
   });
 
-  test('runs different monorepo projects concurrently without shared Git-state corruption', () => {
+  test('registers a second project worktree while the first project phase is still running', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-cross-project-runners-'));
     const signals = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-cross-project-signals-'));
     const children = [];
@@ -1495,18 +1528,19 @@ describe('module and CLI contract', () => {
       const baseHead = git(root, 'rev-parse', 'main');
       const exclude = fs.readFileSync(path.join(root, '.git', 'info', 'exclude'), 'utf8');
 
-      for (const project of ['api', 'web']) {
-        children.push(spawn(process.execPath, [
-          path.join(PLUGIN_ROOT, 'tests', 'fixtures', 'parallel-runner-child.js'),
-          RUNNER,
-          root,
-          project,
-          path.join(signals, `${project}-ready`),
-          path.join(signals, `${project}-release`),
-          path.join(signals, `${project}-done`),
-        ], { stdio: ['ignore', 'ignore', 'inherit'] }));
-      }
+      const spawnProject = (project) => spawn(process.execPath, [
+        path.join(PLUGIN_ROOT, 'tests', 'fixtures', 'parallel-runner-child.js'),
+        RUNNER,
+        root,
+        project,
+        path.join(signals, `${project}-ready`),
+        path.join(signals, `${project}-release`),
+        path.join(signals, `${project}-done`),
+      ], { stdio: ['ignore', 'ignore', 'inherit'] });
+
+      children.push(spawnProject('api'));
       waitForFile(path.join(signals, 'api-ready'), 10_000);
+      children.push(spawnProject('web'));
       waitForFile(path.join(signals, 'web-ready'), 10_000);
       assert.strictEqual(git(root, 'rev-parse', 'main'), baseHead);
       const inFlightExclude = fs.readFileSync(path.join(root, '.git', 'info', 'exclude'), 'utf8');
@@ -1654,7 +1688,7 @@ describe('module and CLI contract', () => {
     }
   });
 
-  test('runTasks releases its reader gate when peer enumeration fails before a phase', () => {
+  test('runTasks does not inspect unrelated project leases before a phase', () => {
     const { acquireRepositoryGate, runTasks } = require(RUNNER);
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-peer-enumeration-cleanup-'));
     try {
@@ -1667,10 +1701,10 @@ describe('module and CLI contract', () => {
           {
             log: () => {},
             beforePhase() { write(path.join(projects, 'invalid.lock'), 'bad\n'); },
-            invokePhase() { throw new Error('phase should not be reached'); },
+            invokePhase() { throw new Error('phase reached without peer inspection'); },
           }
         ),
-        /Project lease filename is invalid/
+        /phase reached without peer inspection/
       );
       assert.deepStrictEqual(
         fs.readdirSync(path.join(commonDir, 'groundwork', 'repository-gate', 'readers')),
@@ -1755,18 +1789,21 @@ describe('module and CLI contract', () => {
     }
   });
 
-  test('dry-run selects an inclusive task range in catalog order', () => {
+  test('dry-run selects an inclusive task range in numeric order across task directories', () => {
     const { runTasks } = require(RUNNER);
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-range-'));
     try {
       git(root, 'init', '-b', 'main');
       git(root, 'config', 'user.email', 'test@example.com');
       git(root, 'config', 'user.name', 'Test User');
-      write(path.join(root, 'specs', 'tasks.md'),
-        '### TASK-001: One\n**Status:** Not Started\n**Blocked by:** None\n\n' +
-        '### TASK-002: Two\n**Status:** Not Started\n**Blocked by:** None\n\n' +
-        '### TASK-003: Three\n**Status:** Complete\n**Blocked by:** None\n\n' +
-        '### TASK-004: Four\n**Status:** Not Started\n**Blocked by:** None\n');
+      write(
+        path.join(root, 'specs', 'tasks', 'M10-backend', 'TASK-278.md'),
+        '### TASK-278: Later number\n**Status:** Not Started\n**Blocked by:** None\n'
+      );
+      write(
+        path.join(root, 'specs', 'tasks', 'M28-sharing', 'TASK-188.md'),
+        '### TASK-188: Earlier number\n**Status:** Not Started\n**Blocked by:** None\n'
+      );
       git(root, 'add', '.');
       git(root, 'commit', '-m', 'base');
 
@@ -1776,12 +1813,12 @@ describe('module and CLI contract', () => {
         repo: root,
         project: null,
         tasks: [],
-        fromTask: 'TASK-002',
-        toTask: 'TASK-004',
+        fromTask: 'TASK-188',
+        toTask: 'TASK-278',
         dryRun: true,
       }, { log: () => {} });
 
-      assert.deepStrictEqual(selected, ['TASK-002', 'TASK-004']);
+      assert.deepStrictEqual(selected, ['TASK-188', 'TASK-278']);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -1835,12 +1872,35 @@ describe('task catalog', () => {
     assert.deepStrictEqual(task.blockedBy, []);
   });
 
+  test('parses the canonical dependencies section emitted by the task template', () => {
+    const { parseTaskCatalog } = require(RUNNER);
+    const task = parseTaskCatalog(
+      '### TASK-188: Secret scanner\n\n**Dependencies:**\n- Blocked by: TASK-187\n- Blocks: TASK-189\n\n**Status:** Not Started\n'
+    ).get('TASK-188');
+
+    assert.deepStrictEqual(task.blockedBy, ['TASK-187']);
+  });
+
   test('parses and topologically orders incomplete tasks', () => {
     const { parseTaskCatalog, orderTasks } = require(RUNNER);
     const catalog = parseTaskCatalog(markdown);
     assert.deepStrictEqual(catalog.get('TASK-003').blockedBy, ['TASK-001', 'TASK-002']);
     assert.deepStrictEqual(orderTasks(catalog), ['TASK-002', 'TASK-003']);
     assert.deepStrictEqual(orderTasks(catalog, ['TASK-003', 'TASK-002']), ['TASK-002', 'TASK-003']);
+  });
+
+  test('always chooses the lowest numbered ready task', () => {
+    const { parseTaskCatalog, orderTasks } = require(RUNNER);
+    const catalog = parseTaskCatalog(
+      '### TASK-100: Dependency\n**Status:** Not Started\n**Blocked by:** None\n\n' +
+      '### TASK-001: Blocked low task\n**Status:** Not Started\n**Blocked by:** TASK-100\n\n' +
+      '### TASK-002: Ready low task\n**Status:** Not Started\n**Blocked by:** None\n'
+    );
+
+    assert.deepStrictEqual(
+      orderTasks(catalog, ['TASK-001', 'TASK-002', 'TASK-100']),
+      ['TASK-002', 'TASK-100', 'TASK-001']
+    );
   });
 
   test('rejects missing dependencies and cycles', () => {
@@ -2023,6 +2083,201 @@ for (let index = 0; index < 100000; index++) fs.writeSync(1, record);
       runner.parseFinalizeResult('RESULT: READY_TO_MERGE | task_id=TASK-004 | task_head=def456 | base_head=abc123 | merge_message=Merge TASK-004').outcome,
       'ready'
     );
+  });
+
+  test('parses versioned runner-mode receipts with expressive commit messages', () => {
+    const runner = require(RUNNER);
+    const token = 'a'.repeat(48);
+    const implementation = runner.parseImplementationResult(
+      `RESULT: IMPLEMENTED | ${JSON.stringify({
+        v: 1,
+        token,
+        task_id: 'TASK-004',
+        phase: 'implement',
+        action: 'commit',
+        worktree_path: '/repo/.worktrees/TASK-004',
+        branch: 'task/TASK-004',
+        base_branch: 'main',
+        commit: {
+          subject: 'TASK-004: Add bounded phase receipts',
+          body: 'Moves Git authority into the runner.\n\nTests cover receipt parsing.',
+        },
+      })}`,
+      { token, taskId: 'TASK-004' }
+    );
+
+    assert.strictEqual(implementation.action, 'commit');
+    assert.strictEqual(implementation.commit.subject, 'TASK-004: Add bounded phase receipts');
+    assert.match(implementation.commit.body, /Git authority/);
+
+    const validation = runner.parseValidationResult(
+      `RESULT: VALIDATED | ${JSON.stringify({
+        v: 1,
+        token,
+        task_id: 'TASK-004',
+        phase: 'validate',
+        action: 'none',
+        iterations: 2,
+        fixed: 3,
+        unworked: 1,
+      })}`,
+      { token, taskId: 'TASK-004' }
+    );
+    assert.deepStrictEqual(
+      { iterations: validation.iterations, fixed: validation.fixed, unworked: validation.unworked },
+      { iterations: 2, fixed: 3, unworked: 1 }
+    );
+
+    const finalization = runner.parseFinalizeResult(
+      `RESULT: READY_TO_MERGE | ${JSON.stringify({
+        v: 1,
+        token,
+        task_id: 'TASK-004',
+        phase: 'finalize',
+        action: 'commit',
+        commit: {
+          subject: 'TASK-004: Mark task complete',
+          body: 'Records completed task bookkeeping.',
+        },
+        merge: {
+          subject: 'Merge TASK-004: Add bounded phase receipts',
+          body: 'Publishes the verified task branch.',
+        },
+      })}`,
+      { token, taskId: 'TASK-004' }
+    );
+    assert.strictEqual(finalization.outcome, 'ready');
+    assert.strictEqual(finalization.merge.subject, 'Merge TASK-004: Add bounded phase receipts');
+
+    const revalidate = runner.parseFinalizeResult(
+      `RESULT: REVALIDATE | ${JSON.stringify({
+        v: 1,
+        token,
+        task_id: 'TASK-004',
+        phase: 'finalize',
+        action: 'commit',
+        base_head: 'b'.repeat(40),
+        reason: 'Integrated the advanced base branch.',
+        commit: {
+          subject: 'TASK-004: Integrate updated base branch',
+          body: 'Resolves the moved base before validation runs again.',
+        },
+      })}`,
+      { token, taskId: 'TASK-004' }
+    );
+    assert.strictEqual(revalidate.outcome, 'revalidate');
+    assert.strictEqual(revalidate.baseHead, 'b'.repeat(40));
+    assert.match(revalidate.commit.body, /validation runs again/);
+  });
+
+  test('runner seals prepared changes with the agent-authored message', () => {
+    const { sealPreparedCommit } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-seal-'));
+    const worktree = path.join(root, '.worktrees', 'TASK-004');
+    try {
+      initRepo(root);
+      git(root, 'worktree', 'add', '-b', 'task/TASK-004', worktree);
+      const expectedHead = git(worktree, 'rev-parse', 'HEAD');
+      write(path.join(worktree, 'feature.txt'), 'implemented\n');
+
+      const committedHead = sealPreparedCommit({
+        worktreePath: worktree,
+        expectedHead,
+        taskId: 'TASK-004',
+        phase: 'implement',
+        action: 'commit',
+        commit: {
+          subject: 'TASK-004: Add runner-owned sealing',
+          body: 'Keeps expressive authorship with the implementation agent.',
+        },
+      });
+
+      assert.notStrictEqual(committedHead, expectedHead);
+      assert.strictEqual(git(worktree, 'status', '--porcelain'), '');
+      assert.strictEqual(git(worktree, 'log', '-1', '--format=%s'), 'TASK-004: Add runner-owned sealing');
+      assert.match(git(worktree, 'log', '-1', '--format=%b'), /expressive authorship/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('runner seals prepared changes with a global-only Git identity', () => {
+    const { sealPreparedCommit } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-global-identity-'));
+    const worktree = path.join(root, '.worktrees', 'TASK-004');
+    const globalConfig = path.join(root, 'global.gitconfig');
+    const previousGlobalConfig = process.env.GIT_CONFIG_GLOBAL;
+    try {
+      initRepo(root);
+      git(root, 'worktree', 'add', '-b', 'task/TASK-004', worktree);
+      git(root, 'config', '--local', '--unset-all', 'user.name');
+      git(root, 'config', '--local', '--unset-all', 'user.email');
+      write(globalConfig, '[user]\n\tname = Global Runner User\n\temail = global-runner@example.com\n');
+      process.env.GIT_CONFIG_GLOBAL = globalConfig;
+      const expectedHead = git(worktree, 'rev-parse', 'HEAD');
+      write(path.join(worktree, 'feature.txt'), 'implemented\n');
+
+      sealPreparedCommit({
+        worktreePath: worktree,
+        expectedHead,
+        taskId: 'TASK-004',
+        phase: 'implement',
+        action: 'commit',
+        commit: {
+          subject: 'TASK-004: Preserve invoking Git identity',
+          body: 'Uses the invoking user identity for the runner-owned commit.',
+        },
+      });
+
+      assert.strictEqual(
+        git(worktree, 'log', '-1', '--format=%an <%ae>|%cn <%ce>'),
+        'Global Runner User <global-runner@example.com>|Global Runner User <global-runner@example.com>'
+      );
+    } finally {
+      if (previousGlobalConfig === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+      else process.env.GIT_CONFIG_GLOBAL = previousGlobalConfig;
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('runner seals a prepared base integration as a two-parent commit', () => {
+    const { sealPreparedCommit } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-seal-merge-'));
+    const worktree = path.join(root, '.worktrees', 'TASK-004');
+    try {
+      initRepo(root);
+      git(root, 'branch', 'task/TASK-004');
+      fs.mkdirSync(path.dirname(worktree), { recursive: true });
+      git(root, 'worktree', 'add', worktree, 'task/TASK-004');
+      write(path.join(worktree, 'task.txt'), 'task\n');
+      git(worktree, 'add', 'task.txt');
+      git(worktree, 'commit', '-m', 'TASK-004: Implement task');
+      const expectedHead = git(worktree, 'rev-parse', 'HEAD');
+      write(path.join(root, 'base.txt'), 'base\n');
+      git(root, 'add', 'base.txt');
+      git(root, 'commit', '-m', 'Advance base');
+      const baseHead = git(root, 'rev-parse', 'HEAD');
+
+      git(worktree, 'merge', '--no-commit', '--no-ff', baseHead);
+      const sealed = sealPreparedCommit({
+        worktreePath: worktree,
+        expectedHead,
+        mergeParent: baseHead,
+        taskId: 'TASK-004',
+        phase: 'finalize',
+        action: 'commit',
+        commit: {
+          subject: 'TASK-004: Integrate updated base branch',
+          body: 'Prepares the task for another validation pass.',
+        },
+      });
+
+      const parents = git(worktree, 'rev-list', '--parents', '-n', '1', sealed).split(/\s+/).slice(1);
+      assert.deepStrictEqual(parents, [expectedHead, baseHead]);
+      assert.strictEqual(git(worktree, 'status', '--porcelain'), '');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
   test('child environments omit unrelated credentials and process injection variables', () => {
@@ -2400,7 +2655,7 @@ describe('filesystem safety', () => {
     }
   });
 
-  test('rejects unrelated ref changes made by a phase', () => {
+  test('allows unrelated tag changes made by a phase', () => {
     const { runTasks } = require(RUNNER);
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-unrelated-ref-'));
     try {
@@ -2411,21 +2666,48 @@ describe('filesystem safety', () => {
           { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
           {
             log: () => {},
-            invokePhase() {
+            invokePhase(input) {
+              if (input.phase !== 'plan') throw new Error('implementation reached after tag changed');
               write(path.join(root, '.groundwork-plans', 'TASK-004-plan.md'), '# Plan\n');
               git(root, 'tag', '-d', 'keep-me');
               return 'RESULT: PLANNED | plan_file_path=.groundwork-plans/TASK-004-plan.md | identifier=TASK-004 | branch_prefix=task';
             },
           }
         ),
-        /repository refs/
+        /implementation reached after tag changed/
       );
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
 
-  test('rejects changes to an inactive task branch made by a phase', () => {
+  test('allows application-owned custom refs created by a phase', () => {
+    const { runTasks } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-application-ref-'));
+    try {
+      initRepo(root);
+      assert.throws(
+        () => runTasks(
+          { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
+          {
+            log: () => {},
+            invokePhase(input) {
+              if (input.phase !== 'plan') throw new Error('implementation reached after accepting application ref');
+              write(path.join(root, '.groundwork-plans', 'TASK-004-plan.md'), '# Plan\n');
+              git(root, 'update-ref', 'refs/lam/checkpoints/s1/turn-1', 'HEAD');
+              return 'RESULT: PLANNED | plan_file_path=.groundwork-plans/TASK-004-plan.md | identifier=TASK-004 | branch_prefix=task';
+            },
+          }
+        ),
+        /implementation reached after accepting application ref/
+      );
+      assert.strictEqual(git(root, 'rev-parse', 'refs/lam/checkpoints/s1/turn-1'), git(root, 'rev-parse', 'HEAD'));
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('allows changes to an inactive task branch made by a phase', () => {
     const { runTasks } = require(RUNNER);
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-inactive-task-ref-'));
     try {
@@ -2436,21 +2718,22 @@ describe('filesystem safety', () => {
           { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
           {
             log: () => {},
-            invokePhase() {
+            invokePhase(input) {
+              if (input.phase !== 'plan') throw new Error('implementation reached after inactive branch changed');
               write(path.join(root, '.groundwork-plans', 'TASK-004-plan.md'), '# Plan\n');
               git(root, 'update-ref', '-d', 'refs/heads/task/TASK-075');
               return 'RESULT: PLANNED | plan_file_path=.groundwork-plans/TASK-004-plan.md | identifier=TASK-004 | branch_prefix=task';
             },
           }
         ),
-        /inactive task branch|repository refs/
+        /implementation reached after inactive branch changed/
       );
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
 
-  test('rejects changes to an inactive task checkpoint made by a phase', () => {
+  test('allows inactive task checkpoint metadata to change during a phase', () => {
     const { runTasks } = require(RUNNER);
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-inactive-checkpoint-'));
     try {
@@ -2463,14 +2746,15 @@ describe('filesystem safety', () => {
           { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
           {
             log: () => {},
-            invokePhase() {
+            invokePhase(input) {
+              if (input.phase !== 'plan') throw new Error('implementation reached after checkpoint metadata changed');
               write(path.join(root, '.groundwork-plans', 'TASK-004-plan.md'), '# Plan\n');
               write(peerCheckpoint, '{"peer":"after"}\n');
               return 'RESULT: PLANNED | plan_file_path=.groundwork-plans/TASK-004-plan.md | identifier=TASK-004 | branch_prefix=task';
             },
           }
         ),
-        /inactive task checkpoint|checkpoint state/
+        /implementation reached after checkpoint metadata changed/
       );
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
@@ -2512,7 +2796,7 @@ describe('filesystem safety', () => {
     }
   });
 
-  test('a live scoped peer authorizes only its registered scoped task ref', () => {
+  test('does not invalidate a phase when an inactive peer branch changes', () => {
     const { acquireProjectLease, runTasks } = require(RUNNER);
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-exact-peer-ref-'));
     const peerWorktree = path.join(root, '.worktrees', 'api-TASK-075');
@@ -2549,13 +2833,14 @@ describe('filesystem safety', () => {
           {
             log: () => {},
             invokePhase(input) {
+              if (input.phase !== 'plan') throw new Error('implementation reached after inactive peer branch changed');
               write(path.join(input.projectRoot, '.groundwork-plans', 'TASK-004-plan.md'), '# Plan\n');
               git(root, 'update-ref', '-d', 'refs/heads/task/TASK-075');
               return 'RESULT: PLANNED | plan_file_path=.groundwork-plans/TASK-004-plan.md | identifier=TASK-004 | branch_prefix=task';
             },
           }
         ),
-        /inactive task branch|repository refs/
+        /implementation reached after inactive peer branch changed/
       );
     } finally {
       if (releasePeer) {
@@ -2621,29 +2906,25 @@ describe('filesystem safety', () => {
     }
   });
 
-  test('does not publish a fresh peer checkpoint while an active phase reader blocks workspace registration', () => {
+  test('accepts a fresh peer worktree registered while an active phase reader is running', () => {
     const { runTasks } = require(RUNNER);
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-fresh-peer-reader-interleaving-'));
-    const fakeBin = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-fresh-peer-bin-'));
+    const signals = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-fresh-peer-signals-'));
     const children = [];
-    const previousPath = process.env.PATH;
     try {
       git(root, 'init', '-b', 'main');
       git(root, 'config', 'user.email', 'test@example.com');
       git(root, 'config', 'user.name', 'Test User');
       write(path.join(root, '.groundwork.yml'), 'version: 1\nprojects:\n  api:\n    path: apps/api\n  web:\n    path: apps/web\n');
-      write(path.join(root, 'apps', 'api', 'specs', 'tasks.md'), '### TASK-075: Peer\n**Status:** Not Started\n**Blocked by:** None\n');
+      write(path.join(root, 'apps', 'api', 'specs', 'tasks.md'), '### TASK-004: Peer\n**Status:** Not Started\n**Blocked by:** None\n');
       write(path.join(root, 'apps', 'web', 'specs', 'tasks.md'), '### TASK-004: Current\n**Status:** Not Started\n**Blocked by:** None\n');
       write(path.join(root, '.gitignore'), '.worktrees/\n.groundwork-plans/\n');
       git(root, 'add', '.');
       git(root, 'commit', '-m', 'base');
-      const codex = path.join(fakeBin, 'codex');
-      write(codex, '#!/bin/sh\nexit 99\n');
-      fs.chmodSync(codex, 0o755);
-      process.env.PATH = `${fakeBin}:${previousPath}`;
       const commonDir = path.join(root, '.git');
       const projectKey = crypto.createHash('sha256').update('apps/api').digest('hex').slice(0, 16);
-      const checkpoint = path.join(commonDir, 'groundwork', 'runner', projectKey, 'TASK-075.json');
+      const checkpoint = path.join(commonDir, 'groundwork', 'runner', projectKey, 'TASK-004.json');
+      const ready = path.join(signals, 'api-ready');
 
       assert.throws(
         () => runTasks(
@@ -2653,33 +2934,37 @@ describe('filesystem safety', () => {
             invokePhase(input) {
               if (input.phase === 'plan') {
                 children.push(spawn(process.execPath, [
-                  RUNNER, 'task', 'TASK-075', '--harness', 'codex', '--repo', root, '--project', 'api',
-                ], { stdio: ['ignore', 'ignore', 'inherit'], env: process.env }));
-                const waitingWriters = path.join(commonDir, 'groundwork', 'repository-gate', 'writers-waiting');
-                const deadline = Date.now() + 5_000;
-                while (!fs.existsSync(waitingWriters) || !fs.readdirSync(waitingWriters).some((name) => name.endsWith('.lock'))) {
-                  if (Date.now() >= deadline) throw new Error('fresh peer did not wait for active phase reader');
-                  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
-                }
-                assert.strictEqual(fs.existsSync(checkpoint), false, 'fresh peer checkpoint published before its workspace was registered');
+                  path.join(PLUGIN_ROOT, 'tests', 'fixtures', 'parallel-runner-child.js'),
+                  RUNNER,
+                  root,
+                  'api',
+                  ready,
+                  path.join(signals, 'api-release'),
+                  path.join(signals, 'api-done'),
+                ], { stdio: ['ignore', 'ignore', 'inherit'] }));
+                waitForFile(ready, 10_000);
+                assert.strictEqual(fs.existsSync(checkpoint), true);
+                assert.match(
+                  git(root, 'worktree', 'list', '--porcelain'),
+                  /branch refs\/heads\/task\/api\/TASK-004/
+                );
                 writePlan(input.projectRoot);
                 return 'RESULT: PLANNED | plan_file_path=.groundwork-plans/TASK-004-plan.md | identifier=TASK-004 | branch_prefix=task';
               }
-              throw new Error('implementation reached after accepting fresh blocked peer');
+              throw new Error('implementation reached after accepting fresh peer');
             },
           }
         ),
-        /implementation reached after accepting fresh blocked peer/
+        /implementation reached after accepting fresh peer/
       );
     } finally {
-      process.env.PATH = previousPath;
       for (const child of children) child.kill();
       fs.rmSync(root, { recursive: true, force: true });
-      fs.rmSync(fakeBin, { recursive: true, force: true });
+      fs.rmSync(signals, { recursive: true, force: true });
     }
   });
 
-  test('still rejects a checkpoint mutation unrelated to a late verified peer', () => {
+  test('allows checkpoint metadata unrelated to a late peer to change', () => {
     const { acquireProjectLease, runTasks } = require(RUNNER);
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-late-peer-unrelated-'));
     const peerWorktree = path.join(root, '.worktrees', 'api-TASK-075');
@@ -2698,6 +2983,7 @@ describe('filesystem safety', () => {
           {
             log: () => {},
             invokePhase(input) {
+              if (input.phase !== 'plan') throw new Error('implementation reached after unrelated checkpoints changed');
               releasePeer = acquireProjectLease(
                 commonDir,
                 { project: 'api', projectPath: 'apps/api', taskId: 'TASK-075' },
@@ -2716,7 +3002,7 @@ describe('filesystem safety', () => {
             },
           }
         ),
-        /Inactive task checkpoint/
+        /implementation reached after unrelated checkpoints changed/
       );
     } finally {
       if (releasePeer) {
@@ -2844,6 +3130,31 @@ describe('filesystem safety', () => {
     }
   });
 
+  test('allows repository-local exclude metadata to change during a phase', () => {
+    const { runTasks } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-exclude-churn-'));
+    try {
+      initRepo(root);
+      assert.throws(
+        () => runTasks(
+          { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
+          {
+            log: () => {},
+            invokePhase(input) {
+              if (input.phase !== 'plan') throw new Error('implementation reached after exclude metadata changed');
+              writePlan(root);
+              fs.appendFileSync(path.join(root, '.git', 'info', 'exclude'), 'tool-cache/\n');
+              return 'RESULT: PLANNED | plan_file_path=.groundwork-plans/TASK-004-plan.md | identifier=TASK-004 | branch_prefix=task';
+            },
+          }
+        ),
+        /implementation reached after exclude metadata changed/
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('allows another monorepo project to remain dirty in an unrelated worktree', () => {
     const { runTasks } = require(RUNNER);
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-other-project-dirty-'));
@@ -2892,7 +3203,97 @@ describe('filesystem safety', () => {
     }
   });
 
-  test('still rejects selected-project changes in an unrelated worktree', () => {
+  test('preserves a checkpoint-owned dirty worktree while starting a lower-numbered task', () => {
+    const { runTasks } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-preserved-dirty-task-'));
+    const unrelated = path.join(root, '.worktrees', 'TASK-075');
+    try {
+      initRepo(root);
+      write(path.join(root, 'tracked.txt'), 'base\n');
+      git(root, 'add', '.');
+      git(root, 'commit', '-m', 'Add tracked fixture');
+      git(root, 'worktree', 'add', '-b', 'task/TASK-075', unrelated);
+      const canonicalUnrelated = fs.realpathSync(unrelated);
+      write(path.join(unrelated, 'tracked.txt'), 'partial\n');
+      write(path.join(unrelated, 'new.txt'), 'staged partial\n');
+      git(unrelated, 'add', '.');
+      const preservedStatus = git(unrelated, 'status', '--porcelain');
+      const projectKey = crypto.createHash('sha256').update('.').digest('hex').slice(0, 16);
+      write(
+        path.join(root, '.git', 'groundwork', 'runner', projectKey, 'TASK-075.json'),
+        `${JSON.stringify({
+          version: 1,
+          taskId: 'TASK-075',
+          project: '.',
+          baseBranch: 'main',
+          workspace: { branch: 'task/TASK-075', worktreePath: canonicalUnrelated },
+        })}\n`
+      );
+
+      assert.throws(
+        () => runTasks(
+          { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
+          {
+            log: () => {},
+            invokePhase() {
+              throw new Error('phase reached');
+            },
+          }
+        ),
+        /phase reached/
+      );
+      assert.strictEqual(git(unrelated, 'status', '--porcelain'), preservedStatus);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('allows a phase to change an unrelated checkpoint-owned worktree', () => {
+    const { runTasks } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-mutated-preserved-task-'));
+    const unrelated = path.join(root, '.worktrees', 'TASK-075');
+    try {
+      initRepo(root);
+      write(path.join(root, 'tracked.txt'), 'base\n');
+      git(root, 'add', '.');
+      git(root, 'commit', '-m', 'Add tracked fixture');
+      git(root, 'worktree', 'add', '-b', 'task/TASK-075', unrelated);
+      const canonicalUnrelated = fs.realpathSync(unrelated);
+      write(path.join(unrelated, 'tracked.txt'), 'partial\n');
+      git(unrelated, 'add', '.');
+      const projectKey = crypto.createHash('sha256').update('.').digest('hex').slice(0, 16);
+      write(
+        path.join(root, '.git', 'groundwork', 'runner', projectKey, 'TASK-075.json'),
+        `${JSON.stringify({
+          version: 1,
+          taskId: 'TASK-075',
+          project: '.',
+          baseBranch: 'main',
+          workspace: { branch: 'task/TASK-075', worktreePath: canonicalUnrelated },
+        })}\n`
+      );
+
+      assert.throws(
+        () => runTasks(
+          { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
+          {
+            log: () => {},
+            invokePhase(input) {
+              if (input.phase !== 'plan') throw new Error('implementation reached after unrelated worktree changed');
+              writePlan(root);
+              write(path.join(unrelated, 'tracked.txt'), 'changed by active phase\n');
+              return 'RESULT: PLANNED | plan_file_path=.groundwork-plans/TASK-004-plan.md | identifier=TASK-004 | branch_prefix=task';
+            },
+          }
+        ),
+        /implementation reached after unrelated worktree changed/
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('allows selected-project changes in an unrelated worktree', () => {
     const { runTasks } = require(RUNNER);
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-selected-project-dirty-'));
     const unrelated = path.join(root, '.worktrees', 'TASK-075');
@@ -2933,7 +3334,7 @@ describe('filesystem safety', () => {
             },
           }
         ),
-        /Selected project in unrelated worktree .* is not clean/
+        /phase reached/
       );
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
@@ -3105,9 +3506,9 @@ describe('four-phase orchestration', () => {
           log: (message) => logs.push(message),
           invokePhase(input) {
             phases.push(input.phase);
-            if (input.phase === 'validate') return validated(worktree);
+            if (input.phase === 'validate') return validated(input);
             if (input.phase === 'finalize') {
-              return finalizeMock(root, worktree, 'TASK-004', 'task/TASK-004', 'main');
+              return finalizeMock(input, root, worktree, 'TASK-004', 'task/TASK-004', 'main');
             }
             throw new Error(`${input.phase} should have been skipped`);
           },
@@ -3132,6 +3533,7 @@ describe('four-phase orchestration', () => {
       writePlan(root);
       git(root, 'worktree', 'add', '-b', 'task/TASK-004', worktree);
       write(path.join(worktree, 'partial.txt'), 'partial\n');
+      fs.appendFileSync(path.join(worktree, '.gitignore'), '# tracked partial\n');
 
       runTasks(
         { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
@@ -3145,17 +3547,118 @@ describe('four-phase orchestration', () => {
               assert.match(input.prompt, /reuse the existing registered worktree/i);
               const taskFile = path.join(worktree, 'specs', 'tasks.md');
               fs.writeFileSync(taskFile, fs.readFileSync(taskFile, 'utf8').replace('Not Started', 'In Progress'));
-              git(worktree, 'add', '.');
-              git(worktree, 'commit', '-m', 'Finish TASK-004');
-              return `RESULT: IMPLEMENTED | worktree_path=${worktree} | branch=task/TASK-004 | base_branch=main`;
+              return implementationReceipt(input, worktree);
             }
-            if (input.phase === 'validate') return validated(worktree);
-            return finalizeMock(root, worktree, 'TASK-004', 'task/TASK-004', 'main');
+            if (input.phase === 'validate') return validated(input);
+            return finalizeMock(input, root, worktree, 'TASK-004', 'task/TASK-004', 'main');
           },
         }
       );
 
       assert.deepStrictEqual(phases, ['implement', 'validate', 'finalize']);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('resumes a durable interrupted validation before reconsidering implementation', () => {
+    const { runTasks } = require(RUNNER);
+    const validationSessions = require(path.join(PLUGIN_ROOT, 'lib', 'validation-session.js'));
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-resume-active-validation-'));
+    const worktree = path.join(root, '.worktrees', 'TASK-004');
+    try {
+      initRepo(root);
+      assert.throws(
+        () => runTasks(
+          { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
+          {
+            pluginRoot: PLUGIN_ROOT,
+            log: () => {},
+            invokePhase(input) {
+              if (input.phase === 'plan') {
+                writePlan(root);
+                return 'RESULT: PLANNED | plan_file_path=.groundwork-plans/TASK-004-plan.md | identifier=TASK-004 | branch_prefix=task';
+              }
+              if (input.phase === 'implement') {
+                const taskFile = path.join(worktree, 'specs', 'tasks.md');
+                fs.writeFileSync(taskFile, fs.readFileSync(taskFile, 'utf8').replace('Not Started', 'In Progress'));
+                write(path.join(worktree, 'feature.txt'), 'implemented\n');
+                return implementationReceipt(input, worktree);
+              }
+              if (input.phase === 'validate') {
+                const identity = {
+                  repoRoot: worktree,
+                  projectRoot: worktree,
+                  worktreePath: worktree,
+                  taskId: 'TASK-004',
+                  branch: 'task/TASK-004',
+                  baseHead: git(root, 'rev-parse', 'main'),
+                  protocolVersion: 1,
+                };
+                const session = validationSessions.openValidationSession(identity);
+                const coordinatorFile = path.join(session.runDir, 'coordinator-iter1.json');
+                write(coordinatorFile, JSON.stringify({
+                  iteration: 1,
+                  review_mode: 'initial-audit',
+                  validation_baseline: { task: 'TASK-004', base: 'main' },
+                  finding_ledger: [],
+                  carried_approvals: [],
+                  disturbed_invariants: [],
+                  fixed_ids: [],
+                  findings_skipped: [],
+                  active_reviewers: ['code-quality-reviewer'],
+                  latest_manifest: null,
+                }));
+                validationSessions.checkpointValidationSession(session.runDir, {
+                  expectedStage: 'initial-audit-pending',
+                  nextStage: 'review-batch-complete',
+                  iteration: 1,
+                  coordinatorFile,
+                });
+                const envelopeFile = path.join(session.runDir, 'repair-envelope-iter1.json');
+                write(envelopeFile, JSON.stringify({ iteration: 1 }));
+                validationSessions.beginFixerTransaction(session.runDir, {
+                  iteration: 1,
+                  envelopeFile,
+                });
+                write(path.join(worktree, 'feature.txt'), 'partial validation fix\n');
+                throw new Error('validation harness crashed');
+              }
+              throw new Error(`unexpected phase ${input.phase}`);
+            },
+          }
+        ),
+        /validation harness crashed/
+      );
+
+      const phases = [];
+      runTasks(
+        { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
+        {
+          pluginRoot: PLUGIN_ROOT,
+          log: () => {},
+          invokePhase(input) {
+            phases.push(input.phase);
+            if (input.phase === 'implement') throw new Error('implementation must not restart');
+            if (input.phase === 'validate') {
+              const resumed = validationSessions.openValidationSession({
+                repoRoot: worktree,
+                projectRoot: worktree,
+                worktreePath: worktree,
+                taskId: 'TASK-004',
+                branch: 'task/TASK-004',
+                baseHead: git(root, 'rev-parse', 'main'),
+                protocolVersion: 1,
+                runnerMode: true,
+              });
+              assert.strictEqual(resumed.status, 'recovered');
+              return validated(input);
+            }
+            return finalizeMock(input, root, worktree, 'TASK-004', 'task/TASK-004', 'main');
+          },
+        }
+      );
+      assert.deepStrictEqual(phases, ['validate', 'finalize']);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -3184,13 +3687,11 @@ describe('four-phase orchestration', () => {
               assertPrecreatedWorktree(root, worktree, 'task/TASK-004');
               const taskFile = path.join(worktree, 'specs', 'tasks.md');
               fs.writeFileSync(taskFile, fs.readFileSync(taskFile, 'utf8').replace('Not Started', 'In Progress'));
-              git(worktree, 'add', '.');
-              git(worktree, 'commit', '-m', 'Implement TASK-004');
               git(worktree, 'config', 'core.hooksPath', path.join(worktree, 'scripts', 'githooks'));
-              return `RESULT: IMPLEMENTED | worktree_path=${worktree} | branch=task/TASK-004 | base_branch=main`;
+              return implementationReceipt(input, worktree);
             }
-            if (input.phase === 'validate') return validated(worktree);
-            return finalizeMock(root, worktree, 'TASK-004', 'task/TASK-004', 'main');
+            if (input.phase === 'validate') return validated(input);
+            return finalizeMock(input, root, worktree, 'TASK-004', 'task/TASK-004', 'main');
           },
         }
       );
@@ -3242,13 +3743,12 @@ describe('four-phase orchestration', () => {
                 '### TASK-005: Five\n**Status:** Not Started',
                 '### TASK-005: Five\n**Status:** In Progress'
               ));
-              git(nextWorktree, 'add', '.');
-              git(nextWorktree, 'commit', '-m', 'Implement TASK-005');
-              return `RESULT: IMPLEMENTED | worktree_path=${nextWorktree} | branch=task/TASK-005 | base_branch=main`;
+              return implementationReceipt(input, nextWorktree, 'TASK-005');
             }
-            if (input.phase === 'validate') return validated(selectedWorktree);
+            if (input.phase === 'validate') return validated(input);
             if (input.phase === 'finalize') {
               return finalizeMock(
+                input,
                 root,
                 selectedWorktree,
                 input.taskId,
@@ -3293,11 +3793,9 @@ describe('four-phase orchestration', () => {
                 const taskFile = path.join(worktree, 'specs', 'tasks.md');
                 fs.writeFileSync(taskFile, fs.readFileSync(taskFile, 'utf8').replace('Not Started', 'In Progress'));
                 write(path.join(worktree, 'feature.txt'), 'implemented\n');
-                git(worktree, 'add', '.');
-                git(worktree, 'commit', '-m', 'Implement TASK-004');
-                return `RESULT: IMPLEMENTED | worktree_path=${worktree} | branch=task/TASK-004 | base_branch=main`;
+                return implementationReceipt(input, worktree);
               }
-              if (input.phase === 'validate') return validated(worktree, 2, 1, 0);
+              if (input.phase === 'validate') return validated(input, 2, 1, 0);
               return 'RESULT: FAILURE | stop after validation';
             },
           }
@@ -3315,7 +3813,7 @@ describe('four-phase orchestration', () => {
           invokePhase(input) {
             secondPhases.push(input.phase);
             if (input.phase !== 'finalize') throw new Error(`${input.phase} should have been checkpointed`);
-            return finalizeMock(root, worktree, 'TASK-004', 'task/TASK-004', 'main');
+            return finalizeMock(input, root, worktree, 'TASK-004', 'task/TASK-004', 'main');
           },
         }
       );
@@ -3337,6 +3835,9 @@ describe('four-phase orchestration', () => {
           {
             pluginRoot: PLUGIN_ROOT,
             log: () => {},
+            beforePublication() {
+              throw new Error('interrupted after bookkeeping');
+            },
             invokePhase(input) {
               if (input.phase === 'plan') {
                 writePlan(root);
@@ -3347,15 +3848,10 @@ describe('four-phase orchestration', () => {
                 const taskFile = path.join(worktree, 'specs', 'tasks.md');
                 fs.writeFileSync(taskFile, fs.readFileSync(taskFile, 'utf8').replace('Not Started', 'In Progress'));
                 write(path.join(worktree, 'feature.txt'), 'implemented\n');
-                git(worktree, 'add', '.');
-                git(worktree, 'commit', '-m', 'Implement TASK-004');
-                return `RESULT: IMPLEMENTED | worktree_path=${worktree} | branch=task/TASK-004 | base_branch=main`;
+                return implementationReceipt(input, worktree);
               }
-              if (input.phase === 'validate') return validated(worktree);
-              completeTaskFile(worktree, 'TASK-004');
-              git(worktree, 'add', '.');
-              git(worktree, 'commit', '-m', 'TASK-004: Mark task complete');
-              return 'RESULT: FAILURE | interrupted after bookkeeping';
+              if (input.phase === 'validate') return validated(input);
+              return finalizeMock(input, root, worktree, 'TASK-004', 'task/TASK-004', 'main');
             },
           }
         ),
@@ -3371,7 +3867,7 @@ describe('four-phase orchestration', () => {
           invokePhase(input) {
             phases.push(input.phase);
             if (input.phase !== 'finalize') throw new Error(`${input.phase} should have been checkpointed`);
-            return `RESULT: READY_TO_MERGE | task_id=TASK-004 | task_head=${git(worktree, 'rev-parse', 'HEAD')} | base_head=${git(root, 'rev-parse', 'HEAD')} | merge_message=Merge TASK-004`;
+            return finalizeMock(input, root, worktree, 'TASK-004', 'task/TASK-004', 'main');
           },
         }
       );
@@ -3432,13 +3928,11 @@ describe('four-phase orchestration', () => {
                 assertPrecreatedWorktree(root, worktree, 'task/TASK-004');
                 const taskFile = path.join(worktree, 'specs', 'tasks.md');
                 fs.writeFileSync(taskFile, fs.readFileSync(taskFile, 'utf8').replace('Not Started', 'In Progress'));
-                git(worktree, 'add', '.');
-                git(worktree, 'commit', '-m', 'Implement TASK-004');
-                return `RESULT: IMPLEMENTED | worktree_path=${worktree} | branch=task/TASK-004 | base_branch=main`;
+                return implementationReceipt(input, worktree);
               }
               git(root, 'worktree', 'move', worktree, moved);
               fs.symlinkSync(moved, worktree, 'dir');
-              return validated(moved);
+              return validated(input);
             },
           }
         ),
@@ -3486,14 +3980,49 @@ describe('four-phase orchestration', () => {
               const taskFile = path.join(worktree, 'specs', 'tasks.md');
               fs.writeFileSync(taskFile, fs.readFileSync(taskFile, 'utf8').replace('Not Started', 'In Progress'));
               write(path.join(worktree, 'feature.txt'), 'implemented\n');
-              git(worktree, 'add', '.');
-              git(worktree, 'commit', '-m', 'Implement TASK-004');
-              return `RESULT: IMPLEMENTED | worktree_path=${worktree} | branch=task/TASK-004 | base_branch=main`;
+              return `RESULT: IMPLEMENTED | ${JSON.stringify({
+                v: 1,
+                token: input.receiptToken,
+                task_id: 'TASK-004',
+                phase: 'implement',
+                action: 'commit',
+                worktree_path: worktree,
+                branch: 'task/TASK-004',
+                base_branch: 'main',
+                commit: {
+                  subject: 'TASK-004: Add the planned feature',
+                  body: 'Implements the task in the runner-prepared worktree.',
+                },
+              })}`;
             }
             if (input.phase === 'validate') {
-              return validated(worktree);
+              return `RESULT: VALIDATED | ${JSON.stringify({
+                v: 1,
+                token: input.receiptToken,
+                task_id: 'TASK-004',
+                phase: 'validate',
+                action: 'none',
+                iterations: 1,
+                fixed: 0,
+                unworked: 0,
+              })}`;
             }
-            return finalizeMock(root, worktree, 'TASK-004', 'task/TASK-004', 'main');
+            completeTaskFile(worktree, 'TASK-004');
+            return `RESULT: READY_TO_MERGE | ${JSON.stringify({
+              v: 1,
+              token: input.receiptToken,
+              task_id: 'TASK-004',
+              phase: 'finalize',
+              action: 'commit',
+              commit: {
+                subject: 'TASK-004: Mark task complete',
+                body: 'Records successful validation and completion.',
+              },
+              merge: {
+                subject: 'Merge TASK-004: Add the planned feature',
+                body: 'Publishes the runner-verified task branch.',
+              },
+            })}`;
           },
         }
       );
@@ -3529,12 +4058,18 @@ describe('four-phase orchestration', () => {
       assert.ok(fs.existsSync(path.join(root, 'feature.txt')));
       assert.ok(fs.readFileSync(path.join(root, 'specs', 'tasks.md'), 'utf8').includes('**Status:** Complete'));
       assert.strictEqual(git(root, 'status', '--porcelain'), '');
+      const subjects = git(root, 'log', '--format=%s').split('\n');
+      assert.deepStrictEqual(subjects.slice(0, 3), [
+        'Merge TASK-004: Add the planned feature',
+        'TASK-004: Mark task complete',
+        'TASK-004: Add the planned feature',
+      ]);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
 
-  test('bounds full unrelated-worktree inspections to writer-gated lifecycle points', () => {
+  test('does not inspect unrelated worktrees during task execution or publication', () => {
     const { runTasks } = require(RUNNER);
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-bounded-worktree-scan-'));
     const worktree = path.join(root, '.worktrees', 'TASK-004');
@@ -3559,17 +4094,15 @@ describe('four-phase orchestration', () => {
               assertPrecreatedWorktree(root, worktree, 'task/TASK-004');
               const taskFile = path.join(worktree, 'specs', 'tasks.md');
               fs.writeFileSync(taskFile, fs.readFileSync(taskFile, 'utf8').replace('Not Started', 'In Progress'));
-              git(worktree, 'add', '.');
-              git(worktree, 'commit', '-m', 'Implement TASK-004');
-              return `RESULT: IMPLEMENTED | worktree_path=${worktree} | branch=task/TASK-004 | base_branch=main`;
+              return implementationReceipt(input, worktree);
             }
-            if (input.phase === 'validate') return validated(worktree);
-            return finalizeMock(root, worktree, 'TASK-004', 'task/TASK-004', 'main');
+            if (input.phase === 'validate') return validated(input);
+            return finalizeMock(input, root, worktree, 'TASK-004', 'task/TASK-004', 'main');
           },
         }
       );
 
-      assert.strictEqual(inspections, 2);
+      assert.strictEqual(inspections, 0);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -3597,17 +4130,13 @@ describe('four-phase orchestration', () => {
               const taskFile = path.join(worktree, 'specs', 'tasks.md');
               fs.writeFileSync(taskFile, fs.readFileSync(taskFile, 'utf8').replace('Not Started', 'In Progress'));
               write(path.join(worktree, 'feature.txt'), 'implemented\n');
-              git(worktree, 'add', '.');
-              git(worktree, 'commit', '-m', 'Implement TASK-004');
-              return `RESULT: IMPLEMENTED | worktree_path=${worktree} | branch=task/TASK-004 | base_branch=main`;
+              return implementationReceipt(input, worktree);
             }
             if (input.phase === 'validate') {
               completeTaskFile(worktree, 'TASK-004');
-              git(worktree, 'add', '.');
-              git(worktree, 'commit', '-m', 'Validate and complete TASK-004');
-              return validated(worktree);
+              return validated(input);
             }
-            return `RESULT: READY_TO_MERGE | task_id=TASK-004 | task_head=${git(worktree, 'rev-parse', 'HEAD')} | base_head=${git(root, 'rev-parse', 'HEAD')} | merge_message=Merge TASK-004`;
+            return finalizeMock(input, root, worktree, 'TASK-004', 'task/TASK-004', 'main');
           },
         }
       );
@@ -3618,6 +4147,79 @@ describe('four-phase orchestration', () => {
       }]);
       assert.strictEqual(fs.existsSync(worktree), false);
       assert.match(fs.readFileSync(path.join(root, 'specs', 'tasks.md'), 'utf8'), /\*\*Status:\*\* Complete/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('allows finalization to synchronize a stale index after validation completes the task detail', () => {
+    const { runTasks } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-sync-task-index-'));
+    const worktree = path.join(root, '.worktrees', 'TASK-004');
+    try {
+      initRepo(root);
+      fs.rmSync(path.join(root, 'specs', 'tasks.md'));
+      write(
+        path.join(root, 'specs', 'tasks', 'M01', 'TASK-004.md'),
+        '### TASK-004: Four\n**Status:** Not Started\n**Blocked by:** None\n'
+      );
+      write(
+        path.join(root, 'specs', 'tasks', '_index.md'),
+        '| Task | Title | Status |\n|---|---|---|\n| TASK-004 | Four | Not Started |\n'
+      );
+      git(root, 'add', '-A');
+      git(root, 'commit', '-m', 'Split task catalog');
+
+      const completed = runTasks(
+        { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
+        {
+          pluginRoot: PLUGIN_ROOT,
+          log: () => {},
+          invokePhase(input) {
+            if (input.phase === 'plan') {
+              writePlan(root);
+              return 'RESULT: PLANNED | plan_file_path=.groundwork-plans/TASK-004-plan.md | identifier=TASK-004 | branch_prefix=task';
+            }
+            const detail = path.join(worktree, 'specs', 'tasks', 'M01', 'TASK-004.md');
+            if (input.phase === 'implement') {
+              assertPrecreatedWorktree(root, worktree, 'task/TASK-004');
+              fs.writeFileSync(detail, fs.readFileSync(detail, 'utf8').replace('Not Started', 'In Progress'));
+              write(path.join(worktree, 'feature.txt'), 'implemented\n');
+              return implementationReceipt(input, worktree);
+            }
+            if (input.phase === 'validate') {
+              fs.writeFileSync(detail, fs.readFileSync(detail, 'utf8').replace('In Progress', 'Complete'));
+              return validated(input);
+            }
+            const index = path.join(worktree, 'specs', 'tasks', '_index.md');
+            fs.writeFileSync(index, fs.readFileSync(index, 'utf8').replace('Not Started', 'Complete'));
+            return `RESULT: READY_TO_MERGE | ${JSON.stringify({
+              v: 1,
+              token: input.receiptToken,
+              task_id: 'TASK-004',
+              phase: 'finalize',
+              action: 'commit',
+              commit: {
+                subject: 'TASK-004: Synchronize task index',
+                body: 'Keeps the task index aligned with the validated detail file.',
+              },
+              merge: {
+                subject: 'Merge TASK-004: Complete split task fixture',
+                body: 'Publishes the validated task and synchronized index.',
+              },
+            })}`;
+          },
+        }
+      );
+
+      assert.deepStrictEqual(completed, [{
+        taskId: 'TASK-004',
+        validation: { iterations: 1, fixed: 0, unworked: 0 },
+      }]);
+      assert.match(
+        fs.readFileSync(path.join(root, 'specs', 'tasks', '_index.md'), 'utf8'),
+        /\| TASK-004 \| Four \| Complete \|/
+      );
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -3664,25 +4266,73 @@ describe('four-phase orchestration', () => {
               const taskFile = path.join(worktree, 'specs', 'tasks.md');
               fs.writeFileSync(taskFile, fs.readFileSync(taskFile, 'utf8').replace('Not Started', 'In Progress'));
               write(path.join(worktree, 'feature.txt'), 'implemented\n');
-              git(worktree, 'add', '.');
-              git(worktree, 'commit', '-m', 'Implement TASK-004');
-              return `RESULT: IMPLEMENTED | worktree_path=${worktree} | branch=task/TASK-004 | base_branch=main`;
+              return `RESULT: IMPLEMENTED | ${JSON.stringify({
+                v: 1,
+                token: input.receiptToken,
+                task_id: 'TASK-004',
+                phase: 'implement',
+                action: 'commit',
+                worktree_path: worktree,
+                branch: 'task/TASK-004',
+                base_branch: 'main',
+                commit: {
+                  subject: 'TASK-004: Implement moved-base fixture',
+                  body: 'Prepares a task branch that requires later base integration.',
+                },
+              })}`;
             }
             if (input.phase === 'validate') {
               validationBases.push(input.baseSha);
-              return validated(worktree);
+              return `RESULT: VALIDATED | ${JSON.stringify({
+                v: 1,
+                token: input.receiptToken,
+                task_id: 'TASK-004',
+                phase: 'validate',
+                action: 'none',
+                iterations: 1,
+                fixed: 0,
+                unworked: 0,
+              })}`;
             }
             finalizeCalls++;
             if (finalizeCalls === 1) {
-              git(worktree, 'merge', 'main', '-m', 'Integrate updated base');
-              return `RESULT: REVALIDATE | task_head=${git(worktree, 'rev-parse', 'HEAD')} | base_head=${git(root, 'rev-parse', 'main')} | reason=base advanced`;
+              git(worktree, 'merge', '--no-commit', '--no-ff', movedBase);
+              return `RESULT: REVALIDATE | ${JSON.stringify({
+                v: 1,
+                token: input.receiptToken,
+                task_id: 'TASK-004',
+                phase: 'finalize',
+                action: 'commit',
+                base_head: movedBase,
+                reason: 'The base branch advanced after validation.',
+                commit: {
+                  subject: 'TASK-004: Integrate updated base branch',
+                  body: 'Includes the latest base before revalidating the task.',
+                },
+              })}`;
             }
-            return finalizeMock(root, worktree, 'TASK-004', 'task/TASK-004', 'main');
+            completeTaskFile(worktree, 'TASK-004');
+            return `RESULT: READY_TO_MERGE | ${JSON.stringify({
+              v: 1,
+              token: input.receiptToken,
+              task_id: 'TASK-004',
+              phase: 'finalize',
+              action: 'commit',
+              commit: {
+                subject: 'TASK-004: Mark task complete',
+                body: 'Records completion after moved-base revalidation.',
+              },
+              merge: {
+                subject: 'Merge TASK-004: Complete moved-base fixture',
+                body: 'Publishes the twice-validated task branch.',
+              },
+            })}`;
           },
         }
       );
       assert.deepStrictEqual(phases, ['plan', 'implement', 'validate', 'finalize', 'validate', 'finalize']);
       assert.strictEqual(validationBases[1], movedBase);
+      assert.ok(git(root, 'log', '--format=%s').split('\n').includes('TASK-004: Integrate updated base branch'));
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -3720,27 +4370,40 @@ describe('four-phase orchestration', () => {
               const taskFile = path.join(worktree, 'specs', 'tasks.md');
               fs.writeFileSync(taskFile, fs.readFileSync(taskFile, 'utf8').replace('Not Started', 'In Progress'));
               write(path.join(worktree, 'feature.txt'), 'implemented\n');
-              git(worktree, 'add', '.');
-              git(worktree, 'commit', '-m', 'Implement TASK-004');
-              return `RESULT: IMPLEMENTED | worktree_path=${worktree} | branch=task/TASK-004 | base_branch=main`;
+              return implementationReceipt(input, worktree);
             }
-            if (input.phase === 'validate') {
-              if (phases.filter((phase) => phase === 'validate').length === 2) {
-                assert.ok(fs.existsSync(worktree), 'worktree was cleaned before revalidation');
-                git(worktree, 'merge', 'main', '-m', 'Integrate advanced base');
-              }
-              return validated(worktree);
-            }
+            if (input.phase === 'validate') return validated(input);
             finalizeAttempts++;
             if (finalizeAttempts === 1) {
-              return finalizeMock(root, worktree, 'TASK-004', 'task/TASK-004', 'main');
+              return finalizeMock(input, root, worktree, 'TASK-004', 'task/TASK-004', 'main');
             }
-            return `RESULT: READY_TO_MERGE | task_id=TASK-004 | task_head=${git(worktree, 'rev-parse', 'HEAD')} | base_head=${git(root, 'rev-parse', 'main')} | merge_message=Merge TASK-004`;
+            if (finalizeAttempts === 2) {
+              const baseHead = git(root, 'rev-parse', 'main');
+              assert.ok(fs.existsSync(worktree), 'worktree was cleaned before revalidation');
+              git(worktree, 'merge', '--no-commit', '--no-ff', baseHead);
+              return `RESULT: REVALIDATE | ${JSON.stringify({
+                v: 1,
+                token: input.receiptToken,
+                task_id: 'TASK-004',
+                phase: 'finalize',
+                action: 'commit',
+                base_head: baseHead,
+                reason: 'The base advanced before publication.',
+                commit: {
+                  subject: 'TASK-004: Integrate publication-race base',
+                  body: 'Prepares the latest base for another validation pass.',
+                },
+              })}`;
+            }
+            return finalizeMock(input, root, worktree, 'TASK-004', 'task/TASK-004', 'main');
           },
         }
       );
 
-      assert.deepStrictEqual(phases, ['plan', 'implement', 'validate', 'finalize', 'validate', 'finalize']);
+      assert.deepStrictEqual(phases, [
+        'plan', 'implement', 'validate', 'finalize',
+        'validate', 'finalize', 'validate', 'finalize',
+      ]);
       assert.strictEqual(fs.existsSync(worktree), false);
       assert.ok(fs.existsSync(path.join(root, 'concurrent-base.txt')));
     } finally {
@@ -3787,12 +4450,10 @@ describe('four-phase orchestration', () => {
               const taskFile = path.join(taskProject, 'specs', 'tasks.md');
               fs.writeFileSync(taskFile, fs.readFileSync(taskFile, 'utf8').replace('Not Started', 'In Progress'));
               write(path.join(taskProject, 'feature.txt'), 'implemented\n');
-              git(worktree, 'add', '.');
-              git(worktree, 'commit', '-m', 'Implement TASK-004');
-              return `RESULT: IMPLEMENTED | worktree_path=${worktree} | branch=task/api/TASK-004 | base_branch=main`;
+              return implementationReceipt(input, worktree, 'TASK-004', 'task/api/TASK-004');
             }
-            if (input.phase === 'validate') return validated(worktree);
-            return finalizeMock(root, worktree, 'TASK-004', 'task/api/TASK-004', 'main', taskProject);
+            if (input.phase === 'validate') return validated(input);
+            return finalizeMock(input, root, worktree, 'TASK-004', 'task/api/TASK-004', 'main', taskProject);
           },
         }
       );
@@ -3835,12 +4496,12 @@ describe('four-phase orchestration', () => {
               }
               if (input.phase === 'implement') {
                 assertPrecreatedWorktree(root, worktree, 'task/TASK-004');
+                const taskFile = path.join(worktree, 'specs', 'tasks.md');
+                fs.writeFileSync(taskFile, fs.readFileSync(taskFile, 'utf8').replace('Not Started', 'In Progress'));
                 write(path.join(worktree, 'feature.txt'), 'implemented\n');
-                git(worktree, 'add', '.');
-                git(worktree, 'commit', '-m', 'Implement TASK-004');
-                return `RESULT: IMPLEMENTED | worktree_path=${worktree} | branch=task/TASK-004 | base_branch=main`;
+                return implementationReceipt(input, worktree);
               }
-              if (input.phase === 'validate') return validated(worktree);
+              if (input.phase === 'validate') return validated(input);
               return 'RESULT: FAILURE | merge conflict needs judgment';
             },
           }
@@ -3879,17 +4540,27 @@ describe('four-phase orchestration', () => {
               }
               if (input.phase === 'implement') {
                 assertPrecreatedWorktree(root, worktree, 'task/TASK-004');
+                const taskFile = path.join(worktree, 'specs', 'tasks.md');
+                fs.writeFileSync(taskFile, fs.readFileSync(taskFile, 'utf8').replace('Not Started', 'In Progress'));
                 write(path.join(worktree, 'feature.txt'), 'implemented\n');
-                git(worktree, 'add', '.');
-                git(worktree, 'commit', '-m', 'Implement TASK-004');
-                return `RESULT: IMPLEMENTED | worktree_path=${worktree} | branch=task/TASK-004 | base_branch=main`;
+                return implementationReceipt(input, worktree);
               }
-              if (input.phase === 'validate') return validated(worktree);
-              return `RESULT: READY_TO_MERGE | task_id=TASK-004 | task_head=${git(worktree, 'rev-parse', 'HEAD')} | base_head=${git(root, 'rev-parse', 'HEAD')} | merge_message=Merge TASK-004`;
+              if (input.phase === 'validate') return validated(input);
+              return `RESULT: READY_TO_MERGE | ${JSON.stringify({
+                v: 1,
+                token: input.receiptToken,
+                task_id: 'TASK-004',
+                phase: 'finalize',
+                action: 'none',
+                merge: {
+                  subject: 'Merge TASK-004: False ready fixture',
+                  body: 'Must be rejected because completion bookkeeping is absent.',
+                },
+              })}`;
             },
           }
         ),
-        /did not make only the required/
+        /did not prepare only the required/
       );
       assert.ok(fs.existsSync(worktree));
     } finally {
@@ -3916,24 +4587,33 @@ describe('four-phase orchestration', () => {
               }
               if (input.phase === 'implement') {
                 assertPrecreatedWorktree(root, worktree, 'task/TASK-004');
-                const taskFile = path.join(worktree, 'specs', 'tasks.md');
-                fs.writeFileSync(taskFile, fs.readFileSync(taskFile, 'utf8').replace('Not Started', 'In Progress'));
-                write(path.join(worktree, 'feature.txt'), 'implemented\n');
-                git(worktree, 'add', '.');
-                git(worktree, 'commit', '-m', 'Implement TASK-004');
-                return `RESULT: IMPLEMENTED | worktree_path=${worktree} | branch=task/TASK-004 | base_branch=main`;
+              const taskFile = path.join(worktree, 'specs', 'tasks.md');
+              fs.writeFileSync(taskFile, fs.readFileSync(taskFile, 'utf8').replace('Not Started', 'In Progress'));
+              write(path.join(worktree, 'feature.txt'), 'implemented\n');
+              return implementationReceipt(input, worktree);
               }
-              if (input.phase === 'validate') return validated(worktree);
+              if (input.phase === 'validate') return validated(input);
               completeTaskFile(worktree, 'TASK-004');
               write(path.join(worktree, 'unvalidated-code.js'), 'malicious();\n');
-              git(worktree, 'add', '.');
-              git(worktree, 'commit', '-m', 'Unvalidated final changes');
-              const taskHead = git(worktree, 'rev-parse', 'HEAD');
-              return `RESULT: READY_TO_MERGE | task_id=TASK-004 | task_head=${taskHead} | base_head=${git(root, 'rev-parse', 'HEAD')} | merge_message=Merge TASK-004`;
+              return `RESULT: READY_TO_MERGE | ${JSON.stringify({
+                v: 1,
+                token: input.receiptToken,
+                task_id: 'TASK-004',
+                phase: 'finalize',
+                action: 'commit',
+                commit: {
+                  subject: 'TASK-004: Hide unvalidated code',
+                  body: 'This unsafe receipt must be rejected before committing.',
+                },
+                merge: {
+                  subject: 'Merge TASK-004: Unsafe fixture',
+                  body: 'Must never be published.',
+                },
+              })}`;
             },
           }
         ),
-        /changed non-bookkeeping paths/
+        /prepared non-bookkeeping paths/
       );
       assert.ok(fs.existsSync(worktree));
       assert.ok(!fs.existsSync(path.join(root, 'unvalidated-code.js')));
@@ -3984,12 +4664,10 @@ describe('four-phase orchestration', () => {
               const taskFile = path.join(worktree, 'specs', 'tasks.md');
               fs.writeFileSync(taskFile, fs.readFileSync(taskFile, 'utf8').replace('**Status:** Not Started', '**Status:** In Progress'));
               write(path.join(worktree, `${input.taskId}.txt`), 'implemented\n');
-              git(worktree, 'add', '.');
-              git(worktree, 'commit', '-m', `Implement ${input.taskId}`);
-              return `RESULT: IMPLEMENTED | worktree_path=${worktree} | branch=${branch} | base_branch=main`;
+              return implementationReceipt(input, worktree, input.taskId, branch);
             }
-            if (input.phase === 'validate') return validated(worktree);
-            return finalizeMock(root, worktree, input.taskId, branch, 'main');
+            if (input.phase === 'validate') return validated(input);
+            return finalizeMock(input, root, worktree, input.taskId, branch, 'main');
           },
         }
       );
@@ -4066,12 +4744,11 @@ describe('four-phase orchestration', () => {
                 write(path.join(root, '.groundwork-plans', 'TASK-004-plan.md'), '# Plan\n');
                 return 'RESULT: PLANNED | plan_file_path=.groundwork-plans/TASK-004-plan.md | identifier=TASK-004 | branch_prefix=task';
               }
-              git(root, 'worktree', 'add', '-b', 'task/wrong', worktree);
-              return `RESULT: IMPLEMENTED | worktree_path=${worktree} | branch=task/wrong | base_branch=main`;
+              return implementationReceipt(input, worktree, 'TASK-004', 'task/wrong');
             },
           }
         ),
-        /inactive task branch|unrelated registered worktree|expected branch task\/TASK-004/
+        /expected branch task\/TASK-004/
       );
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
@@ -4123,8 +4800,18 @@ describe('skill and export integration', () => {
 
   test('runner mode assigns task-worktree lifecycle exclusively to the runner', () => {
     const implement = fs.readFileSync(path.join(PLUGIN_ROOT, 'skills', 'implement-task', 'SKILL.md'), 'utf8');
+    const validate = fs.readFileSync(path.join(PLUGIN_ROOT, 'skills', 'validate', 'SKILL.md'), 'utf8');
+    const finalize = fs.readFileSync(path.join(PLUGIN_ROOT, 'skills', 'finalize-task', 'SKILL.md'), 'utf8');
+    const executor = fs.readFileSync(path.join(PLUGIN_ROOT, 'agents', 'task-executor', 'AGENT.md'), 'utf8');
     assert.match(implement, /runner exclusively owns.*worktree lifecycle/i);
     assert.match(implement, /verify.*precreated.*registered worktree/i);
+    assert.match(implement, /runner exclusively owns[\s\S]*commits/i);
+    assert.match(executor, /runner owns every Git commit/i);
+    assert.match(validate, /runner stages and commits/i);
+    assert.match(finalize, /Do not stage or commit/i);
+    for (const contract of [implement, validate, finalize, executor]) {
+      assert.ok(contract.includes('"v":1'), 'runner contract must document the versioned JSON receipt');
+    }
   });
 
   test('validation emits bounded reviewer progress markers', () => {
