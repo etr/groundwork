@@ -9,6 +9,12 @@ const { execFileSync, spawnSync } = require('child_process');
 const { StringDecoder } = require('string_decoder');
 const { Worker } = require('worker_threads');
 
+const taskExecutorMemoryModule = [
+  path.join(__dirname, '..', 'lib', 'task-executor-memory.js'),
+  path.join(__dirname, 'task-executor-memory.js'),
+].find((candidate) => fs.existsSync(candidate));
+const taskExecutorMemory = taskExecutorMemoryModule ? require(taskExecutorMemoryModule) : null;
+
 const validationSessionModule = [
   path.join(__dirname, '..', 'lib', 'validation-session.js'),
   path.join(__dirname, 'validation-session.js'),
@@ -2698,6 +2704,13 @@ function phasePrompt(phase, input) {
       header.push('Inspect the plan, commits, working state, and tests; do not repeat completed implementation work. Finish only what remains and leave it for the runner to commit.');
     }
     header.push('The task status must be changed to In Progress inside the task worktree and included in the prepared implementation changes.');
+    if (taskExecutorMemory && input.memorySnapshot && input.memorySnapshot.text) {
+      header.push(taskExecutorMemory.advisoryPrompt(input.memorySnapshot));
+    }
+    if (input.memoryProposalPath) {
+      header.push(`Optional runner-owned memory proposal path: ${input.memoryProposalPath}`);
+      header.push('You may write one bounded versioned JSON proposal there. This is optional; it is not part of the receipt or task result.');
+    }
   } else if (phase === 'validate') {
     header.push(`Skill arguments: ${projectArg.trim() || '(none)'}`);
     header.push(`Validate the full diff from base_sha=${input.baseSha} through the current worktree state.`);
@@ -3119,6 +3132,7 @@ function runTasks(options, dependencies = {}) {
     }
     let implementation = null;
     let preservedWorkspace = null;
+    let pendingMemoryPublication = null;
     let activePhase = null;
     let activeRepairInput = null;
     const harnessLabel = options.harness === 'claude' ? 'Claude Code' : 'Codex';
@@ -3304,6 +3318,12 @@ function runTasks(options, dependencies = {}) {
           let reusableValidation = false;
           let resumeActiveValidation = false;
           let activeValidationSession = null;
+          // Sidecar state stays outside checkpoints and is deliberately not
+          // consulted by any lifecycle decision.
+          let memorySnapshot = null;
+          const memoryProposalPath = taskExecutorMemory
+            ? taskExecutorMemory.prepareProposalPath({ commonDir, projectRoot, taskId, logger: log })
+            : null;
           if (branchExists) {
             implementation = {
               worktreePath: assertRegisteredWorktree(repoRoot, expectedWorktree, expectedBranch),
@@ -3376,6 +3396,15 @@ function runTasks(options, dependencies = {}) {
             }
           }
 
+          if (taskExecutorMemory && implementation) {
+            memorySnapshot = taskExecutorMemory.loadSnapshot({
+              commonDir,
+              projectRoot,
+              taskId,
+              logger: log,
+            });
+          }
+
           function acceptImplementationResult(parsed, expectedHead = null) {
             if (parsed.branch !== expectedBranch) {
               throw new Error(`implement-task returned ${parsed.branch}; expected branch ${expectedBranch}`);
@@ -3409,11 +3438,21 @@ function runTasks(options, dependencies = {}) {
           let implementationStartHead = null;
           if (!implementation || resumeExistingWorktree) {
             beginPhase('implement');
+            if (taskExecutorMemory) {
+              memorySnapshot = taskExecutorMemory.prepareSnapshot({
+                commonDir,
+                projectRoot,
+                taskId,
+                logger: log,
+              });
+            }
             const implementInput = {
               ...common,
               planFile,
               resumeExistingWorktree,
               receiptToken: crypto.randomBytes(24).toString('hex'),
+              memorySnapshot,
+              memoryProposalPath,
             };
             const implementationPhaseInput = {
               ...implementInput,
@@ -3687,6 +3726,16 @@ function runTasks(options, dependencies = {}) {
                   ...validationSummary
                 } = validation;
                 completed.push({ taskId, validation: validationSummary });
+                if (taskExecutorMemory && memorySnapshot) {
+                  pendingMemoryPublication = {
+                    commonDir,
+                    projectRoot,
+                    taskId,
+                    proposalPath: memoryProposalPath,
+                    snapshot: memorySnapshot,
+                    logger: log,
+                  };
+                }
                 implementation = null;
                 break;
               }
@@ -3751,6 +3800,13 @@ function runTasks(options, dependencies = {}) {
       closeReporter('failed');
       releaseTaskLease();
     }
+    if (pendingMemoryPublication) {
+      try {
+        const dispatchMemory = dependencies.dispatchTaskExecutorMemory
+          || taskExecutorMemory.dispatchProposal;
+        dispatchMemory(pendingMemoryPublication);
+      } catch {}
+    }
   }
   return completed;
 }
@@ -3799,6 +3855,7 @@ module.exports = {
   parseFinalizeResult,
   sealPreparedCommit,
   buildInvocation,
+  phasePrompt,
   buildChildEnv,
   formatElapsed,
   formatLocalTimestamp,

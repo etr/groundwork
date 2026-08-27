@@ -374,6 +374,22 @@ describe('portable shared reference export', () => {
   });
 });
 
+describe('external runner sidecars', () => {
+  test('Codex exports task-executor memory beside the standalone runner without native memory configuration', () => {
+    const root = runInstaller('codex');
+    if (root === null) return;
+    try {
+      const runnerDir = path.join(root, '.codex');
+      const runner = fs.readFileSync(path.join(runnerDir, 'groundwork-run.js'), 'utf8');
+      const sidecar = path.join(runnerDir, 'task-executor-memory.js');
+      assert.ok(fs.existsSync(sidecar), 'task-executor memory sidecar was not exported');
+      assert.strictEqual(fs.readFileSync(sidecar, 'utf8'), fs.readFileSync(path.join(PLUGIN_ROOT, 'lib', 'task-executor-memory.js'), 'utf8'));
+      assert.match(runner, /task-executor-memory\.js/);
+      assert.doesNotMatch(fs.readFileSync(path.join(runnerDir, 'agents', 'task-executor.toml'), 'utf8'), /memory\s*=/);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+});
+
 describe('portable skill-local resource export', () => {
   test('Codex bundles referenced sibling resources beside the consuming skill', () => {
     const root = runInstaller('codex');
