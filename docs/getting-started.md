@@ -90,6 +90,8 @@ Durable output lives under `<git-common-dir>/groundwork/reporting/<project-hash>
 
 The final phase prepares task bookkeeping, handles a moved base, and chooses the merge message. The harness rechecks the exact base and task heads under writer access before publication; if the base moved, it preserves the task worktree and returns to bounded revalidation before merging and cleanup.
 
+The runner can optionally reuse safe project memory for implementation. It freezes a small, untrusted snapshot from a supported task-executor memory source, supplies it only to implementation, and keeps that exact snapshot for retries and resumes. Repository rules and the active task always override it. Implementation can leave a small learning proposal outside the worktree; Groundwork considers it only after a verified merge and cleanup. Memory is advisory: unavailable, invalid, secret-bearing, locked, conflicting, or failed memory never affects a task's lifecycle result. Do not store dependency setup or `.venv` reuse instructions in it.
+
 ### Skill Categories
 
 1. **Planning & Design** - Start here for new work

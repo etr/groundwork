@@ -2233,6 +2233,23 @@ for (let index = 0; index < 100000; index++) fs.writeSync(1, record);
     assert.ok(!codex.args.includes('resume'));
   });
 
+  test('adds frozen untrusted memory only to equivalent Claude and Codex implementation prompts', () => {
+    const { phasePrompt } = require(RUNNER);
+    const input = {
+      taskId: 'TASK-004', repoRoot: '/repo', projectRoot: '/repo', specsDir: '/repo/specs',
+      planFile: '/repo/.groundwork-plans/TASK-004-plan.md', branch: 'task/TASK-004',
+      worktreePath: '/repo/.worktrees/TASK-004', receiptToken: 'receipt', projectName: null,
+      memorySnapshot: { digest: 'frozen-digest', text: 'Run focused tests first.' },
+      memoryProposalPath: '/common/proposal.json',
+    };
+    const claude = phasePrompt('implement', { ...input, harness: 'claude' });
+    const codex = phasePrompt('implement', { ...input, harness: 'codex' });
+    assert.match(claude, /BEGIN UNTRUSTED PROJECT MEMORY/);
+    assert.strictEqual(claude.slice(claude.indexOf('Optional runner-owned')), codex.slice(codex.indexOf('Optional runner-owned')));
+    assert.doesNotMatch(phasePrompt('validate', { ...input, harness: 'codex' }), /UNTRUSTED PROJECT MEMORY/);
+    assert.doesNotMatch(phasePrompt('recovery', { ...input, harness: 'codex' }), /UNTRUSTED PROJECT MEMORY/);
+  });
+
   test('gives recovery repair authority without enabling Groundwork recursion', () => {
     const { buildInvocation } = require(RUNNER);
     const claude = buildInvocation({

@@ -759,6 +759,7 @@ install_external_runner() {
     local dest_base
     dest_base=$(get_dest_base "$target")
     write_codex_agent "$dest_base/groundwork-run.js" "$(<"$SOURCE_DIR/bin/groundwork-run.js")" "external task runner" "$dest_base"
+    write_codex_agent "$dest_base/task-executor-memory.js" "$(<"$SOURCE_DIR/lib/task-executor-memory.js")" "external task runner memory sidecar" "$dest_base"
     write_codex_agent "$dest_base/run-reporting.js" "$(<"$SOURCE_DIR/lib/run-reporting.js")" "external runner reporting helper" "$dest_base"
     write_codex_agent "$dest_base/validation-session.js" "$(<"$SOURCE_DIR/lib/validation-session.js")" "external validation session helper" "$dest_base"
 }

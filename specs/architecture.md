@@ -10,6 +10,12 @@ The runner creates the task branch and linked worktree while holding the writer 
 
 Publication acquires the writer gate and rechecks unrelated worktrees, the base head, validated task head, bookkeeping-only finalization diff, Git controls, and registered workspace identity. A base-head mismatch converts the READY result into revalidation without removing the branch or worktree. Only a successful verified merge may remove the workspace, delete the task branch, and clear the checkpoint.
 
+### Advisory task-executor memory sidecar
+
+`lib/task-executor-memory.js` is a harness-neutral deep module stored beside the exported Codex runner. It discovers only regular, contained, non-symlinked bounded sources in plugin-scoped `.claude/agent-memory` task-executor directories or its canonical common-Git store. It rejects controls, credentials, oversized content, and project `.venv` guidance. The runner stores an immutable versioned snapshot at `<git-common-dir>/groundwork/task-executor-memory/<project-key>/snapshots/<task>.json`; retries and resumes read that identity, never live input.
+
+The module adds its explicitly untrusted envelope only to implementation prompts and exposes an optional proposal file outside the worktree. After `mergeAndCleanup()` has succeeded, it may non-blockingly acquire an exclusive sidecar lock, compare the canonical digest/generation, merge sanitized allowlisted facts, and atomically replace canonical memory. It never reclaims locks. Any invalid read, contention, conflict, or publication error returns empty/ignored/deferred with at most one redacted warning. The sidecar is not checkpoint, receipt, validation-session, recovery, or lifecycle-gate state, and callers ignore its result.
+
 ### Runner reporting and status projection
 
 `lib/run-reporting.js` is the reporting deep module. `bin/groundwork-run.js` owns lifecycle timing and provider-stream normalization, then passes only normalized activity or exact semantic signals to one reporter scoped to the acquired task lifecycle. The reporter owns event-envelope fields, sequence ordering, credential redaction, display-control rejection, rendering, and safe append descriptors; raw provider JSON remains ephemeral phase output and is never copied into durable reporting.
