@@ -3132,6 +3132,7 @@ function runTasks(options, dependencies = {}) {
     }
     let implementation = null;
     let preservedWorkspace = null;
+    let pendingMemoryPublication = null;
     let activePhase = null;
     let activeRepairInput = null;
     const harnessLabel = options.harness === 'claude' ? 'Claude Code' : 'Codex';
@@ -3319,7 +3320,7 @@ function runTasks(options, dependencies = {}) {
           let activeValidationSession = null;
           // Sidecar state stays outside checkpoints and is deliberately not
           // consulted by any lifecycle decision.
-          let memorySnapshot = taskExecutorMemory ? taskExecutorMemory.emptySnapshot() : null;
+          let memorySnapshot = null;
           const memoryProposalPath = taskExecutorMemory
             ? taskExecutorMemory.prepareProposalPath({ commonDir, projectRoot, taskId, logger: log })
             : null;
@@ -3393,6 +3394,15 @@ function runTasks(options, dependencies = {}) {
             } else {
               resumeExistingWorktree = true;
             }
+          }
+
+          if (taskExecutorMemory && implementation) {
+            memorySnapshot = taskExecutorMemory.loadSnapshot({
+              commonDir,
+              projectRoot,
+              taskId,
+              logger: log,
+            });
           }
 
           function acceptImplementationResult(parsed, expectedHead = null) {
@@ -3690,20 +3700,6 @@ function runTasks(options, dependencies = {}) {
                     validatedHead,
                     baseBranch
                   );
-                  // Publication is best-effort telemetry strictly after the
-                  // verified merge and cleanup. It cannot affect completion.
-                  if (taskExecutorMemory) {
-                    try {
-                      taskExecutorMemory.publishProposal({
-                        commonDir,
-                        projectRoot,
-                        taskId,
-                        proposalPath: memoryProposalPath,
-                        snapshot: memorySnapshot,
-                        logger: log,
-                      });
-                    } catch {}
-                  }
                 }
               } finally {
                 releasePublicationGate();
@@ -3730,6 +3726,16 @@ function runTasks(options, dependencies = {}) {
                   ...validationSummary
                 } = validation;
                 completed.push({ taskId, validation: validationSummary });
+                if (taskExecutorMemory && memorySnapshot) {
+                  pendingMemoryPublication = {
+                    commonDir,
+                    projectRoot,
+                    taskId,
+                    proposalPath: memoryProposalPath,
+                    snapshot: memorySnapshot,
+                    logger: log,
+                  };
+                }
                 implementation = null;
                 break;
               }
@@ -3793,6 +3799,13 @@ function runTasks(options, dependencies = {}) {
     } finally {
       closeReporter('failed');
       releaseTaskLease();
+    }
+    if (pendingMemoryPublication) {
+      try {
+        const dispatchMemory = dependencies.dispatchTaskExecutorMemory
+          || taskExecutorMemory.dispatchProposal;
+        dispatchMemory(pendingMemoryPublication);
+      } catch {}
     }
   }
   return completed;

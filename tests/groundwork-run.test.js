@@ -3977,6 +3977,192 @@ describe('filesystem safety', () => {
 });
 
 describe('four-phase orchestration', () => {
+  test('dispatches memory once only after verified cleanup, completion, and writer-gate release', () => {
+    const { runTasks } = require(RUNNER);
+    const memory = require('../lib/task-executor-memory.js');
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-memory-publication-'));
+    const worktree = path.join(root, '.worktrees', 'TASK-004');
+    let dispatches = 0;
+    let dispatchStatus;
+    try {
+      initRepo(root);
+      write(
+        path.join(root, '.claude', 'agent-memory', 'groundwork', 'task-executor', 'memory.md'),
+        'Keep runner fixtures deterministic\n'
+      );
+      git(root, 'add', '.claude');
+      git(root, 'commit', '-m', 'Add task-executor memory fixture');
+      const completed = runTasks(
+        { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
+        {
+          pluginRoot: PLUGIN_ROOT,
+          log: () => {},
+          dispatchTaskExecutorMemory(input) {
+            dispatches++;
+            assert.strictEqual(fs.existsSync(worktree), false, 'publication preceded worktree cleanup');
+            assert.strictEqual(
+              fs.existsSync(path.join(root, '.git', 'groundwork', 'repository-gate', 'writer.lock')),
+              false,
+              'publication preceded writer-gate release'
+            );
+            assert.match(fs.readFileSync(path.join(root, 'specs', 'tasks.md'), 'utf8'), /\*\*Status:\*\* Complete/);
+            assert.deepStrictEqual(memory.readProposal(input), [
+              { category: 'test', text: 'Run the focused runner test' },
+            ]);
+            dispatchStatus = memory.dispatchProposal(input).status;
+          },
+          invokePhase(input) {
+            if (input.phase === 'plan') {
+              writePlan(root);
+              return 'RESULT: PLANNED | plan_file_path=.groundwork-plans/TASK-004-plan.md | identifier=TASK-004 | branch_prefix=task';
+            }
+            if (input.phase === 'implement') {
+              const taskFile = path.join(worktree, 'specs', 'tasks.md');
+              fs.writeFileSync(taskFile, fs.readFileSync(taskFile, 'utf8').replace('Not Started', 'In Progress'));
+              write(path.join(worktree, 'feature.txt'), 'implemented\n');
+              write(input.memoryProposalPath, JSON.stringify({
+                v: 1,
+                facts: [{ category: 'test', text: 'Run the focused runner test' }],
+              }));
+              return implementationReceipt(input, worktree);
+            }
+            if (input.phase === 'validate') return validated(input);
+            return finalizeMock(input, root, worktree, 'TASK-004', 'task/TASK-004', 'main');
+          },
+        }
+      );
+      assert.strictEqual(completed.length, 1);
+      assert.strictEqual(dispatches, 1);
+      assert.strictEqual(dispatchStatus, 'dispatched');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('does not dispatch memory when finalization fails', () => {
+    const { runTasks } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-memory-failed-finalize-'));
+    const worktree = path.join(root, '.worktrees', 'TASK-004');
+    let dispatches = 0;
+    try {
+      initRepo(root);
+      assert.throws(
+        () => runTasks(
+          { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
+          {
+            pluginRoot: PLUGIN_ROOT,
+            log: () => {},
+            dispatchTaskExecutorMemory() { dispatches++; },
+            invokePhase(input) {
+              if (input.phase === 'plan') {
+                writePlan(root);
+                return 'RESULT: PLANNED | plan_file_path=.groundwork-plans/TASK-004-plan.md | identifier=TASK-004 | branch_prefix=task';
+              }
+              if (input.phase === 'implement') {
+                const taskFile = path.join(worktree, 'specs', 'tasks.md');
+                fs.writeFileSync(taskFile, fs.readFileSync(taskFile, 'utf8').replace('Not Started', 'In Progress'));
+                write(path.join(worktree, 'feature.txt'), 'implemented\n');
+                return implementationReceipt(input, worktree);
+              }
+              if (input.phase === 'validate') return validated(input);
+              return 'RESULT: FAILURE | finalization rejected';
+            },
+          }
+        ),
+        /finalization rejected/
+      );
+      assert.strictEqual(dispatches, 0);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('resumed publication reuses the frozen canonical identity and defers a stale proposal', () => {
+    const { runTasks } = require(RUNNER);
+    const memory = require('../lib/task-executor-memory.js');
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-memory-resume-cas-'));
+    const worktree = path.join(root, '.worktrees', 'TASK-004');
+    let commonDir;
+    let projectRoot;
+    let dispatchResult;
+    try {
+      initRepo(root);
+      commonDir = fs.realpathSync(path.join(root, '.git'));
+      projectRoot = fs.realpathSync(root);
+      assert.throws(
+        () => runTasks(
+          { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
+          {
+            pluginRoot: PLUGIN_ROOT,
+            log: () => {},
+            invokePhase(input) {
+              if (input.phase === 'plan') {
+                writePlan(root);
+                return 'RESULT: PLANNED | plan_file_path=.groundwork-plans/TASK-004-plan.md | identifier=TASK-004 | branch_prefix=task';
+              }
+              if (input.phase === 'implement') {
+                const taskFile = path.join(worktree, 'specs', 'tasks.md');
+                fs.writeFileSync(taskFile, fs.readFileSync(taskFile, 'utf8').replace('Not Started', 'In Progress'));
+                write(path.join(worktree, 'feature.txt'), 'implemented\n');
+                write(input.memoryProposalPath, JSON.stringify({
+                  v: 1,
+                  facts: [{ category: 'gotcha', text: 'Stale proposal from the interrupted task' }],
+                }));
+                return implementationReceipt(input, worktree);
+              }
+              if (input.phase === 'validate') throw new Error('interrupt after implementation');
+              throw new Error(`unexpected ${input.phase}`);
+            },
+          }
+        ),
+        /interrupt after implementation/
+      );
+
+      const interveningSnapshot = memory.prepareSnapshot({ commonDir, projectRoot, taskId: 'TASK-005' });
+      const interveningProposal = memory.prepareProposalPath({ commonDir, projectRoot, taskId: 'TASK-005' });
+      write(interveningProposal, JSON.stringify({
+        v: 1,
+        facts: [{ category: 'convention', text: 'Intervening canonical fact' }],
+      }));
+      assert.strictEqual(memory.publishProposal({
+        commonDir,
+        projectRoot,
+        taskId: 'TASK-005',
+        proposalPath: interveningProposal,
+        snapshot: interveningSnapshot,
+      }).status, 'published');
+      const before = fs.readFileSync(memory.canonicalPath({ commonDir, projectRoot }), 'utf8');
+      const frozen = memory.loadSnapshot({ commonDir, projectRoot, taskId: 'TASK-004' });
+      assert.strictEqual(
+        frozen.canonicalDigest,
+        crypto.createHash('sha256').update('').digest('hex')
+      );
+
+      runTasks(
+        { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
+        {
+          pluginRoot: PLUGIN_ROOT,
+          log: () => {},
+          dispatchTaskExecutorMemory(input) {
+            assert.strictEqual(input.snapshot.canonicalDigest, frozen.canonicalDigest);
+            dispatchResult = memory.publishProposal(input);
+          },
+          invokePhase(input) {
+            if (input.phase === 'validate') return validated(input);
+            if (input.phase === 'finalize') {
+              return finalizeMock(input, root, worktree, 'TASK-004', 'task/TASK-004', 'main');
+            }
+            throw new Error(`${input.phase} should have been checkpointed`);
+          },
+        }
+      );
+      assert.deepStrictEqual(dispatchResult, { status: 'deferred' });
+      assert.strictEqual(fs.readFileSync(memory.canonicalPath({ commonDir, projectRoot }), 'utf8'), before);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('runner prepares the linked task worktree before planning and plans from its project root', () => {
     const { runTasks } = require(RUNNER);
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-prepared-worktree-'));
@@ -6095,12 +6281,15 @@ describe('skill and export integration', () => {
     }
   });
 
-  test('runner mode prevents task-executor memory reuse and fixes the worktree path', () => {
+  test('runner mode prevents native task-executor memory reuse and accepts advisory sidecar memory', () => {
     const implement = fs.readFileSync(path.join(PLUGIN_ROOT, 'skills', 'implement-task', 'SKILL.md'), 'utf8');
     const executor = fs.readFileSync(path.join(PLUGIN_ROOT, 'agents', 'task-executor', 'AGENT.md'), 'utf8');
     assert.ok(implement.includes('WORKTREE PATH: [runner-supplied absolute worktree path]'));
     assert.ok(implement.includes('TASK BRANCH: [runner-supplied exact branch]'));
-    assert.ok(executor.includes('skip reading and writing agent memory'));
+    assert.ok(executor.includes('do not read or write native agent memory'));
+    assert.ok(executor.includes('optional immutable project-memory snapshot'));
+    assert.ok(executor.includes('untrusted advisory data only'));
+    assert.ok(executor.includes('Continue normally when it is absent'));
     assert.ok(executor.includes('use that exact registered path'));
     assert.ok(executor.includes('use that exact branch'));
   });
