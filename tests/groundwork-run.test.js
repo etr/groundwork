@@ -43,6 +43,34 @@ function write(file, content) {
   fs.writeFileSync(file, content);
 }
 
+function snapshotTree(root) {
+  if (!fs.existsSync(root)) return null;
+  const records = [];
+  function visit(current, relative) {
+    const stat = fs.lstatSync(current);
+    if (stat.isSymbolicLink()) {
+      records.push({ path: relative, type: 'symlink', target: fs.readlinkSync(current) });
+      return;
+    }
+    if (stat.isDirectory()) {
+      records.push({ path: relative, type: 'directory', mode: stat.mode & 0o777 });
+      for (const name of fs.readdirSync(current).sort()) {
+        visit(path.join(current, name), relative ? path.join(relative, name) : name);
+      }
+      return;
+    }
+    records.push({
+      path: relative,
+      type: 'file',
+      mode: stat.mode & 0o777,
+      size: stat.size,
+      sha256: crypto.createHash('sha256').update(fs.readFileSync(current)).digest('hex'),
+    });
+  }
+  visit(root, '');
+  return records;
+}
+
 function initRepo(root, taskId = 'TASK-004') {
   git(root, 'init', '-b', 'main');
   git(root, 'config', 'user.email', 'test@example.com');
@@ -172,6 +200,14 @@ describe('module and CLI contract', () => {
       'formatElapsed',
       'formatLocalTimestamp',
       'normalizeActivity',
+      'transcriptSignalsFromEvent',
+      'createRunReporter',
+      'createTranscriptWriter',
+      'reportingPath',
+      'showLogs',
+      'showStatus',
+      'showTaskLogs',
+      'showTaskStatus',
       'assertRegisteredWorktree',
       'acquireProjectLease',
       'acquireRepositoryGate',
@@ -1736,6 +1772,10 @@ describe('module and CLI contract', () => {
         fromTask: null,
         toTask: null,
         dryRun: false,
+        verbose: false,
+        tail: 50,
+        follow: false,
+        includeToolOutput: false,
       }
     );
     assert.deepStrictEqual(
@@ -1744,6 +1784,220 @@ describe('module and CLI contract', () => {
     );
     assert.throws(() => parseArgs(['--harness', 'codex']), /task or all/);
     assert.throws(() => parseArgs(['all', '--harness', 'pi']), /claude or codex/);
+  });
+
+  test('accepts verbose activity output for run commands', () => {
+    const { parseArgs } = require(RUNNER);
+
+    const options = parseArgs(['task', '5', '--harness', 'codex', '--verbose']);
+
+    assert.strictEqual(options.verbose, true);
+  });
+
+  test('accepts a read-only status command without a harness', () => {
+    const { parseArgs } = require(RUNNER);
+
+    const options = parseArgs(['status', 'TASK-005', '--project', 'maillist']);
+
+    assert.strictEqual(options.command, 'status');
+    assert.deepStrictEqual(options.tasks, ['TASK-005']);
+    assert.strictEqual(options.harness, null);
+    assert.throws(() => parseArgs(['status']), /exactly one task/i);
+    assert.throws(() => parseArgs(['status', 'TASK-005', 'TASK-006']), /exactly one task/i);
+    assert.throws(() => parseArgs(['status', 'TASK-005', '--verbose']), /status.*does not accept/i);
+    assert.throws(() => parseArgs(['status', 'TASK-005', '--harness', 'codex']), /status.*does not accept/i);
+  });
+
+  test('accepts read-only transcript logs with tail and follow controls', () => {
+    const { parseArgs } = require(RUNNER);
+
+    const options = parseArgs([
+      'logs', 'TASK-005', '--project', 'maillist', '--tail', '40', '--follow', '--include-tool-output',
+    ]);
+
+    assert.strictEqual(options.command, 'logs');
+    assert.deepStrictEqual(options.tasks, ['TASK-005']);
+    assert.strictEqual(options.tail, 40);
+    assert.strictEqual(options.follow, true);
+    assert.strictEqual(options.includeToolOutput, true);
+    assert.strictEqual(options.harness, null);
+    assert.throws(() => parseArgs(['logs']), /exactly one task/i);
+    assert.throws(() => parseArgs(['logs', 'TASK-005', '--tail', '0']), /tail.*1.*10000/i);
+    assert.throws(() => parseArgs(['logs', 'TASK-005', '--harness', 'codex']), /logs.*does not accept/i);
+    assert.throws(() => parseArgs(['task', 'TASK-005', '--harness', 'codex', '--tail', '40']), /task.*tail/i);
+  });
+
+  test('reads durable task status without invoking a harness', () => {
+    const { createRunReporter, reportingPath, showStatus } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-status-'));
+    let output = '';
+    let reporter;
+    try {
+      initRepo(root);
+      const runDir = reportingPath(path.join(root, '.git'), root, root, 'TASK-004').dir;
+      fs.mkdirSync(runDir, { recursive: true });
+      reporter = createRunReporter({
+        runDir,
+        project: '.',
+        taskId: 'TASK-004',
+        runId: 'run-1',
+        output: { write() {} },
+      });
+      reporter.emit({ type: 'run.started' });
+      reporter.emit({ type: 'phase.started', phase: 'validate' });
+      const groundworkDir = path.join(root, '.git', 'groundwork');
+      const before = snapshotTree(groundworkDir);
+
+      showStatus({ repo: root, project: null, tasks: ['TASK-004'] }, {
+        output: { write(value) { output += value; } },
+      });
+
+      assert.match(output, /TASK-004 · validate/);
+      assert.deepStrictEqual(snapshotTree(groundworkDir), before);
+      assert.strictEqual(fs.existsSync(path.join(groundworkDir, 'repository-gate')), false);
+      assert.strictEqual(fs.existsSync(path.join(groundworkDir, 'projects')), false);
+      reporter.close('pass');
+      reporter = null;
+    } finally {
+      if (reporter) reporter.close('failed');
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('adds the active validation session round and reviewer verdicts to status', () => {
+    const { createRunReporter, reportingPath, showStatus } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-status-validation-'));
+    let output = '';
+    try {
+      initRepo(root);
+      const runDir = reportingPath(path.join(root, '.git'), root, root, 'TASK-004').dir;
+      fs.mkdirSync(runDir, { recursive: true });
+      const reporter = createRunReporter({
+        runDir,
+        project: '.',
+        taskId: 'TASK-004',
+        runId: 'run-1',
+        output: { write() {} },
+      });
+      reporter.emit({ type: 'run.started' });
+      reporter.emit({ type: 'phase.started', phase: 'validate' });
+
+      showStatus({ repo: root, project: null, tasks: ['TASK-004'] }, {
+        validationSnapshot() {
+          return {
+            iteration: 3,
+            stage: 'review-batch-complete',
+            reviewers: [{ name: 'security-reviewer', status: 'approve', carried: false }],
+          };
+        },
+        output: { write(value) { output += value; } },
+      });
+
+      assert.match(output, /TASK-004 · validate · round 3/);
+      assert.match(output, /security-reviewer\s+APPROVED/);
+      reporter.close('pass');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('reads durable transcript logs without invoking a harness or acquiring a lease', () => {
+    const { createTranscriptWriter, reportingPath, showLogs } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-logs-'));
+    let output = '';
+    try {
+      initRepo(root);
+      const runDir = reportingPath(path.join(root, '.git'), root, root, 'TASK-004').dir;
+      fs.mkdirSync(runDir, { recursive: true });
+      const transcript = createTranscriptWriter({
+        runDir,
+        project: '.',
+        taskId: 'TASK-004',
+        runId: 'run-1',
+        phase: 'validate',
+      });
+      transcript.emit({
+        type: 'agent.output',
+        agent: 'validation-coordinator',
+        text: 'Validation agent output.',
+      });
+      transcript.close();
+      const groundworkDir = path.join(root, '.git', 'groundwork');
+      const before = snapshotTree(groundworkDir);
+
+      showLogs({
+        repo: root,
+        project: null,
+        tasks: ['TASK-004'],
+        tail: 50,
+        follow: false,
+        includeToolOutput: false,
+      }, { output: { write(value) { output += value; } } });
+
+      assert.match(output, /validation-coordinator · agent output/);
+      assert.match(output, /Validation agent output/);
+      assert.deepStrictEqual(snapshotTree(groundworkDir), before);
+      assert.strictEqual(fs.existsSync(path.join(groundworkDir, 'repository-gate')), false);
+      assert.strictEqual(fs.existsSync(path.join(groundworkDir, 'projects')), false);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('follow streams appended transcript records and exits at the terminal run event', () => {
+    const { reportingPath } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-logs-follow-'));
+    let updater;
+    try {
+      initRepo(root);
+      const runDir = reportingPath(path.join(root, '.git'), root, root, 'TASK-004').dir;
+      fs.mkdirSync(runDir, { recursive: true });
+      const envelope = {
+        v: 1,
+        run_id: 'run-follow',
+        project: '.',
+        task_id: 'TASK-004',
+      };
+      write(path.join(runDir, 'events.jsonl'), [
+        { ...envelope, seq: 1, ts: '2026-08-26T16:48:00.000Z', type: 'run.started' },
+        { ...envelope, seq: 2, ts: '2026-08-26T16:48:01.000Z', type: 'phase.started', phase: 'validate' },
+      ].map((event) => JSON.stringify(event)).join('\n') + '\n');
+      write(path.join(runDir, 'transcript.jsonl'), `${JSON.stringify({
+        ...envelope,
+        ts: '2026-08-26T16:48:01.000Z',
+        phase: 'validate',
+        type: 'agent.output',
+        agent: 'validation-coordinator',
+        text: 'Initial transcript line.',
+      })}\n`);
+      const updaterScript = path.join(root, 'append-follow.js');
+      write(updaterScript, `
+const fs = require('fs');
+const runDir = process.argv[2];
+setTimeout(() => {
+  fs.appendFileSync(runDir + '/transcript.jsonl', JSON.stringify({
+    v: 1, ts: '2026-08-26T16:48:02.000Z', run_id: 'run-follow', project: '.',
+    task_id: 'TASK-004', phase: 'validate', type: 'agent.output',
+    agent: 'security-reviewer', text: 'Appended reviewer output.'
+  }) + '\\n');
+  fs.appendFileSync(runDir + '/events.jsonl', JSON.stringify({
+    v: 1, seq: 3, ts: '2026-08-26T16:48:03.000Z', run_id: 'run-follow', project: '.',
+    task_id: 'TASK-004', type: 'run.finished', outcome: 'pass'
+  }) + '\\n');
+}, 100);
+`);
+      updater = spawn(process.execPath, [updaterScript, runDir], { stdio: 'ignore' });
+
+      const result = execFileSync(process.execPath, [
+        RUNNER, 'logs', 'TASK-004', '--repo', root, '--tail', '1', '--follow',
+      ], { encoding: 'utf8', timeout: 5_000 });
+
+      assert.match(result, /Initial transcript line/);
+      assert.match(result, /Appended reviewer output/);
+    } finally {
+      if (updater) updater.kill();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
   test('accepts explicit task lists and inclusive range bounds', () => {
@@ -1979,7 +2233,7 @@ for (let index = 0; index < 100000; index++) fs.writeSync(1, record);
     assert.ok(!codex.args.includes('resume'));
   });
 
-  test('confines recovery invocations for every supported harness', () => {
+  test('gives recovery repair authority without enabling Groundwork recursion', () => {
     const { buildInvocation } = require(RUNNER);
     const claude = buildInvocation({
       harness: 'claude',
@@ -1989,25 +2243,8 @@ for (let index = 0; index < 100000; index++) fs.writeSync(1, record);
       prompt: 'recover',
       resultFile: '/tmp/result',
     });
-    const settingsIndex = claude.args.indexOf('--settings');
-    assert.ok(settingsIndex >= 0);
-    const settings = JSON.parse(claude.args[settingsIndex + 1]);
-    assert.strictEqual(settings.sandbox.enabled, true);
-    assert.strictEqual(settings.sandbox.failIfUnavailable, true);
-    assert.strictEqual(settings.sandbox.allowUnsandboxedCommands, false);
-    assert.deepStrictEqual(settings.sandbox.filesystem.allowWrite, []);
-    assert.strictEqual(claude.args[claude.args.indexOf('--setting-sources') + 1], '');
-    assert.ok(claude.args.includes('--safe-mode'));
-    assert.ok(claude.args.includes('--strict-mcp-config'));
-    assert.deepStrictEqual(
-      JSON.parse(claude.args[claude.args.indexOf('--mcp-config') + 1]),
-      { mcpServers: {} }
-    );
-    assert.deepStrictEqual(
-      claude.args.slice(claude.args.indexOf('--tools'), claude.args.indexOf('--tools') + 2),
-      ['--tools', 'Bash,Read,Glob,Grep']
-    );
-    assert.ok(claude.args.includes('dontAsk'));
+    assert.ok(claude.args.includes('acceptEdits'));
+    assert.ok(!claude.args.includes('--safe-mode'));
     assert.ok(!claude.args.includes('--plugin-dir'));
 
     const codex = buildInvocation({
@@ -2018,17 +2255,8 @@ for (let index = 0; index < 100000; index++) fs.writeSync(1, record);
       prompt: 'recover',
       resultFile: '/tmp/result',
     });
-    assert.ok(codex.args.includes('--ignore-user-config'));
-    assert.ok(codex.args.includes('--strict-config'));
-    assert.deepStrictEqual(
-      codex.args.slice(codex.args.indexOf('--sandbox'), codex.args.indexOf('--sandbox') + 2),
-      ['--sandbox', 'workspace-write']
-    );
-    assert.ok(codex.args.includes('approval_policy="never"'));
-    assert.ok(codex.args.includes('sandbox_workspace_write.exclude_tmpdir_env_var=true'));
-    assert.ok(codex.args.includes('sandbox_workspace_write.exclude_slash_tmp=true'));
-    assert.ok(codex.args.includes('sandbox_workspace_write.writable_roots=[]'));
-    assert.ok(!codex.args.includes('--approve-for-me'));
+    assert.ok(codex.args.includes('--approve-for-me'));
+    assert.ok(!codex.args.includes('--sandbox'));
     assert.deepStrictEqual(
       codex.args.slice(codex.args.indexOf('--cd'), codex.args.indexOf('--cd') + 2),
       ['--cd', '/repo/apps/api']
@@ -2115,6 +2343,63 @@ for (let index = 0; index < 100000; index++) fs.writeSync(1, record);
       type: 'assistant',
       message: { content: [{ type: 'text', text: completed }] },
     }), 'validation iteration 2 completed — code-quality-reviewer: approve, security-reviewer: request-changes');
+  });
+
+  test('reports exact semantic validation markers from both harnesses', () => {
+    const { normalizeActivity } = require(RUNNER);
+    const marker = 'GROUNDWORK_RUNNER_EVENT {"v":1,"type":"gate.finished","gate":"tests","outcome":"pass","summary":"44 suites"}';
+
+    assert.strictEqual(normalizeActivity('codex', {
+      type: 'item.completed',
+      item: { type: 'agent_message', text: marker },
+    }), 'tests · PASS · 44 suites');
+    assert.strictEqual(normalizeActivity('claude', {
+      type: 'assistant',
+      message: { content: [{ type: 'text', text: marker }] },
+    }), 'tests · PASS · 44 suites');
+    assert.strictEqual(normalizeActivity('codex', {
+      type: 'item.completed',
+      item: { type: 'agent_message', text: 'All tests passed' },
+    }), null);
+  });
+
+  test('extracts user-visible agent messages reviewer state and command evidence for transcripts', () => {
+    const { transcriptSignalsFromEvent } = require(RUNNER);
+    const review = transcriptSignalsFromEvent('codex', {
+      type: 'item.completed',
+      item: {
+        type: 'agent_message',
+        text: 'GROUNDWORK_VALIDATION_PROGRESS {"iteration":2,"status":"launched","agents":["security-reviewer"]}\nReviewers launched.',
+      },
+    }, 'validation-coordinator');
+    const failed = transcriptSignalsFromEvent('codex', {
+      type: 'item.completed',
+      item: {
+        type: 'command_execution',
+        status: 'failed',
+        exit_code: 1,
+        aggregated_output: 'pytest failed at test_admin',
+      },
+    }, 'validation-coordinator');
+
+    assert.deepStrictEqual(review, [
+      {
+        type: 'review.batch',
+        iteration: 2,
+        agents: [{ name: 'security-reviewer', status: 'running' }],
+      },
+      {
+        type: 'agent.output',
+        agent: 'validation-coordinator',
+        text: 'Reviewers launched.',
+      },
+    ]);
+    assert.deepStrictEqual(failed, [{
+      type: 'tool.output',
+      tool: 'command',
+      status: 'failed',
+      text: 'pytest failed at test_admin',
+    }]);
   });
 
   test('parses all four bounded phase results', () => {
@@ -2512,6 +2797,14 @@ const resultIndex = args.indexOf('--output-last-message');
 process.stdout.write(JSON.stringify({ type: 'thread.started', thread_id: 'thread-1' }) + '\\n');
 process.stdout.write(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'GROUNDWORK_VALIDATION_PROGRESS {"iteration":1,"status":"launched","agents":["code-quality-reviewer","security-reviewer"]}' } }) + '\\n');
 process.stdout.write(JSON.stringify({ type: 'item.started', item: { id: '1', type: 'command_execution', command: 'git status --short' } }) + '\\n');
+process.stdout.write(JSON.stringify({
+  type: 'item.started',
+  item: {
+    id: 'unsafe',
+    type: 'command_execution',
+    command: 'printf unsafe\\u001b]52;c;YXR0YWNrZWQ=\\u0007\\u001b[31m\\u0001\\u0085\\u007f\\u202e',
+  },
+}) + '\\n');
 setTimeout(() => {
   fs.writeFileSync(args[resultIndex + 1], 'RESULT: TEST\\n');
 }, 80);
@@ -2524,6 +2817,7 @@ setTimeout(() => {
         harness: 'codex',
         phase: 'plan',
         taskId: 'TASK-004',
+        verbose: true,
         cwd: process.cwd(),
         pluginRoot: PLUGIN_ROOT,
         prompt: 'test prompt',
@@ -2539,11 +2833,235 @@ setTimeout(() => {
       assert.match(progress, /\[\d{4}-\d\d-\d\d \d\d:\d\d:\d\d \S+\] \[TASK-004 plan \d\d:\d\d\] Codex session started/);
       assert.match(progress, /validation iteration 1 launched — code-quality-reviewer, security-reviewer/);
       assert.match(progress, /\[\d{4}-\d\d-\d\d \d\d:\d\d:\d\d \S+\] \[TASK-004 plan \d\d:\d\d\] \$ git status --short/);
-      assert.match(progress, /\[\d{4}-\d\d-\d\d \d\d:\d\d:\d\d \S+\] \[TASK-004 plan \d\d:\d\d\] Codex still running/);
+      assert.doesNotMatch(progress, /YXR0YWNrZWQ|\u001b|\u0007|\u0001|\u0085|\u007f|\u202e/);
+      assert.match(progress, /\[\d{4}-\d\d-\d\d \d\d:\d\d:\d\d \S+\] \[TASK-004 plan \d\d:\d\d\] (?:Codex still running|still running — validation iteration 1 launched)/);
     } finally {
       if (progressFd !== undefined) fs.closeSync(progressFd);
       process.env.PATH = previousPath;
       fs.rmSync(fakeBin, { recursive: true, force: true });
+    }
+  });
+
+  test('journals user-visible agent output while the harness is still running', () => {
+    const { createRunReporter, invokePhase, showTaskLogs } = require(RUNNER);
+    const fakeBin = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-live-transcript-bin-'));
+    const reportDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-live-transcript-report-'));
+    const transcriptPath = path.join(reportDir, 'transcript.jsonl');
+    const previousPath = process.env.PATH;
+    let reporter;
+    let logs = '';
+    try {
+      const codex = path.join(fakeBin, 'codex');
+      write(codex, `#!/usr/bin/env node
+const fs = require('fs');
+const args = process.argv.slice(2);
+const resultIndex = args.indexOf('--output-last-message');
+process.stdout.write(JSON.stringify({
+  type: 'item.completed',
+  item: { type: 'agent_message', text: 'Inspecting the failing validation gate.' },
+}) + '\\n');
+const deadline = Date.now() + 2000;
+const timer = setInterval(() => {
+  const live = fs.existsSync(process.env.GW_TRANSCRIPT_PATH)
+    && fs.readFileSync(process.env.GW_TRANSCRIPT_PATH, 'utf8').includes('Inspecting the failing validation gate.');
+  if (live) {
+    clearInterval(timer);
+    fs.writeFileSync(args[resultIndex + 1], 'RESULT: TEST\\n');
+  } else if (Date.now() >= deadline) {
+    clearInterval(timer);
+    process.exit(9);
+  }
+}, 20);
+`);
+      fs.chmodSync(codex, 0o755);
+      process.env.PATH = `${fakeBin}:${previousPath}`;
+      reporter = createRunReporter({
+        runDir: reportDir,
+        project: '.',
+        taskId: 'TASK-004',
+        runId: 'run-live',
+        output: { write() {} },
+      });
+
+      const output = invokePhase({
+        harness: 'codex',
+        phase: 'validate',
+        taskId: 'TASK-004',
+        cwd: process.cwd(),
+        pluginRoot: PLUGIN_ROOT,
+        prompt: 'test prompt',
+        env: { GW_TRANSCRIPT_PATH: transcriptPath },
+        heartbeatMs: 10,
+        progressFd: null,
+        reporter,
+      });
+      reporter.close('pass');
+      reporter = null;
+      showTaskLogs({ runDir: reportDir, tail: 50, output: { write(value) { logs += value; } } });
+
+      assert.strictEqual(output.trim(), 'RESULT: TEST');
+      assert.match(logs, /validation-coordinator · agent output/);
+      assert.match(logs, /Inspecting the failing validation gate/);
+    } finally {
+      try { if (reporter) reporter.close('failed'); } catch {}
+      process.env.PATH = previousPath;
+      fs.rmSync(fakeBin, { recursive: true, force: true });
+      fs.rmSync(reportDir, { recursive: true, force: true });
+    }
+  });
+
+  test('default phase progress shows semantic markers without raw activity', () => {
+    const { invokePhase } = require(RUNNER);
+    const fakeBin = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-semantic-progress-bin-'));
+    const progressFile = path.join(fakeBin, 'progress.log');
+    const previousPath = process.env.PATH;
+    let progressFd;
+    try {
+      const codex = path.join(fakeBin, 'codex');
+      write(codex, `#!/usr/bin/env node
+const fs = require('fs');
+const args = process.argv.slice(2);
+const resultIndex = args.indexOf('--output-last-message');
+process.stdout.write(JSON.stringify({ type: 'thread.started', thread_id: 'thread-1' }) + '\\n');
+process.stdout.write(JSON.stringify({ type: 'item.started', item: { id: '1', type: 'command_execution', command: 'git status --short' } }) + '\\n');
+process.stdout.write(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'GROUNDWORK_RUNNER_EVENT {"v":1,"type":"gate.finished","gate":"tests","outcome":"pass","summary":"44 suites"}' } }) + '\\n');
+fs.writeFileSync(args[resultIndex + 1], 'RESULT: TEST\\n');
+`);
+      fs.chmodSync(codex, 0o755);
+      process.env.PATH = `${fakeBin}:${previousPath}`;
+      progressFd = fs.openSync(progressFile, 'w');
+
+      invokePhase({
+        harness: 'codex',
+        phase: 'validate',
+        taskId: 'TASK-004',
+        cwd: process.cwd(),
+        pluginRoot: PLUGIN_ROOT,
+        prompt: 'test prompt',
+        env: {},
+        progressFd,
+      });
+
+      fs.closeSync(progressFd);
+      progressFd = undefined;
+      const progress = fs.readFileSync(progressFile, 'utf8');
+      assert.match(progress, /tests · PASS · 44 suites/);
+      assert.doesNotMatch(progress, /Codex session started/);
+      assert.doesNotMatch(progress, /git status --short/);
+    } finally {
+      if (progressFd !== undefined) fs.closeSync(progressFd);
+      process.env.PATH = previousPath;
+      fs.rmSync(fakeBin, { recursive: true, force: true });
+    }
+  });
+
+  test('journals a large real harness stream in bounded batches for semantic and verbose modes', () => {
+    const { createRunReporter, invokePhase } = require(RUNNER);
+    const fakeBin = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-journal-stream-bin-'));
+    const reportDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-journal-stream-report-'));
+    const previousPath = process.env.PATH;
+    try {
+      const codex = path.join(fakeBin, 'codex');
+      write(codex, `#!/usr/bin/env node
+const fs = require('fs');
+const args = process.argv.slice(2);
+const resultIndex = args.indexOf('--output-last-message');
+const count = Number(process.env.GW_TEST_STREAM_COUNT || 1);
+for (let index = 0; index < count; index++) {
+  process.stdout.write(JSON.stringify({
+    type: 'item.started',
+    item: {
+      id: String(index),
+      type: 'command_execution',
+      command: index === 0 ? 'deploy --token super-secret-value' : 'git status --short',
+    },
+  }) + '\\n');
+}
+process.stdout.write(JSON.stringify({
+  type: 'item.completed',
+  item: {
+    type: 'agent_message',
+    text: 'GROUNDWORK_RUNNER_EVENT {"v":1,"type":"gate.finished","gate":"tests","outcome":"pass","summary":"44 suites"}',
+  },
+}) + '\\n');
+fs.writeFileSync(args[resultIndex + 1], 'RESULT: TEST\\n');
+`);
+      fs.chmodSync(codex, 0o755);
+      process.env.PATH = `${fakeBin}:${previousPath}`;
+
+      for (const scenario of [
+        { verbose: false, count: 1_200, runId: 'default-run' },
+        { verbose: true, count: 2, runId: 'verbose-run' },
+      ]) {
+        const progressFile = path.join(fakeBin, `${scenario.runId}.log`);
+        let progressFd;
+        let reporterTerminal = '';
+        const reporter = createRunReporter({
+          runDir: reportDir,
+          project: '.',
+          taskId: 'TASK-004',
+          runId: scenario.runId,
+          verbose: scenario.verbose,
+          output: { write(value) { reporterTerminal += value; } },
+        });
+        const batchSizes = [];
+        let singleEmits = 0;
+        const trackedReporter = {
+          emit(...args) {
+            singleEmits++;
+            return reporter.emit(...args);
+          },
+          emitBatch(signals, options) {
+            batchSizes.push(signals.length);
+            return reporter.emitBatch(signals, options);
+          },
+        };
+        try {
+          progressFd = fs.openSync(progressFile, 'w');
+          invokePhase({
+            harness: 'codex',
+            phase: 'validate',
+            taskId: 'TASK-004',
+            cwd: process.cwd(),
+            pluginRoot: PLUGIN_ROOT,
+            prompt: 'test prompt',
+            env: { GW_TEST_STREAM_COUNT: String(scenario.count) },
+            progressFd,
+            reporter: trackedReporter,
+            verbose: scenario.verbose,
+          });
+          fs.closeSync(progressFd);
+          progressFd = undefined;
+          reporter.close('pass');
+
+          const progress = fs.readFileSync(progressFile, 'utf8');
+          const events = fs.readFileSync(path.join(reportDir, 'events.jsonl'), 'utf8')
+            .trim().split('\n').map((line) => JSON.parse(line))
+            .filter((event) => event.run_id === scenario.runId);
+          const runnerLog = fs.readFileSync(path.join(reportDir, 'runner.log'), 'utf8');
+          assert.strictEqual(singleEmits, 0);
+          assert.ok(batchSizes.length > 0);
+          assert.ok(batchSizes.every((size) => size > 0 && size <= 64));
+          assert.strictEqual(events.filter((event) => event.type === 'activity').length, scenario.count);
+          assert.strictEqual(events.filter((event) => event.type === 'gate.finished').length, 1);
+          assert.doesNotMatch(runnerLog, /git status --short|super-secret-value/);
+          assert.doesNotMatch(reporterTerminal, /git status --short|super-secret-value/);
+          assert.match(progress, /tests · PASS · 44 suites/);
+          assert.doesNotMatch(progress, /super-secret-value/);
+          if (scenario.verbose) {
+            assert.match(progress, /deploy --token \[redacted\]/);
+          } else {
+            assert.doesNotMatch(progress, /deploy --token|git status --short/);
+          }
+        } finally {
+          if (progressFd !== undefined) fs.closeSync(progressFd);
+          try { reporter.close('failed'); } catch {}
+        }
+      }
+    } finally {
+      process.env.PATH = previousPath;
+      fs.rmSync(fakeBin, { recursive: true, force: true });
+      fs.rmSync(reportDir, { recursive: true, force: true });
     }
   });
 
@@ -2662,24 +3180,6 @@ describe('filesystem safety', () => {
           { log: () => {}, invokePhase: () => { throw new Error('phase should not run'); } }
         ),
         /10 MiB/
-      );
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  test('rejects command-bearing repository Git configuration', () => {
-    const { runTasks } = require(RUNNER);
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-git-command-'));
-    try {
-      initRepo(root);
-      git(root, 'config', 'filter.unsafe.smudge', '/tmp/groundwork-unsafe-filter');
-      assert.throws(
-        () => runTasks(
-          { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
-          { log: () => {}, invokePhase: () => { throw new Error('phase should not run'); } }
-        ),
-        /command-bearing/
       );
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
@@ -3720,44 +4220,6 @@ describe('four-phase orchestration', () => {
     }
   });
 
-  test('restores a transient task-worktree hooksPath after implementation', () => {
-    const { runTasks } = require(RUNNER);
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-worktree-hooks-'));
-    const worktree = path.join(root, '.worktrees', 'TASK-004');
-    const originalHooks = path.join(root, 'scripts', 'githooks');
-    try {
-      initRepo(root);
-      write(path.join(originalHooks, 'pre-push'), '#!/bin/sh\n');
-      git(root, 'add', '.');
-      git(root, 'commit', '-m', 'add hooks');
-      git(root, 'config', 'core.hooksPath', originalHooks);
-      writePlan(root);
-
-      runTasks(
-        { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
-        {
-          pluginRoot: PLUGIN_ROOT,
-          log: () => {},
-          invokePhase(input) {
-            if (input.phase === 'implement') {
-              assertPrecreatedWorktree(root, worktree, 'task/TASK-004');
-              const taskFile = path.join(worktree, 'specs', 'tasks.md');
-              fs.writeFileSync(taskFile, fs.readFileSync(taskFile, 'utf8').replace('Not Started', 'In Progress'));
-              git(worktree, 'config', 'core.hooksPath', path.join(worktree, 'scripts', 'githooks'));
-              return implementationReceipt(input, worktree);
-            }
-            if (input.phase === 'validate') return validated(input);
-            return finalizeMock(input, root, worktree, 'TASK-004', 'task/TASK-004', 'main');
-          },
-        }
-      );
-
-      assert.strictEqual(git(root, 'config', '--get', 'core.hooksPath'), originalHooks);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
   test('repairs a leaked task-worktree hooksPath before cleanup on resume', () => {
     const { runTasks } = require(RUNNER);
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-resume-hooks-'));
@@ -4019,9 +4481,11 @@ describe('four-phase orchestration', () => {
             if (input.phase === 'recovery') {
               assert.strictEqual(input.failedPhase, 'plan');
               assert.match(input.prompt, /arbitrary encoder faltered/);
-              assert.match(input.prompt, /Desired next phase: plan/);
               assert.match(input.prompt, /Task: TASK-004/);
               assert.match(input.prompt, /Worktree:/);
+              assert.match(input.prompt, /same step can complete/);
+              assert.match(input.prompt, /Repair setup, dependencies, generated state, builds, tests, source/);
+              assert.match(input.prompt, /Leave the repaired state in the selected task worktree/);
               return 'RESULT: RECOVERY | ready';
             }
             if (input.phase === 'plan') {
@@ -4046,7 +4510,280 @@ describe('four-phase orchestration', () => {
     }
   });
 
-  test('seals recovery repairs and requires a fresh validation before finalization', () => {
+  test('repairs and retries a failed phase without repository boundary policing or rescue snapshots', () => {
+    const { runTasks } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-recovery-generic-'));
+    const worktree = path.join(root, '.worktrees', 'TASK-004');
+    const rescueNames = () => new Set(fs.readdirSync(os.tmpdir()).filter((name) => (
+      name.startsWith('groundwork-recovery-rescue-') || name.startsWith('groundwork-recovery-metadata-')
+    )));
+    const beforeRescues = rescueNames();
+    const phases = [];
+    let planAttempts = 0;
+    try {
+      initRepo(root);
+      const completed = runTasks(
+        { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
+        {
+          pluginRoot: PLUGIN_ROOT,
+          log: () => {},
+          enableRecovery: true,
+          invokePhase(input) {
+            phases.push(input.phase);
+            if (input.phase === 'recovery') {
+              git(root, 'config', 'repair.fixture', 'ready');
+              write(path.join(worktree, 'repair-state.txt'), 'ready\n');
+              return 'RESULT: RECOVERY | ready';
+            }
+            if (input.phase === 'plan') {
+              if (planAttempts++ === 0) return 'RESULT: FAILURE | repair fixture';
+              assert.strictEqual(git(root, 'config', 'repair.fixture'), 'ready');
+              assert.strictEqual(fs.readFileSync(path.join(worktree, 'repair-state.txt'), 'utf8'), 'ready\n');
+              writePlan(root);
+              return 'RESULT: PLANNED | plan_file_path=.groundwork-plans/TASK-004-plan.md | identifier=TASK-004 | branch_prefix=task';
+            }
+            if (input.phase === 'implement') {
+              const taskFile = path.join(worktree, 'specs', 'tasks.md');
+              fs.writeFileSync(taskFile, fs.readFileSync(taskFile, 'utf8').replace('Not Started', 'In Progress'));
+              return implementationReceipt(input, worktree);
+            }
+            if (input.phase === 'validate') return validated(input);
+            return finalizeMock(input, root, worktree, 'TASK-004', 'task/TASK-004', 'main');
+          },
+        }
+      );
+      assert.deepStrictEqual(phases, ['plan', 'recovery', 'plan', 'implement', 'validate', 'finalize']);
+      assert.strictEqual(completed[0].taskId, 'TASK-004');
+      assert.deepStrictEqual([...rescueNames()].filter((name) => !beforeRescues.has(name)), []);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('repairs and retries plan, implement, validate, and finalize in place', () => {
+    const { runTasks } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-recovery-all-phases-'));
+    const worktree = path.join(root, '.worktrees', 'TASK-004');
+    const phases = [];
+    const attempts = new Map();
+    let failedPhase = null;
+    try {
+      initRepo(root);
+      runTasks(
+        { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
+        {
+          pluginRoot: PLUGIN_ROOT,
+          log: () => {},
+          enableRecovery: true,
+          invokePhase(input) {
+            phases.push(input.phase);
+            if (input.phase === 'recovery') {
+              assert.strictEqual(input.failedPhase, failedPhase);
+              return 'RESULT: RECOVERY | ready';
+            }
+            const attempt = (attempts.get(input.phase) || 0) + 1;
+            attempts.set(input.phase, attempt);
+            if (attempt === 1) {
+              failedPhase = input.phase;
+              return `RESULT: FAILURE | ${input.phase} fixture`;
+            }
+            if (input.phase === 'plan') {
+              writePlan(root);
+              return 'RESULT: PLANNED | plan_file_path=.groundwork-plans/TASK-004-plan.md | identifier=TASK-004 | branch_prefix=task';
+            }
+            if (input.phase === 'implement') {
+              const taskFile = path.join(worktree, 'specs', 'tasks.md');
+              fs.writeFileSync(taskFile, fs.readFileSync(taskFile, 'utf8').replace('Not Started', 'In Progress'));
+              return implementationReceipt(input, worktree);
+            }
+            if (input.phase === 'validate') return validated(input);
+            return finalizeMock(input, root, worktree, 'TASK-004', 'task/TASK-004', 'main');
+          },
+        }
+      );
+      assert.deepStrictEqual(phases, [
+        'plan', 'recovery', 'plan',
+        'implement', 'recovery', 'implement',
+        'validate', 'recovery', 'validate',
+        'finalize', 'recovery', 'finalize',
+      ]);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('repairs a failed post-receipt handoff and retries the same phase', () => {
+    const { runTasks } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-recovery-handoff-'));
+    const worktree = path.join(root, '.worktrees', 'TASK-004');
+    const badState = path.join(worktree, 'incomplete-validation.txt');
+    const phases = [];
+    let validationAttempts = 0;
+    try {
+      initRepo(root);
+      runTasks(
+        { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
+        {
+          pluginRoot: PLUGIN_ROOT,
+          log: () => {},
+          enableRecovery: true,
+          invokePhase(input) {
+            phases.push(input.phase);
+            if (input.phase === 'plan') {
+              writePlan(root);
+              return 'RESULT: PLANNED | plan_file_path=.groundwork-plans/TASK-004-plan.md | identifier=TASK-004 | branch_prefix=task';
+            }
+            if (input.phase === 'implement') {
+              const taskFile = path.join(worktree, 'specs', 'tasks.md');
+              fs.writeFileSync(taskFile, fs.readFileSync(taskFile, 'utf8').replace('Not Started', 'In Progress'));
+              return implementationReceipt(input, worktree);
+            }
+            if (input.phase === 'validate') {
+              validationAttempts++;
+              if (validationAttempts === 1) {
+                write(badState, 'incomplete\n');
+                return `RESULT: VALIDATED | ${JSON.stringify({
+                  v: 1,
+                  token: input.receiptToken,
+                  task_id: input.taskId,
+                  phase: 'validate',
+                  action: 'none',
+                  iterations: 1,
+                  fixed: 0,
+                  unworked: 0,
+                })}`;
+              }
+              return validated(input);
+            }
+            if (input.phase === 'recovery') {
+              assert.strictEqual(input.failedPhase, 'validate');
+              assert.match(input.prompt, /left changes but did not request a runner-owned commit/);
+              fs.unlinkSync(badState);
+              return 'RESULT: RECOVERY | ready';
+            }
+            return finalizeMock(input, root, worktree, 'TASK-004', 'task/TASK-004', 'main');
+          },
+        }
+      );
+      assert.deepStrictEqual(phases, ['plan', 'implement', 'validate', 'recovery', 'validate', 'finalize']);
+      assert.strictEqual(validationAttempts, 2);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('repairs a failed finalization publication handoff and retries finalization', () => {
+    const { runTasks } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-recovery-publication-'));
+    const worktree = path.join(root, '.worktrees', 'TASK-004');
+    const phases = [];
+    let publicationAttempts = 0;
+    try {
+      initRepo(root);
+      const completed = runTasks(
+        { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
+        {
+          pluginRoot: PLUGIN_ROOT,
+          log: () => {},
+          enableRecovery: true,
+          beforePublication() {
+            publicationAttempts++;
+            if (publicationAttempts === 1) throw new Error('publication handoff fixture');
+          },
+          invokePhase(input) {
+            phases.push(input.phase);
+            if (input.phase === 'plan') {
+              writePlan(root);
+              return 'RESULT: PLANNED | plan_file_path=.groundwork-plans/TASK-004-plan.md | identifier=TASK-004 | branch_prefix=task';
+            }
+            if (input.phase === 'implement') {
+              const taskFile = path.join(worktree, 'specs', 'tasks.md');
+              fs.writeFileSync(taskFile, fs.readFileSync(taskFile, 'utf8').replace('Not Started', 'In Progress'));
+              return implementationReceipt(input, worktree);
+            }
+            if (input.phase === 'validate') return validated(input);
+            if (input.phase === 'recovery') {
+              assert.strictEqual(input.failedPhase, 'finalize');
+              assert.match(input.prompt, /publication handoff fixture/);
+              return 'RESULT: RECOVERY | ready';
+            }
+            return finalizeMock(input, root, worktree, 'TASK-004', 'task/TASK-004', 'main');
+          },
+        }
+      );
+      assert.deepStrictEqual(phases, [
+        'plan', 'implement', 'validate', 'finalize', 'recovery', 'finalize',
+      ]);
+      assert.strictEqual(publicationAttempts, 2);
+      assert.strictEqual(completed[0].taskId, 'TASK-004');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('recovers without inspecting a large ignored tree in the primary worktree', () => {
+    const { runTasks } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-recovery-large-ignored-'));
+    const worktree = path.join(root, '.worktrees', 'TASK-004');
+    const component = 'x'.repeat(180);
+    const ignoredStateRoot = path.join(root, '.ignored-runtime', 'sandbox');
+    const ignoredRoot = path.join(ignoredStateRoot, component, component, component, component);
+    const phases = [];
+    let planAttempts = 0;
+    const originalLstatSync = fs.lstatSync;
+    let ignoredStateProbes = 0;
+    let canonicalIgnoredStateRoot;
+    try {
+      initRepo(root);
+      fs.appendFileSync(path.join(root, '.gitignore'), '.ignored-runtime/\n');
+      git(root, 'add', '.gitignore');
+      git(root, 'commit', '-m', 'Ignore large recovery fixture');
+      fs.mkdirSync(ignoredRoot, { recursive: true });
+      for (let index = 0; index < 1800; index++) {
+        fs.closeSync(fs.openSync(path.join(ignoredRoot, String(index).padStart(4, '0')), 'w'));
+      }
+      canonicalIgnoredStateRoot = fs.realpathSync(ignoredStateRoot);
+
+      fs.lstatSync = function countingLstatSync(target, ...args) {
+        if (String(target).startsWith(canonicalIgnoredStateRoot)) ignoredStateProbes++;
+        return originalLstatSync.call(fs, target, ...args);
+      };
+
+      const completed = runTasks(
+        { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
+        {
+          pluginRoot: PLUGIN_ROOT,
+          log: () => {},
+          enableRecovery: true,
+          invokePhase(input) {
+            phases.push(input.phase);
+            if (input.phase === 'recovery') return 'RESULT: RECOVERY | ready';
+            if (input.phase === 'plan') {
+              if (planAttempts++ === 0) return 'RESULT: FAILURE | recover large ignored state';
+              writePlan(root);
+              return 'RESULT: PLANNED | plan_file_path=.groundwork-plans/TASK-004-plan.md | identifier=TASK-004 | branch_prefix=task';
+            }
+            if (input.phase === 'implement') {
+              const taskFile = path.join(worktree, 'specs', 'tasks.md');
+              fs.writeFileSync(taskFile, fs.readFileSync(taskFile, 'utf8').replace('Not Started', 'In Progress'));
+              return implementationReceipt(input, worktree);
+            }
+            if (input.phase === 'validate') return validated(input);
+            return finalizeMock(input, root, worktree, 'TASK-004', 'task/TASK-004', 'main');
+          },
+        }
+      );
+
+      assert.deepStrictEqual(phases, ['plan', 'recovery', 'plan', 'implement', 'validate', 'finalize']);
+      assert.strictEqual(completed[0].taskId, 'TASK-004');
+      assert.strictEqual(ignoredStateProbes, 0);
+    } finally {
+      fs.lstatSync = originalLstatSync;
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('leaves repair changes for the retried validation and its normal commit', () => {
     const { runTasks } = require(RUNNER);
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-recovery-validation-'));
     const worktree = path.join(root, '.worktrees', 'TASK-004');
@@ -4086,246 +4823,8 @@ describe('four-phase orchestration', () => {
       );
       assert.deepStrictEqual(phases, ['plan', 'implement', 'validate', 'recovery', 'validate', 'finalize']);
       assert.strictEqual(fs.readFileSync(path.join(root, 'repaired.txt'), 'utf8'), 'safe repair\n');
-      assert.match(git(root, 'log', '--format=%s'), /TASK-004: Apply recovery repairs/);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  test('seals only recovery-introduced paths while preserving failed-phase index and worktree state', () => {
-    const { runTasks } = require(RUNNER);
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-recovery-delta-only-'));
-    const worktree = path.join(root, '.worktrees', 'TASK-004');
-    const preservedTracked = path.join(worktree, 'preserved.txt');
-    const preservedUntracked = path.join(worktree, 'pending.txt');
-    let validationAttempts = 0;
-    try {
-      initRepo(root);
-      write(path.join(root, 'preserved.txt'), 'base bytes\n');
-      git(root, 'add', 'preserved.txt');
-      git(root, 'commit', '-m', 'Add preservation fixture');
-
-      assert.throws(
-        () => runTasks(
-          { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
-          {
-            pluginRoot: PLUGIN_ROOT,
-            log: () => {},
-            enableRecovery: true,
-            invokePhase(input) {
-              if (input.phase === 'plan') {
-                writePlan(root);
-                return 'RESULT: PLANNED | plan_file_path=.groundwork-plans/TASK-004-plan.md | identifier=TASK-004 | branch_prefix=task';
-              }
-              if (input.phase === 'implement') {
-                const taskFile = path.join(worktree, 'specs', 'tasks.md');
-                fs.writeFileSync(taskFile, fs.readFileSync(taskFile, 'utf8').replace('Not Started', 'In Progress'));
-                return implementationReceipt(input, worktree);
-              }
-              if (input.phase === 'validate') {
-                if (validationAttempts++ === 0) {
-                  write(preservedTracked, 'failed-phase staged bytes\n');
-                  git(worktree, 'add', 'preserved.txt');
-                  write(preservedUntracked, 'failed-phase untracked bytes\n');
-                  return 'RESULT: FAILURE | preserve unrelated failed-phase work';
-                }
-                throw new Error('stop after recovery seal');
-              }
-              if (input.phase === 'recovery') {
-                write(path.join(worktree, 'repair.txt'), 'recovery-only bytes\n');
-                return 'RESULT: RECOVERY | ready';
-              }
-              throw new Error(`unexpected phase ${input.phase}`);
-            },
-          }
-        ),
-        /stop after recovery seal/
-      );
-
-      assert.deepStrictEqual(
-        git(worktree, 'show', '--format=', '--name-only', 'HEAD').split('\n').filter(Boolean),
-        ['repair.txt']
-      );
-      assert.strictEqual(git(worktree, 'show', 'HEAD:repair.txt'), 'recovery-only bytes');
-      assert.strictEqual(fs.readFileSync(preservedTracked, 'utf8'), 'failed-phase staged bytes\n');
-      assert.strictEqual(fs.readFileSync(preservedUntracked, 'utf8'), 'failed-phase untracked bytes\n');
-      assert.deepStrictEqual(
-        git(worktree, 'status', '--porcelain').split('\n').filter(Boolean).sort(),
-        ['?? pending.txt', 'M  preserved.txt']
-      );
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  test('seals the approved recovery bytes when the same path changes before staging', () => {
-    const { runTasks } = require(RUNNER);
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-recovery-byte-race-'));
-    const worktree = path.join(root, '.worktrees', 'TASK-004');
-    const repaired = path.join(worktree, 'repaired.txt');
-    let validationAttempts = 0;
-    try {
-      initRepo(root);
-      assert.throws(
-        () => runTasks(
-          { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
-          {
-            pluginRoot: PLUGIN_ROOT,
-            log: () => {},
-            enableRecovery: true,
-            beforeRecoverySeal() {
-              write(repaired, 'unapproved raced bytes\n');
-            },
-            invokePhase(input) {
-              if (input.phase === 'plan') {
-                writePlan(root);
-                return 'RESULT: PLANNED | plan_file_path=.groundwork-plans/TASK-004-plan.md | identifier=TASK-004 | branch_prefix=task';
-              }
-              if (input.phase === 'implement') {
-                const taskFile = path.join(worktree, 'specs', 'tasks.md');
-                fs.writeFileSync(taskFile, fs.readFileSync(taskFile, 'utf8').replace('Not Started', 'In Progress'));
-                return implementationReceipt(input, worktree);
-              }
-              if (input.phase === 'validate') {
-                if (validationAttempts++ === 0) return 'RESULT: FAILURE | deterministic recovery race';
-                return validated(input);
-              }
-              if (input.phase === 'recovery') {
-                write(repaired, 'approved recovery bytes\n');
-                return 'RESULT: RECOVERY | ready';
-              }
-              throw new Error('unapproved recovery bytes reached finalization');
-            },
-          }
-        ),
-        /not clean|changed after recovery approval/
-      );
-      assert.strictEqual(fs.existsSync(repaired), false);
-      assert.ok(!git(root, 'log', '--format=%B').includes('unapproved raced bytes'));
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  test('preserves executable and symbolic-link modes in sealed recovery repairs', () => {
-    if (process.platform === 'win32') return;
-    const { runTasks } = require(RUNNER);
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-recovery-modes-'));
-    const worktree = path.join(root, '.worktrees', 'TASK-004');
-    let validationAttempts = 0;
-    try {
-      initRepo(root);
-      runTasks(
-        { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
-        {
-          pluginRoot: PLUGIN_ROOT,
-          log: () => {},
-          enableRecovery: true,
-          invokePhase(input) {
-            if (input.phase === 'plan') {
-              writePlan(root);
-              return 'RESULT: PLANNED | plan_file_path=.groundwork-plans/TASK-004-plan.md | identifier=TASK-004 | branch_prefix=task';
-            }
-            if (input.phase === 'implement') {
-              const taskFile = path.join(worktree, 'specs', 'tasks.md');
-              fs.writeFileSync(taskFile, fs.readFileSync(taskFile, 'utf8').replace('Not Started', 'In Progress'));
-              return implementationReceipt(input, worktree);
-            }
-            if (input.phase === 'validate') {
-              if (validationAttempts++ === 0) return 'RESULT: FAILURE | recovery mode fixture';
-              return validated(input);
-            }
-            if (input.phase === 'recovery') {
-              write(path.join(worktree, 'repair.sh'), '#!/bin/sh\nexit 0\n');
-              fs.chmodSync(path.join(worktree, 'repair.sh'), 0o755);
-              fs.symlinkSync('repair.sh', path.join(worktree, 'repair-link'));
-              return 'RESULT: RECOVERY | ready';
-            }
-            return finalizeMock(input, root, worktree, 'TASK-004', 'task/TASK-004', 'main');
-          },
-        }
-      );
-      const tree = git(root, 'ls-tree', 'HEAD', '--', 'repair.sh', 'repair-link');
-      assert.match(tree, /^120000 blob .+\trepair-link$/m);
-      assert.match(tree, /^100755 blob .+\trepair\.sh$/m);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  test('stops safely after the stronger recovery retry makes no relevant progress', () => {
-    const { runTasks } = require(RUNNER);
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-recovery-stall-'));
-    const phases = [];
-    try {
-      initRepo(root);
-      assert.throws(
-        () => runTasks(
-          { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
-          {
-            pluginRoot: PLUGIN_ROOT,
-            log: () => {},
-            enableRecovery: true,
-            invokePhase(input) {
-              phases.push(input.phase);
-              if (input.phase === 'recovery') {
-                if (phases.filter((phase) => phase === 'recovery').length === 2) {
-                  assert.match(input.prompt, /stronger fresh retry/);
-                }
-                return 'RESULT: RECOVERY | ready';
-              }
-              return 'RESULT: FAILURE | unexpected blank failure';
-            },
-          }
-        ),
-        /made no relevant state progress[\s\S]*Worktree preserved/
-      );
-      assert.deepStrictEqual(phases, ['plan', 'recovery', 'plan', 'recovery']);
-      assert.ok(fs.existsSync(path.join(root, '.worktrees', 'TASK-004')));
-      assert.ok(git(root, 'show-ref', '--verify', '--quiet', 'refs/heads/task/TASK-004') === '');
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  test('runs the complete recovery transaction under the repository writer gate', () => {
-    const { runTasks } = require(RUNNER);
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-recovery-writer-'));
-    const worktree = path.join(root, '.worktrees', 'TASK-004');
-    let planAttempts = 0;
-    try {
-      initRepo(root);
-      runTasks(
-        { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
-        {
-          pluginRoot: PLUGIN_ROOT,
-          log: () => {},
-          enableRecovery: true,
-          invokePhase(input) {
-            if (input.phase === 'recovery') {
-              const gateRoot = path.join(root, '.git', 'groundwork', 'repository-gate');
-              assert.strictEqual(fs.existsSync(path.join(gateRoot, 'writer.lock')), true);
-              assert.deepStrictEqual(
-                fs.readdirSync(path.join(gateRoot, 'readers')).filter((name) => name.endsWith('.lock')),
-                []
-              );
-              return 'RESULT: RECOVERY | ready';
-            }
-            if (input.phase === 'plan') {
-              if (planAttempts++ === 0) return 'RESULT: FAILURE | writer recovery required';
-              writePlan(root);
-              return 'RESULT: PLANNED | plan_file_path=.groundwork-plans/TASK-004-plan.md | identifier=TASK-004 | branch_prefix=task';
-            }
-            if (input.phase === 'implement') {
-              const taskFile = path.join(worktree, 'specs', 'tasks.md');
-              fs.writeFileSync(taskFile, fs.readFileSync(taskFile, 'utf8').replace('Not Started', 'In Progress'));
-              return implementationReceipt(input, worktree);
-            }
-            if (input.phase === 'validate') return validated(input);
-            return finalizeMock(input, root, worktree, 'TASK-004', 'task/TASK-004', 'main');
-          },
-        }
-      );
+      assert.doesNotMatch(git(root, 'log', '--format=%s'), /Apply recovery repairs/);
+      assert.match(git(root, 'log', '--format=%s'), /TASK-004: Apply validation fixes/);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -4369,12 +4868,47 @@ describe('four-phase orchestration', () => {
     }
   });
 
-  test('treats needs_user as a hint until an observed hard boundary exists', () => {
+  test('stops when repair reports a proven user boundary', () => {
     const { runTasks } = require(RUNNER);
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-recovery-hint-'));
     const worktree = path.join(root, '.worktrees', 'TASK-004');
     const phases = [];
     let planAttempts = 0;
+    try {
+      initRepo(root);
+      assert.throws(
+        () => runTasks(
+          { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
+          {
+            pluginRoot: PLUGIN_ROOT,
+            log: () => {},
+            enableRecovery: true,
+            invokePhase(input) {
+              phases.push(input.phase);
+              if (input.phase === 'recovery') return 'RESULT: RECOVERY | needs_user';
+              if (input.phase === 'plan') {
+                planAttempts++;
+                return 'RESULT: FAILURE | missing external credential';
+              }
+              throw new Error(`unexpected phase ${input.phase}`);
+            },
+          }
+        ),
+        /requires user input.*missing external credential/
+      );
+      assert.deepStrictEqual(phases, ['plan', 'recovery']);
+      assert.strictEqual(planAttempts, 1);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('continues recovery beyond two sessions while each attempt advances the task', () => {
+    const { runTasks } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-recovery-cap-'));
+    const worktree = path.join(root, '.worktrees', 'TASK-004');
+    const phases = [];
+    let recoveries = 0;
     try {
       initRepo(root);
       runTasks(
@@ -4385,9 +4919,13 @@ describe('four-phase orchestration', () => {
           enableRecovery: true,
           invokePhase(input) {
             phases.push(input.phase);
-            if (input.phase === 'recovery') return 'RESULT: RECOVERY | needs_user';
+            if (input.phase === 'recovery') {
+              recoveries++;
+              write(path.join(worktree, `repair-${recoveries}.txt`), `repair ${recoveries}\n`);
+              return 'RESULT: RECOVERY | ready';
+            }
             if (input.phase === 'plan') {
-              if (planAttempts++ === 0) return 'RESULT: FAILURE | routine recoverable failure';
+              if (recoveries < 3) return 'RESULT: FAILURE | phase still needs local repair';
               writePlan(root);
               return 'RESULT: PLANNED | plan_file_path=.groundwork-plans/TASK-004-plan.md | identifier=TASK-004 | branch_prefix=task';
             }
@@ -4401,44 +4939,12 @@ describe('four-phase orchestration', () => {
           },
         }
       );
-      assert.deepStrictEqual(phases, ['plan', 'recovery', 'plan', 'implement', 'validate', 'finalize']);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  test('caps total recovery sessions even when every attempt changes the fingerprint', () => {
-    const { runTasks } = require(RUNNER);
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-recovery-cap-'));
-    const worktree = path.join(root, '.worktrees', 'TASK-004');
-    const phases = [];
-    let recoveries = 0;
-    try {
-      initRepo(root);
-      assert.throws(
-        () => runTasks(
-          { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
-          {
-            pluginRoot: PLUGIN_ROOT,
-            log: () => {},
-            enableRecovery: true,
-            invokePhase(input) {
-              phases.push(input.phase);
-              if (input.phase === 'recovery') {
-                recoveries++;
-                if (recoveries > 2) throw new Error('third recovery proves the total cap is missing');
-                write(path.join(worktree, `repair-${recoveries}.txt`), `repair ${recoveries}\n`);
-                return 'RESULT: RECOVERY | ready';
-              }
-              return 'RESULT: FAILURE | phase remains broken';
-            },
-          }
-        ),
-        /recovery attempt budget|Recovery exhausted/
-      );
-      assert.strictEqual(recoveries, 2);
-      assert.deepStrictEqual(phases, ['plan', 'recovery', 'plan', 'recovery', 'plan']);
-      assert.ok(fs.existsSync(worktree));
+      assert.strictEqual(recoveries, 3);
+      assert.deepStrictEqual(phases, [
+        'plan', 'recovery', 'plan', 'recovery', 'plan', 'recovery',
+        'plan', 'implement', 'validate', 'finalize',
+      ]);
+      assert.match(fs.readFileSync(path.join(root, 'specs', 'tasks.md'), 'utf8'), /\*\*Status:\*\* Complete/);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -4526,291 +5032,101 @@ describe('four-phase orchestration', () => {
     }
   });
 
-  test('rejects and restores recovery overwrites of pre-existing failed-phase work', () => {
+  test('allows recovery to refresh a task-owned root lockfile in a selected monorepo project', () => {
     const { runTasks } = require(RUNNER);
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-recovery-overwrite-'));
-    const worktree = path.join(root, '.worktrees', 'TASK-004');
-    const pending = path.join(worktree, 'pending.txt');
-    try {
-      initRepo(root);
-      assert.throws(
-        () => runTasks(
-          { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
-          {
-            pluginRoot: PLUGIN_ROOT,
-            log: () => {},
-            enableRecovery: true,
-            invokePhase(input) {
-              if (input.phase === 'plan') {
-                write(pending, 'failed phase bytes\n');
-                return 'RESULT: FAILURE | repair this without erasing work';
-              }
-              if (input.phase === 'recovery') {
-                write(pending, 'replacement bytes\n');
-                return 'RESULT: RECOVERY | ready';
-              }
-              throw new Error('failed phase was retried after a destructive recovery');
-            },
-          }
-        ),
-        /overwrote pre-existing work|destructive recovery/
-      );
-      assert.strictEqual(fs.readFileSync(pending, 'utf8'), 'failed phase bytes\n');
-      assert.ok(fs.existsSync(worktree));
-      assert.strictEqual(git(worktree, 'branch', '--show-current'), 'task/TASK-004');
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  test('cleans every reachable rescue snapshot after a rejected recovery is restored', () => {
-    const { runTasks } = require(RUNNER);
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-recovery-rescue-cleanup-'));
-    const worktree = path.join(root, '.worktrees', 'TASK-004');
-    const pending = path.join(worktree, 'pending.txt');
-    const rescueNames = () => new Set(fs.readdirSync(os.tmpdir()).filter((name) => (
-      name.startsWith('groundwork-recovery-rescue-') || name.startsWith('groundwork-recovery-metadata-')
-    )));
-    const before = rescueNames();
-    try {
-      initRepo(root);
-      assert.throws(
-        () => runTasks(
-          { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
-          {
-            pluginRoot: PLUGIN_ROOT,
-            log: () => {},
-            enableRecovery: true,
-            invokePhase(input) {
-              if (input.phase === 'plan') {
-                write(pending, 'preserved failed-phase bytes\n');
-                return 'RESULT: FAILURE | overwrite rejection fixture';
-              }
-              if (input.phase === 'recovery') {
-                write(pending, 'destructive replacement\n');
-                return 'RESULT: RECOVERY | ready';
-              }
-              throw new Error('rejected recovery retried the failed phase');
-            },
-          }
-        ),
-        /overwrote pre-existing work/
-      );
-      assert.strictEqual(fs.readFileSync(pending, 'utf8'), 'preserved failed-phase bytes\n');
-      const leaked = [...rescueNames()].filter((name) => !before.has(name));
-      assert.deepStrictEqual(leaked, []);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  test('rejects and removes recovery changes outside a selected monorepo project', () => {
-    const { runTasks } = require(RUNNER);
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-recovery-scope-'));
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-recovery-task-scope-'));
     const worktree = path.join(root, '.worktrees', 'api-TASK-004');
-    const outside = path.join(worktree, 'outside-api.txt');
+    const lockfile = path.join(worktree, 'uv.lock');
+    const phases = [];
+    let validationAttempts = 0;
     try {
       git(root, 'init', '-b', 'main');
       git(root, 'config', 'user.email', 'test@example.com');
       git(root, 'config', 'user.name', 'Test User');
       write(path.join(root, '.groundwork.yml'), 'version: 1\nprojects:\n  api:\n    path: apps/api\n');
       write(path.join(root, 'apps', 'api', 'specs', 'tasks.md'), '### TASK-004: Four\n**Status:** Not Started\n**Blocked by:** None\n');
+      write(path.join(root, 'uv.lock'), 'version = 1\n');
       write(path.join(root, '.gitignore'), '.worktrees/\n.groundwork-plans/\n');
       git(root, 'add', '.');
       git(root, 'commit', '-m', 'base');
 
-      assert.throws(
-        () => runTasks(
-          { command: 'task', harness: 'codex', repo: root, project: 'api', tasks: ['TASK-004'], dryRun: false },
-          {
-            pluginRoot: PLUGIN_ROOT,
-            log: () => {},
-            enableRecovery: true,
-            invokePhase(input) {
-              if (input.phase === 'plan') return 'RESULT: FAILURE | project-scoped repair required';
-              if (input.phase === 'recovery') {
-                write(outside, 'out of scope\n');
-                return 'RESULT: RECOVERY | ready';
+      runTasks(
+        { command: 'task', harness: 'codex', repo: root, project: 'api', tasks: ['TASK-004'], dryRun: false },
+        {
+          pluginRoot: PLUGIN_ROOT,
+          log: () => {},
+          enableRecovery: true,
+          invokePhase(input) {
+            phases.push(input.phase);
+            if (input.phase === 'plan') {
+              writePlan(path.join(root, 'apps', 'api'));
+              return 'RESULT: PLANNED | plan_file_path=.groundwork-plans/TASK-004-plan.md | identifier=TASK-004 | branch_prefix=task';
+            }
+            if (input.phase === 'implement') {
+              const projectRoot = path.join(worktree, 'apps', 'api');
+              const taskFile = path.join(projectRoot, 'specs', 'tasks.md');
+              fs.writeFileSync(taskFile, fs.readFileSync(taskFile, 'utf8').replace('Not Started', 'In Progress'));
+              write(lockfile, 'version = 2\n');
+              return implementationReceipt(input, worktree, 'TASK-004', 'task/api/TASK-004');
+            }
+            if (input.phase === 'validate') {
+              validationAttempts++;
+              if (fs.readFileSync(lockfile, 'utf8') !== 'version = 3\n') {
+                return 'RESULT: FAILURE | refresh the repository lockfile';
               }
-              throw new Error('out-of-scope recovery was accepted');
-            },
-          }
-        ),
-        /outside the selected project/
+              return validated(input);
+            }
+            if (input.phase === 'recovery') {
+              const config = path.join(worktree, '.groundwork.yml');
+              const stat = fs.statSync(config);
+              fs.utimesSync(config, stat.atime, new Date(stat.mtimeMs + 2_000));
+              git(worktree, 'status', '--short');
+              write(lockfile, 'version = 3\n');
+              return 'RESULT: RECOVERY | revalidate';
+            }
+            return finalizeMock(
+              input,
+              root,
+              worktree,
+              'TASK-004',
+              'task/api/TASK-004',
+              'main',
+              path.join(worktree, 'apps', 'api')
+            );
+          },
+        }
       );
-      assert.strictEqual(fs.existsSync(outside), false);
-      assert.ok(fs.existsSync(worktree));
+
+      assert.strictEqual(validationAttempts, 2);
+      assert.deepStrictEqual(phases, ['plan', 'implement', 'validate', 'recovery', 'validate', 'finalize']);
+      assert.strictEqual(fs.readFileSync(path.join(root, 'uv.lock'), 'utf8'), 'version = 3\n');
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
 
-  test('rejects a recovery deletion and restores the exact failed-phase bytes', () => {
-    const { runTasks } = require(RUNNER);
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-recovery-delete-'));
-    const worktree = path.join(root, '.worktrees', 'TASK-004');
-    const pending = path.join(worktree, 'pending.txt');
-    try {
-      initRepo(root);
-      assert.throws(
-        () => runTasks(
-          { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
-          {
-            pluginRoot: PLUGIN_ROOT,
-            log: () => {},
-            enableRecovery: true,
-            invokePhase(input) {
-              if (input.phase === 'plan') {
-                write(pending, 'preserve this pending work\n');
-                return 'RESULT: FAILURE | repair without deletion';
-              }
-              if (input.phase === 'recovery') {
-                fs.unlinkSync(pending);
-                return 'RESULT: RECOVERY | ready';
-              }
-              throw new Error('destructive recovery was accepted');
-            },
-          }
-        ),
-        /overwrote pre-existing work|destructive deletion/
-      );
-      assert.strictEqual(fs.readFileSync(pending, 'utf8'), 'preserve this pending work\n');
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  test('restores checkpoint, Git configuration, and refs after a hard recovery boundary', () => {
-    const { runTasks } = require(RUNNER);
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-recovery-metadata-'));
-    const projectKey = crypto.createHash('sha256').update('.').digest('hex').slice(0, 16);
-    const checkpoint = path.join(root, '.git', 'groundwork', 'runner', projectKey, 'TASK-004.json');
-    const injectedBase = path.join(root, 'recovery-base-edit.txt');
-    const injectedHook = path.join(root, '.git', 'hooks', 'recovery-hook');
-    let originalCheckpoint;
-    try {
-      initRepo(root);
-      assert.throws(
-        () => runTasks(
-          { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
-          {
-            pluginRoot: PLUGIN_ROOT,
-            log: () => {},
-            enableRecovery: true,
-            invokePhase(input) {
-              if (input.phase === 'plan') return 'RESULT: FAILURE | metadata repair required';
-              if (input.phase === 'recovery') {
-                originalCheckpoint = fs.readFileSync(checkpoint, 'utf8');
-                write(checkpoint, '{"tampered":true}\n');
-                write(injectedBase, 'base mutation\n');
-                write(injectedHook, '#!/bin/sh\nexit 1\n');
-                git(root, 'config', 'user.name', 'Recovery Intruder');
-                git(root, 'update-ref', 'refs/heads/recovery-injected', git(root, 'rev-parse', 'HEAD'));
-                return 'RESULT: RECOVERY | ready';
-              }
-              throw new Error('metadata-tampering recovery was accepted');
-            },
-          }
-        ),
-        /primary worktree|Git controls|Git configuration|repository refs|runner checkpoint/
-      );
-      assert.strictEqual(fs.readFileSync(checkpoint, 'utf8'), originalCheckpoint);
-      assert.strictEqual(git(root, 'config', 'user.name'), 'Test User');
-      assert.ok(!git(root, 'show-ref').includes('refs/heads/recovery-injected'));
-      assert.strictEqual(fs.existsSync(injectedBase), false);
-      assert.strictEqual(fs.existsSync(injectedHook), false);
-      assert.ok(fs.existsSync(path.join(root, '.worktrees', 'TASK-004')));
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  test('restores selected history and worktree registration after adversarial recovery', () => {
-    const { runTasks } = require(RUNNER);
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-recovery-history-'));
-    const worktree = path.join(root, '.worktrees', 'TASK-004');
-    const extraWorktree = path.join(root, '.worktrees', 'recovery-extra');
-    let originalHead;
-    try {
-      initRepo(root);
-      assert.throws(
-        () => runTasks(
-          { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
-          {
-            pluginRoot: PLUGIN_ROOT,
-            log: () => {},
-            enableRecovery: true,
-            invokePhase(input) {
-              if (input.phase === 'plan') {
-                originalHead = git(worktree, 'rev-parse', 'HEAD');
-                return 'RESULT: FAILURE | adversarial history repair';
-              }
-              if (input.phase === 'recovery') {
-                write(path.join(worktree, 'history-edit.txt'), 'must be restored\n');
-                git(worktree, 'add', 'history-edit.txt');
-                git(worktree, 'commit', '-m', 'Unauthorized recovery commit');
-                git(root, 'worktree', 'add', '-b', 'recovery/extra', extraWorktree, 'main');
-                return 'RESULT: RECOVERY | ready';
-              }
-              throw new Error('history-mutating recovery was accepted');
-            },
-          }
-        ),
-        /repository refs|registered worktrees|workspace identity|Git history/
-      );
-      assert.strictEqual(git(worktree, 'rev-parse', 'HEAD'), originalHead);
-      assert.strictEqual(fs.existsSync(path.join(worktree, 'history-edit.txt')), false);
-      assert.strictEqual(fs.existsSync(extraWorktree), false);
-      assert.ok(!git(root, 'show-ref').includes('refs/heads/recovery/extra'));
-      assert.strictEqual(
-        git(root, 'worktree', 'list', '--porcelain').includes('recovery-extra'),
-        false
-      );
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  test('rejects and removes ignored files created by recovery', () => {
+  test('preserves generated ignored artifacts and refreshed managed environments needed to finish validation', () => {
     const { runTasks } = require(RUNNER);
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-recovery-ignored-'));
     const worktree = path.join(root, '.worktrees', 'TASK-004');
-    const ignored = path.join(worktree, '.groundwork-plans', 'injected.cache');
-    try {
-      initRepo(root);
-      assert.throws(
-        () => runTasks(
-          { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
-          {
-            pluginRoot: PLUGIN_ROOT,
-            log: () => {},
-            enableRecovery: true,
-            invokePhase(input) {
-              if (input.phase === 'plan') return 'RESULT: FAILURE | ignored-file attempt';
-              if (input.phase === 'recovery') {
-                write(ignored, 'untracked ignored mutation\n');
-                return 'RESULT: RECOVERY | ready';
-              }
-              throw new Error('ignored recovery mutation was accepted');
-            },
-          }
-        ),
-        /ignored selected-worktree content/
-      );
-      assert.strictEqual(fs.existsSync(ignored), false);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  test('honors a recovery revalidate hint before retrying finalization', () => {
-    const { runTasks } = require(RUNNER);
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-recovery-revalidate-hint-'));
-    const worktree = path.join(root, '.worktrees', 'TASK-004');
+    const ignored = path.join(worktree, 'packages', 'ai', 'dist', 'index.js');
+    const cache = path.join(
+      worktree,
+      'packages', 'coding-agent', 'node_modules', '.vite', 'vitest', 'fixture', 'results.json'
+    );
+    const environmentRoot = path.join(worktree, '.python-envs', 'maillist-administrator');
+    const environment = path.join(environmentRoot, 'installed.txt');
+    const environmentMarker = path.join(environmentRoot, 'pyvenv.cfg');
     const phases = [];
-    let finalizeAttempts = 0;
+    let validationAttempts = 0;
     try {
       initRepo(root);
+      fs.appendFileSync(
+        path.join(root, '.gitignore'),
+        'packages/ai/dist/\npackages/coding-agent/node_modules/\n.python-envs/\n'
+      );
+      git(root, 'add', '.gitignore');
+      git(root, 'commit', '-m', 'ignore generated build output');
       runTasks(
         { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
         {
@@ -4826,16 +5142,83 @@ describe('four-phase orchestration', () => {
             if (input.phase === 'implement') {
               const taskFile = path.join(worktree, 'specs', 'tasks.md');
               fs.writeFileSync(taskFile, fs.readFileSync(taskFile, 'utf8').replace('Not Started', 'In Progress'));
+              write(cache, 'pre-recovery cache\n');
+              write(environment, 'incomplete environment\n');
+              write(environmentMarker, 'home = /usr/bin\n');
               return implementationReceipt(input, worktree);
             }
-            if (input.phase === 'validate') return validated(input);
-            if (input.phase === 'recovery') return 'RESULT: RECOVERY | revalidate';
-            if (finalizeAttempts++ === 0) return 'RESULT: FAILURE | stale finalization observation';
+            if (input.phase === 'validate') {
+              validationAttempts++;
+              if (!fs.existsSync(ignored)) return 'RESULT: FAILURE | package has no resolvable build output';
+              assert.strictEqual(fs.readFileSync(ignored, 'utf8'), 'generated build output\n');
+              assert.strictEqual(fs.readFileSync(cache, 'utf8'), 'refreshed test cache\n');
+              assert.strictEqual(fs.readFileSync(environment, 'utf8'), 'complete environment\n');
+              assert.strictEqual(fs.readFileSync(environmentMarker, 'utf8'), 'home = /opt/python\n');
+              return validated(input);
+            }
+            if (input.phase === 'recovery') {
+              write(ignored, 'generated build output\n');
+              write(cache, 'refreshed test cache\n');
+              write(environment, 'complete environment\n');
+              write(environmentMarker, 'home = /opt/python\n');
+              return 'RESULT: RECOVERY | ready';
+            }
             return finalizeMock(input, root, worktree, 'TASK-004', 'task/TASK-004', 'main');
           },
         }
       );
-      assert.deepStrictEqual(phases, ['plan', 'implement', 'validate', 'finalize', 'recovery', 'validate', 'finalize']);
+      assert.strictEqual(validationAttempts, 2);
+      assert.deepStrictEqual(phases, ['plan', 'implement', 'validate', 'recovery', 'validate', 'finalize']);
+      assert.match(fs.readFileSync(path.join(root, 'specs', 'tasks.md'), 'utf8'), /\*\*Status:\*\* Complete/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('allows recovery to replace arbitrary ignored state in the selected task worktree', () => {
+    const { runTasks } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-recovery-ignored-overwrite-'));
+    const worktree = path.join(root, '.worktrees', 'TASK-004');
+    const ignored = path.join(worktree, '.local-runtime', 'state.db');
+    const phases = [];
+    let planAttempts = 0;
+    try {
+      initRepo(root);
+      fs.appendFileSync(path.join(root, '.gitignore'), '.local-runtime/\n');
+      git(root, 'add', '.gitignore');
+      git(root, 'commit', '-m', 'ignore local runtime state');
+      runTasks(
+        { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
+        {
+          pluginRoot: PLUGIN_ROOT,
+          log: () => {},
+          enableRecovery: true,
+          invokePhase(input) {
+            phases.push(input.phase);
+            if (input.phase === 'plan') {
+              if (planAttempts++ === 0) {
+                write(ignored, 'pre-existing ignored bytes\n');
+                return 'RESULT: FAILURE | preserve existing generated state';
+              }
+              assert.strictEqual(fs.readFileSync(ignored, 'utf8'), 'replacement ignored bytes\n');
+              writePlan(root);
+              return 'RESULT: PLANNED | plan_file_path=.groundwork-plans/TASK-004-plan.md | identifier=TASK-004 | branch_prefix=task';
+            }
+            if (input.phase === 'recovery') {
+              write(ignored, 'replacement ignored bytes\n');
+              return 'RESULT: RECOVERY | ready';
+            }
+            if (input.phase === 'implement') {
+              const taskFile = path.join(worktree, 'specs', 'tasks.md');
+              fs.writeFileSync(taskFile, fs.readFileSync(taskFile, 'utf8').replace('Not Started', 'In Progress'));
+              return implementationReceipt(input, worktree);
+            }
+            if (input.phase === 'validate') return validated(input);
+            return finalizeMock(input, root, worktree, 'TASK-004', 'task/TASK-004', 'main');
+          }
+        }
+      );
+      assert.deepStrictEqual(phases, ['plan', 'recovery', 'plan', 'implement', 'validate', 'finalize']);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -4981,18 +5364,18 @@ describe('four-phase orchestration', () => {
       );
 
       assert.deepStrictEqual(calls.map((call) => call.phase), ['plan', 'implement', 'validate', 'finalize']);
-      const startedLogs = logs.filter((line) => line.includes('started'));
+      const startedLogs = logs.filter((line) => /TASK-004 · (?:plan|implement|validate|finalize) · STARTED$/.test(line));
       assert.deepStrictEqual(
         startedLogs.map((line) => line.replace(/^\[[^\]]+\] /, '')),
         [
-          '[TASK-004] plan started — Codex',
-          '[TASK-004] implement started — Codex',
-          '[TASK-004] validate started — Codex',
-          '[TASK-004] finalize started — Codex',
+          'TASK-004 · plan · STARTED',
+          'TASK-004 · implement · STARTED',
+          'TASK-004 · validate · STARTED',
+          'TASK-004 · finalize · STARTED',
         ]
       );
-      assert.ok(startedLogs.every((line) => /^\[\d{4}-\d\d-\d\d \d\d:\d\d:\d\d \S+\]/.test(line)));
-      assert.strictEqual(logs.filter((line) => /completed in \d\d:\d\d$/.test(line)).length, 4);
+      assert.ok(startedLogs.every((line) => /^\[\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z\]/.test(line)));
+      assert.strictEqual(logs.filter((line) => /TASK-004 · (?:plan|implement|validate|finalize) · PASS · \d\d:\d\d$/.test(line)).length, 4);
       const realRoot = fs.realpathSync(root);
       const realWorktree = path.join(realRoot, '.worktrees', 'TASK-004');
       assert.deepStrictEqual(calls.map((call) => call.cwd), [realWorktree, realWorktree, realWorktree, realWorktree]);
@@ -5017,45 +5400,6 @@ describe('four-phase orchestration', () => {
         'TASK-004: Mark task complete',
         'TASK-004: Add the planned feature',
       ]);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  test('does not inspect unrelated worktrees during task execution or publication', () => {
-    const { runTasks } = require(RUNNER);
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-bounded-worktree-scan-'));
-    const worktree = path.join(root, '.worktrees', 'TASK-004');
-    let inspections = 0;
-    try {
-      initRepo(root);
-      runTasks(
-        { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
-        {
-          pluginRoot: PLUGIN_ROOT,
-          log: () => {},
-          inspectUnrelatedWorktrees(repoRoot, projectRoot, taskWorktree) {
-            inspections++;
-            return require(RUNNER).snapshotUnrelatedWorktrees(repoRoot, projectRoot, taskWorktree);
-          },
-          invokePhase(input) {
-            if (input.phase === 'plan') {
-              writePlan(root);
-              return 'RESULT: PLANNED | plan_file_path=.groundwork-plans/TASK-004-plan.md | identifier=TASK-004 | branch_prefix=task';
-            }
-            if (input.phase === 'implement') {
-              assertPrecreatedWorktree(root, worktree, 'task/TASK-004');
-              const taskFile = path.join(worktree, 'specs', 'tasks.md');
-              fs.writeFileSync(taskFile, fs.readFileSync(taskFile, 'utf8').replace('Not Started', 'In Progress'));
-              return implementationReceipt(input, worktree);
-            }
-            if (input.phase === 'validate') return validated(input);
-            return finalizeMock(input, root, worktree, 'TASK-004', 'task/TASK-004', 'main');
-          },
-        }
-      );
-
-      assert.strictEqual(inspections, 0);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -5667,7 +6011,8 @@ describe('four-phase orchestration', () => {
         /planning blocked/
       );
       assert.deepStrictEqual(tasksSeen, ['TASK-001']);
-      assert.match(logs.at(-1), /^\[\d{4}-\d\d-\d\d \d\d:\d\d:\d\d \S+\] \[TASK-001\] plan failed after \d\d:\d\d$/);
+      assert.ok(logs.some((line) => /TASK-001 · plan · FAILED · \d\d:\d\d$/.test(line)));
+      assert.match(logs.at(-1), /TASK-001 · run · FAILED$/);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -5772,6 +6117,9 @@ describe('skill and export integration', () => {
     assert.match(validate, /GROUNDWORK_VALIDATION_PROGRESS[\s\S]*"status":"launched"/);
     assert.match(validate, /GROUNDWORK_VALIDATION_PROGRESS[\s\S]*"status":"completed"/);
     assert.match(validate, /same assistant turn[\s\S]*launch/i);
+    assert.match(validate, /GROUNDWORK_RUNNER_EVENT[\s\S]*"type":"validation\.stage"/);
+    assert.match(validate, /GROUNDWORK_RUNNER_EVENT[\s\S]*"type":"gate\.finished"/);
+    assert.match(validate, /GROUNDWORK_RUNNER_EVENT[\s\S]*"type":"repair\.finished"/);
   });
 
   test('Codex export installs the standalone runner outside any skill directory', () => {
@@ -5783,9 +6131,15 @@ describe('skill and export integration', () => {
         { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
       );
       const installedRunner = path.join(root, '.codex', 'groundwork-run.js');
+      const installedReporting = path.join(root, '.codex', 'run-reporting.js');
       assert.ok(fs.existsSync(installedRunner), 'standalone Codex runner was not installed');
+      assert.ok(fs.existsSync(installedReporting), 'standalone reporting helper was not installed');
       assert.ok(!fs.existsSync(path.join(root, '.codex', 'skills', 'groundwork-just-do-it', 'scripts', 'groundwork-run.js')));
       assert.strictEqual(fs.readFileSync(installedRunner, 'utf8'), fs.readFileSync(RUNNER, 'utf8'));
+      assert.strictEqual(
+        fs.readFileSync(installedReporting, 'utf8'),
+        fs.readFileSync(path.join(PLUGIN_ROOT, 'lib', 'run-reporting.js'), 'utf8')
+      );
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

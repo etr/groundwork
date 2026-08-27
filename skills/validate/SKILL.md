@@ -26,6 +26,23 @@ If session context contains `GROUNDWORK_RUNNER_MODE=true`:
 - After every reviewer approves, leave all validation fixes and persisted validation artifacts in the task worktree for the runner to commit. Do not stage, commit, amend, or rebase.
 - End with the versioned JSON `RESULT: VALIDATED` receipt bound to the exact runner token and task identity. Propose an expressive commit subject and body when changes remain.
 
+### Runner Progress Protocol
+
+In runner mode, emit exact single-line semantic markers as the work advances. The runner accepts only this versioned schema; ordinary prose never changes durable status.
+
+```text
+GROUNDWORK_RUNNER_EVENT {"v":1,"type":"validation.stage","iteration":1,"stage":"project gates"}
+GROUNDWORK_RUNNER_EVENT {"v":1,"type":"gate.finished","gate":"unit-tests","outcome":"pass","summary":"134 passed"}
+GROUNDWORK_RUNNER_EVENT {"v":1,"type":"repair.finished","iteration":1,"fixed":3,"files":2,"deferred":0}
+GROUNDWORK_RUNNER_EVENT {"v":1,"type":"next","text":"launch closure review"}
+```
+
+- Emit `validation.stage` immediately before `project gates`, `review batch`, `repair`, `closure review`, and `persistence` work. Iterations start at 1.
+- Emit `gate.finished` immediately after every named project gate. Use a lowercase kebab-case `gate`; `outcome` is exactly `pass`, `task_fail`, `baseline_fail`, or `skipped`; optional `summary` is one bounded evidence sentence without a newline.
+- Emit `repair.finished` only after the accepted fixer result is durable. Counts are non-negative integers.
+- Emit `next` only when the next transition is known. Keep `text` under 200 characters and free of newlines.
+- Never claim a marker before its underlying action completes. Do not place paths, prompts, findings, secrets, or credentials in markers.
+
 ## Pre-flight: Model Recommendation
 
 **Your current effort level is `{{effort_level}}`.**
@@ -162,8 +179,7 @@ Parse only the returned one-line JSON. Save `run_id`, `run_dir`, `findings_dir`,
 
 - `created`: initialize iteration 1, freeze the baseline, and run the initial audit.
 - `resumed`: read the recorded coordinator file and continue from its recorded stage. Do not restart the initial audit or discard carried approvals.
-- `recovered`: read the recorded repair envelope and rerun the named interrupted step. A `fixer-prepared` session reruns the same fixer envelope.
-- `needs-recovery`: do not mutate the worktree. Confirm that the prior fixer is no longer running and ask the user for explicit rollback authorization. Only after authorization reopen with `--recover-partial-fixer`; in runner mode the exclusive project lease authorizes automatic quarantine and rollback.
+- `recovered`: confirm the prior fixer is no longer running, preserve the current worktree, read the recorded repair envelope, and rerun it. A `fixer-prepared` session resumes the same fixer scope without worktree comparison or restoration.
 - `completed`: replay the stored validation metrics and exact action/commit receipt, emit the normal final result, and stop without gates, reviewers, or fixers.
 
 An incomplete reviewer batch has no checkpoint. Rerun only the pending batch for the recorded stage and iteration, using the same assigned artifact names. You will pass `{findings_dir}/findings-{agent}-iter{N}.json` to every agent invocation and reference these files in step 4.2 and step 5.5. Retain the directory after completion.
@@ -350,7 +366,7 @@ Continue until every valid baseline finding is closed and all impacted reviewers
    }
    ```
 
-   If a finding contradicts or expands the frozen baseline, do not send it to the fixer; reject or persist it according to the review protocol. If the baseline is genuinely missing or contradictory, use the existing user-clarification/failure path. Otherwise write the envelope as `{run_dir}/repair-envelope-iter{N}.json`. Before spawning the validation-fixer, capture the transactional recovery boundary:
+   If a finding contradicts or expands the frozen baseline, do not send it to the fixer; reject or persist it according to the review protocol. If the baseline is genuinely missing or contradictory, use the existing user-clarification/failure path. Otherwise write the envelope as `{run_dir}/repair-envelope-iter{N}.json`. Before spawning the validation-fixer, record the durable semantic transition to `fixer-inflight`:
 
    ```bash
    node ${CLAUDE_PLUGIN_ROOT}/lib/validation-session.js begin-fixer \
@@ -387,7 +403,7 @@ Continue until every valid baseline finding is closed and all impacted reviewers
 
    Record both `findings_fixed` and `findings_skipped` (as global ID lists) in your iteration tracking notes under the current `iteration_number`. These are what step 5.5 uses to compute the unexecuted set.
 
-   A conversational result is not durable completion. After the normal fixer-result validator accepts `{run_dir}/fixer-result-iter{N}.json`, adopt the post-fix tree as the next recovery boundary:
+   A conversational result is not durable completion. After the normal fixer-result validator accepts `{run_dir}/fixer-result-iter{N}.json`, record the accepted result:
 
    ```bash
    node ${CLAUDE_PLUGIN_ROOT}/lib/validation-session.js complete-fixer \
@@ -398,7 +414,7 @@ Continue until every valid baseline finding is closed and all impacted reviewers
 
    If the process stops before this succeeds, resume the `fixer-inflight` transaction through the recovery rules; never adopt partial source mutations as an implicit fixer result.
 
-4. **Write Closure Brief and Re-run Impacted Agents** — Run every required post-fix project gate on the recorded fixer tree. Once they pass, update the coordinator file and checkpoint the durable gate boundary:
+4. **Write Closure Brief and Re-run Impacted Agents** — Run every required post-fix project gate on the current worktree. Once they pass, update the coordinator file and checkpoint the durable gate boundary:
 
    ```bash
    node ${CLAUDE_PLUGIN_ROOT}/lib/validation-session.js checkpoint \

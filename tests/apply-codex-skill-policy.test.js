@@ -124,6 +124,17 @@ test('fixer independently rejects unrelated project-gate mutations', () => {
   assert.ok(exported.includes('make no source mutation'));
 });
 
+test('project-gate repair authority includes the complete causal setup closure', () => {
+  const validate = applyPolicy('validate', validateSource);
+  const fixer = applyAgentPolicy('validation-fixer', fixerSource);
+
+  assert.ok(validate.includes('repository-declared local setup is coordinator-owned work'));
+  assert.ok(validate.includes('complete causal dependency closure'));
+  assert.ok(validate.includes('Do not issue one repair finding per newly exposed missing dependency'));
+  assert.ok(fixer.includes('continue through newly exposed failures of the same gate invariant'));
+  assert.ok(fixer.includes('routine local environment setup is not a clarification boundary'));
+});
+
 test('Codex fixer reports semantic repairs without treating repair size as a blocker', () => {
   const exported = applyAgentPolicy('validation-fixer', fixerSource);
 

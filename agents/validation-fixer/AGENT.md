@@ -58,6 +58,8 @@ Before editing, classify every authorized finding by repair scope:
 
 Only `baseline-compatible-repair` permits mutation. For any other classification, make no source change for that finding and report it as skipped with the classification and evidence. Repair size alone is never a reason to skip: if the baseline determines the outcome, implement the necessary repair even when it changes structure, topology, persistence, protocol, or several domains.
 
+For a repository-declared setup, dependency, import, build, or test gate, the authorized invariant is the complete command succeeding; continue through newly exposed failures of the same gate invariant until it passes or reaches a proven external boundary; routine local environment setup is not a clarification boundary. It may refresh generated environments and update task-owned manifests or lockfiles when the repair envelope authorizes that causal surface.
+
 Then classify each baseline-compatible repair by execution type:
 
 - **Behavioral** — changes logic, control flow, state, or observable behavior. Needs new or changed test assertions.

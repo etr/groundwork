@@ -99,7 +99,7 @@ test('routes batch execution through the same validation state machine', () => {
   assert.ok(!justDoIt.includes('BASELINE_INVALIDATED'));
 });
 
-test('persists validation closure state and transactional fixer recovery', () => {
+test('persists semantic validation state without worktree snapshots or rollback', () => {
   assert.ok(fs.existsSync(sessionProtocolPath), 'missing validation session protocol');
   const sessionProtocol = fs.readFileSync(sessionProtocolPath, 'utf8');
   assert.ok(validate.includes('${CLAUDE_PLUGIN_ROOT}/references/validation-session-protocol.md'));
@@ -109,9 +109,14 @@ test('persists validation closure state and transactional fixer recovery', () =>
   assert.ok(validate.includes('validation-session.js complete'));
   assert.ok(sessionProtocol.includes('initial-audit-pending'));
   assert.ok(sessionProtocol.includes('fixer-inflight'));
-  assert.ok(sessionProtocol.includes('needs-recovery'));
   assert.ok(sessionProtocol.includes('Do not restart the initial audit'));
-  assert.ok(sessionProtocol.includes('quarantine'));
+  assert.ok(sessionProtocol.includes('preserve the current worktree'));
+  assert.ok(!sessionProtocol.includes('needs-recovery'));
+  assert.ok(!sessionProtocol.includes('quarantine'));
+  assert.ok(!sessionProtocol.includes('snapshot'));
+  assert.ok(!sessionProtocol.includes('rollback'));
+  assert.ok(!validate.includes('recover-partial-fixer'));
+  assert.ok(!validate.includes('post-fix tree'));
 });
 
 console.log(`\nTests: ${passed} passed, ${failed} failed`);

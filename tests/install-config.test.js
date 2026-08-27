@@ -374,6 +374,35 @@ describe('portable shared reference export', () => {
   });
 });
 
+describe('portable skill-local resource export', () => {
+  test('Codex bundles referenced sibling resources beside the consuming skill', () => {
+    const root = runInstaller('codex');
+    if (root === null) return;
+    try {
+      const installedResource = path.join(
+        root,
+        '.codex',
+        'skills',
+        'groundwork-domain-modeling',
+        'CONTEXT-FORMAT.md'
+      );
+      const sourceResource = path.join(
+        SKILLS_DIR,
+        'domain-modeling',
+        'CONTEXT-FORMAT.md'
+      );
+
+      assert.ok(fs.existsSync(installedResource), 'referenced sibling resource was not exported');
+      assert.strictEqual(
+        fs.readFileSync(installedResource, 'utf8'),
+        fs.readFileSync(sourceResource, 'utf8')
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('statusline target routing', () => {
   const targetDirs = {
     codex: '.codex',

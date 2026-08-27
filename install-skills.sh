@@ -539,6 +539,35 @@ write_portable_references() {
     done <<< "$references"
 }
 
+# Copy skill-local files named in inline code so progressive-disclosure
+# resources remain available after portable export.
+write_portable_skill_resources() {
+    local content="$1" source_dir="$2" dest_dir="$3"
+    local resources
+    resources=$(printf '%s\n' "$content" | awk '
+        {
+            line = $0
+            while (match(line, /`[A-Za-z0-9._\/-]+`/)) {
+                resource = substr(line, RSTART + 1, RLENGTH - 2)
+                if (resource != "SKILL.md" &&
+                    resource !~ /^\// &&
+                    resource !~ /(^|\/)\.\.(\/|$)/) {
+                    print resource
+                }
+                line = substr(line, RSTART + RLENGTH)
+            }
+        }
+    ' | sort -u)
+
+    local resource source
+    while IFS= read -r resource; do
+        [[ -z "$resource" ]] && continue
+        source="$source_dir/$resource"
+        [[ -f "$source" ]] || continue
+        write_file "$dest_dir/$resource" "$(<"$source")" "skill resource"
+    done <<< "$resources"
+}
+
 write_codex_agent() {
     local dest="$1" content="$2" label="$3" dest_base="$4"
 
@@ -690,6 +719,7 @@ $new_body"
 
         write_file "$dest" "$result" "skill"
         write_portable_references "$raw_body" "$(dirname "$dest")"
+        write_portable_skill_resources "$raw_body" "$skill_dir" "$(dirname "$dest")"
         if [[ "$needs_project_runtime" == true ]]; then
             local runtime_dir
             runtime_dir="$(dirname "$dest")/scripts"
@@ -729,6 +759,7 @@ install_external_runner() {
     local dest_base
     dest_base=$(get_dest_base "$target")
     write_codex_agent "$dest_base/groundwork-run.js" "$(<"$SOURCE_DIR/bin/groundwork-run.js")" "external task runner" "$dest_base"
+    write_codex_agent "$dest_base/run-reporting.js" "$(<"$SOURCE_DIR/lib/run-reporting.js")" "external runner reporting helper" "$dest_base"
     write_codex_agent "$dest_base/validation-session.js" "$(<"$SOURCE_DIR/lib/validation-session.js")" "external validation session helper" "$dest_base"
 }
 

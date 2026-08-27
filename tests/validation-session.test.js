@@ -1,5 +1,5 @@
 /**
- * Tests for durable validation sessions and interrupted-fixer recovery.
+ * Tests for durable validation sessions and restartable fixer coordination.
  *
  * Run with: node tests/validation-session.test.js
  */
@@ -136,7 +136,7 @@ test('refuses symlinked validation metadata directories', () => {
   }
 });
 
-test('persists a completed review boundary and rejects unexplained tree drift', () => {
+test('persists a completed review boundary without policing worktree changes', () => {
   const { checkpointValidationSession, openValidationSession } = require(HELPER);
   const repo = fixture();
   try {
@@ -156,11 +156,61 @@ test('persists a completed review boundary and rejects unexplained tree drift', 
     assert.strictEqual(resumed.state.stage, 'review-batch-complete');
     assert.strictEqual(resumed.state.iteration, 1);
 
-    write(path.join(repo.root, 'src.txt'), 'external mutation\n');
-    assert.throws(
-      () => openValidationSession(identity(repo)),
-      /worktree changed outside a recorded validation transition/
-    );
+    write(path.join(repo.root, 'src.txt'), 'continued work\n');
+    const continued = openValidationSession(identity(repo));
+    assert.strictEqual(continued.status, 'resumed');
+    assert.strictEqual(continued.state.stage, 'review-batch-complete');
+    assert.ok(!Object.hasOwn(continued.state, 'expectedTree'));
+  } finally {
+    fs.rmSync(repo.root, { recursive: true, force: true });
+  }
+});
+
+test('projects the durable validation round stage and per-reviewer verdicts', () => {
+  const helper = require(HELPER);
+  const repo = fixture();
+  try {
+    const created = helper.openValidationSession(identity(repo));
+    const coordinatorFile = path.join(created.runDir, 'coordinator-iter1.json');
+    write(path.join(created.runDir, 'findings-code-quality-reviewer-iter1.json'), JSON.stringify({
+      agent: 'code-quality-reviewer',
+      iteration: 1,
+      review_mode: 'initial-audit',
+      verdict: 'approve',
+      score: 100,
+      summary: 'Approved.',
+      findings: [],
+    }));
+    write(path.join(created.runDir, 'findings-security-reviewer-iter1.json'), JSON.stringify({
+      agent: 'security-reviewer',
+      iteration: 1,
+      review_mode: 'initial-audit',
+      verdict: 'request-changes',
+      score: 80,
+      summary: 'One blocker.',
+      findings: [{ id: 'security-reviewer-iter1-1' }],
+    }));
+    write(coordinatorFile, JSON.stringify({
+      ...coordinatorState(),
+      active_reviewers: ['code-quality-reviewer', 'security-reviewer'],
+      carried_approvals: [{ agent: 'architecture-alignment-checker', score: 100 }],
+    }));
+    helper.checkpointValidationSession(created.runDir, {
+      expectedStage: 'initial-audit-pending',
+      nextStage: 'review-batch-complete',
+      iteration: 1,
+      coordinatorFile,
+    });
+
+    const snapshot = helper.validationStatusSnapshot(created.runDir);
+
+    assert.deepStrictEqual(snapshot.reviewers, [
+      { name: 'architecture-alignment-checker', status: 'approve', carried: true },
+      { name: 'code-quality-reviewer', status: 'approve', carried: false },
+      { name: 'security-reviewer', status: 'request-changes', carried: false },
+    ]);
+    assert.strictEqual(snapshot.iteration, 1);
+    assert.strictEqual(snapshot.stage, 'review-batch-complete');
   } finally {
     fs.rmSync(repo.root, { recursive: true, force: true });
   }
@@ -184,7 +234,7 @@ test('rejects a coordinator artifact changed after its durable checkpoint', () =
   }
 });
 
-test('quarantines and rolls back an interrupted runner-owned fixer', () => {
+test('resumes an interrupted runner-owned fixer without snapshot or rollback', () => {
   const helper = require(HELPER);
   const repo = fixture();
   try {
@@ -200,15 +250,20 @@ test('quarantines and rolls back an interrupted runner-owned fixer', () => {
     assert.strictEqual(resumed.status, 'recovered');
     assert.strictEqual(resumed.state.stage, 'fixer-prepared');
     assert.strictEqual(resumed.recovery.action, 'rerun-fixer');
-    assert.strictEqual(fs.readFileSync(path.join(repo.root, 'src.txt'), 'utf8'), 'implementation\n');
-    assert.ok(!fs.existsSync(path.join(repo.root, 'partial.txt')));
-    assert.ok(fs.existsSync(path.join(session.runDir, resumed.recovery.quarantinePatch)));
+    assert.deepStrictEqual(resumed.recovery, { action: 'rerun-fixer' });
+    assert.strictEqual(fs.readFileSync(path.join(repo.root, 'src.txt'), 'utf8'), 'half fixed\n');
+    assert.ok(fs.existsSync(path.join(repo.root, 'partial.txt')));
+    assert.ok(!Object.hasOwn(resumed.state.fixer, 'preSnapshot'));
+    assert.deepStrictEqual(
+      fs.readdirSync(session.runDir).filter((name) => name.startsWith('snapshot-')),
+      []
+    );
   } finally {
     fs.rmSync(repo.root, { recursive: true, force: true });
   }
 });
 
-test('preserves an interrupted manual fixer until recovery is authorized', () => {
+test('resumes an interrupted manual fixer without rollback authorization', () => {
   const helper = require(HELPER);
   const repo = fixture();
   try {
@@ -219,32 +274,10 @@ test('preserves an interrupted manual fixer until recovery is authorized', () =>
     write(path.join(repo.root, 'src.txt'), 'half fixed\n');
 
     const resumed = helper.openValidationSession(identity(repo));
-    assert.strictEqual(resumed.status, 'needs-recovery');
-    assert.strictEqual(resumed.state.stage, 'fixer-inflight');
+    assert.strictEqual(resumed.status, 'recovered');
+    assert.strictEqual(resumed.state.stage, 'fixer-prepared');
+    assert.strictEqual(resumed.recovery.action, 'rerun-fixer');
     assert.strictEqual(fs.readFileSync(path.join(repo.root, 'src.txt'), 'utf8'), 'half fixed\n');
-  } finally {
-    fs.rmSync(repo.root, { recursive: true, force: true });
-  }
-});
-
-test('rolls back an interrupted manual fixer only after explicit authorization', () => {
-  const helper = require(HELPER);
-  const repo = fixture();
-  try {
-    const session = checkpointInitialReview(helper, repo);
-    const envelopeFile = path.join(session.runDir, 'repair-envelope-iter1.json');
-    write(envelopeFile, JSON.stringify({ iteration: 1, findings: ['security-reviewer-iter1-1'] }));
-    helper.beginFixerTransaction(session.runDir, { iteration: 1, envelopeFile });
-    write(path.join(repo.root, 'src.txt'), 'half fixed\n');
-
-    const recovered = helper.openValidationSession({
-      ...identity(repo),
-      recoverPartialFixer: true,
-    });
-    assert.strictEqual(recovered.status, 'recovered');
-    assert.strictEqual(recovered.state.stage, 'fixer-prepared');
-    assert.strictEqual(fs.readFileSync(path.join(repo.root, 'src.txt'), 'utf8'), 'implementation\n');
-    assert.ok(fs.existsSync(path.join(session.runDir, recovered.recovery.quarantinePatch)));
   } finally {
     fs.rmSync(repo.root, { recursive: true, force: true });
   }
@@ -302,7 +335,7 @@ test('rejects incomplete coordinator state and illegal stage transitions', () =>
   }
 });
 
-test('adopts a completed fixer result as the next durable recovery boundary', () => {
+test('records a completed fixer result without snapshotting the worktree', () => {
   const helper = require(HELPER);
   const repo = fixture();
   try {
@@ -330,7 +363,13 @@ test('adopts a completed fixer result as the next durable recovery boundary', ()
       resultFile,
     });
     assert.strictEqual(completed.stage, 'fixer-result-ready');
-    assert.notStrictEqual(completed.expectedTree, completed.fixer.preSnapshot.tree);
+    assert.ok(!Object.hasOwn(completed, 'expectedTree'));
+    assert.ok(!Object.hasOwn(completed.fixer, 'preSnapshot'));
+    assert.ok(!Object.hasOwn(completed.fixer, 'postSnapshot'));
+    assert.deepStrictEqual(
+      fs.readdirSync(session.runDir).filter((name) => name.startsWith('snapshot-')),
+      []
+    );
 
     const resumed = helper.openValidationSession(identity(repo));
     assert.strictEqual(resumed.status, 'resumed');
@@ -341,7 +380,7 @@ test('adopts a completed fixer result as the next durable recovery boundary', ()
   }
 });
 
-test('reconciles one idempotent unworked-findings report after a completion-boundary crash', () => {
+test('accepts one idempotent unworked-findings report after a completion-boundary crash', () => {
   const helper = require(HELPER);
   const repo = fixture();
   try {
@@ -378,7 +417,7 @@ test('reconciles one idempotent unworked-findings report after a completion-boun
 
     const resumed = helper.openValidationSession(identity(repo));
     assert.strictEqual(resumed.status, 'resumed');
-    assert.strictEqual(resumed.state.unworkedArtifact, path.relative(repo.root, first.written));
+    assert.strictEqual(resumed.state.stage, 'review-batch-complete');
   } finally {
     fs.rmSync(repo.root, { recursive: true, force: true });
   }
