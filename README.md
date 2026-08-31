@@ -62,6 +62,10 @@ Codex agents are written to `.codex/agents/*.toml` for project installs (or
 | `opus[1m]` | `gpt-5.6-sol` |
 | `inherit` or absent | No override; inherit the active Codex model |
 
+Role-specific policy overrides that generic mapping. In particular, the
+`task-executor` is exported as `gpt-5.6-sol` at high effort so implementation
+does not inherit a weaker orchestration model.
+
 Supported effort values (`low`, `medium`, `high`, and `max`) are preserved as
 `model_reasoning_effort`; an absent effort is omitted. Unsupported model or
 effort values stop the install with an explicit error so a silent fallback
@@ -397,6 +401,7 @@ node /path/to/groundwork/bin/groundwork-run.js task TASK-004 TASK-009 TASK-012 -
 node /path/to/groundwork/bin/groundwork-run.js all --harness codex
 node /path/to/groundwork/bin/groundwork-run.js all --from TASK-010 --to TASK-025 --harness codex
 node /path/to/groundwork/bin/groundwork-run.js all --harness codex --project api --dry-run
+node /path/to/groundwork/bin/groundwork-run.js all --harness codex --revalidate-if-merge-conflicts
 node /path/to/groundwork/bin/groundwork-run.js status TASK-005 --project api
 node /path/to/groundwork/bin/groundwork-run.js logs TASK-005 --project api --tail 40 --follow
 ```
@@ -411,11 +416,11 @@ Rerunning is resumable. An existing conventional plan skips planning. An exact r
 
 In monorepos, runner-created workspaces are project-qualified (for example, `task/api/TASK-004` and `.worktrees/api-TASK-004`) so projects may reuse task numbers. The runner does not inspect or compare unrelated worktree contents. Legacy unqualified worktrees remain resumable when their project checkpoint identifies the owner.
 
-Multiple runner commands may be launched against the same repository. A project lease serializes complete tasks for one project, while different projects may execute model phases concurrently. Startup reads, model phases, and repair phases use a writer-preferred repository reader gate. Linked-worktree registration adds a short registry mutex, so another project can start while a model phase is active without exposing a half-created workspace. Publication and worktree removal remain writer-exclusive; wait diagnostics identify the holder. If another project advances the base, the stale task integrates it and revalidates before publication.
+Multiple runner commands may be launched against the same repository. A project lease serializes complete tasks for one project, while different projects may execute model phases concurrently. Startup reads, model phases, and repair phases use a writer-preferred repository reader gate. Linked-worktree registration adds a short registry mutex, so another project can start while a model phase is active without exposing a half-created workspace. Publication and worktree removal remain writer-exclusive; wait diagnostics identify the holder. If another project advances the base, the stale task integrates it during finalization and continues to publication by default.
 
 When upgrading to this parallel runner, first stop and drain every older runner process and launcher for the repository, then install and start the new version. Running the predecessor and v2 together is unsupported: v2 rejects a detected live `groundwork/runner.lock`, but that startup check cannot prevent an old launcher from starting afterward. Once the upgrade is drained, v2 runners may safely use their repository gate together.
 
-In runner mode, agents leave prepared changes and return token-bound JSON receipts containing expressive commit and merge messages. The runner verifies the worktree and Git parents, creates every commit, and performs the outward merge. If the base branch advances, `finalize-task` prepares its integration without committing and returns control for a fresh validation session. Before publication, the runner revalidates the exact base/task heads under writer access; a moved base preserves the task workspace and re-enters the bounded finalize/revalidate flow. The harness verifies that only task-status bookkeeping changed after validation, then commits it, performs the outward merge, and cleans up.
+In runner mode, agents leave prepared changes and return token-bound JSON receipts containing expressive commit and merge messages. The runner verifies the worktree and Git parents, creates every commit, and performs the outward merge. If the base branch advances, `finalize-task` prepares its integration without committing and reports whether conflicts were resolved. The runner seals that integration, invokes finalization again, performs the outward merge, and cleans up without repeating validation. Add `--revalidate-if-merge-conflicts` to repeat validation only when the base merge actually reported conflicts; clean base integration never revalidates.
 
 The same four skills remain manually callable. Manual `finalize-task` still commits remaining validated work, merges into the base branch, and cleans up. In a monorepo, pass `--project <name>` to each phase.
 

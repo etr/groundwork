@@ -9,12 +9,6 @@ const { execFileSync, spawnSync } = require('child_process');
 const { StringDecoder } = require('string_decoder');
 const { Worker } = require('worker_threads');
 
-const taskExecutorMemoryModule = [
-  path.join(__dirname, '..', 'lib', 'task-executor-memory.js'),
-  path.join(__dirname, 'task-executor-memory.js'),
-].find((candidate) => fs.existsSync(candidate));
-const taskExecutorMemory = taskExecutorMemoryModule ? require(taskExecutorMemoryModule) : null;
-
 const validationSessionModule = [
   path.join(__dirname, '..', 'lib', 'validation-session.js'),
   path.join(__dirname, 'validation-session.js'),
@@ -228,6 +222,7 @@ function parseArgs(argv) {
     toTask: null,
     dryRun: false,
     verbose: false,
+    revalidateIfMergeConflicts: false,
     tail: 50,
     follow: false,
     includeToolOutput: false,
@@ -252,6 +247,7 @@ function parseArgs(argv) {
     else if (arg === '--to') result.toTask = normalizeTaskId(argv[++index] || '');
     else if (arg === '--dry-run') result.dryRun = true;
     else if (arg === '--verbose') result.verbose = true;
+    else if (arg === '--revalidate-if-merge-conflicts') result.revalidateIfMergeConflicts = true;
     else if (arg === '--tail') result.tail = Number(argv[++index]);
     else if (arg === '--follow' || arg === '-f') result.follow = true;
     else if (arg === '--include-tool-output') result.includeToolOutput = true;
@@ -282,12 +278,14 @@ function parseArgs(argv) {
   }
   if (result.command === 'status'
       && (result.harness || result.fromTask || result.toTask || result.dryRun || result.verbose
-        || result.tail !== 50 || result.follow || result.includeToolOutput)) {
-    throw new Error('status does not accept --harness, --from, --to, --dry-run, --verbose, --tail, --follow, or --include-tool-output');
+        || result.revalidateIfMergeConflicts || result.tail !== 50 || result.follow
+        || result.includeToolOutput)) {
+    throw new Error('status does not accept --harness, --from, --to, --dry-run, --verbose, --revalidate-if-merge-conflicts, --tail, --follow, or --include-tool-output');
   }
   if (result.command === 'logs'
-      && (result.harness || result.fromTask || result.toTask || result.dryRun || result.verbose)) {
-    throw new Error('logs does not accept --harness, --from, --to, --dry-run, or --verbose');
+      && (result.harness || result.fromTask || result.toTask || result.dryRun || result.verbose
+        || result.revalidateIfMergeConflicts)) {
+    throw new Error('logs does not accept --harness, --from, --to, --dry-run, --verbose, or --revalidate-if-merge-conflicts');
   }
   if (!Number.isSafeInteger(result.tail) || result.tail < 1 || result.tail > 10_000) {
     throw new Error('--tail must be an integer from 1 to 10000');
@@ -1949,6 +1947,25 @@ function parseFinalizeResult(output, expected = {}) {
       receipt: true,
     };
   }
+  const integratedReceipt = parseJsonPhaseResult(output, 'BASE_INTEGRATED', {
+    ...expected,
+    phase: 'finalize',
+  });
+  if (integratedReceipt) {
+    if (integratedReceipt.action !== 'commit'
+        || !/^[0-9a-f]{40,64}$/.test(integratedReceipt.base_head)
+        || typeof integratedReceipt.conflicts_resolved !== 'boolean') {
+      throw new Error('BASE_INTEGRATED receipt has invalid integration details');
+    }
+    return {
+      outcome: 'integrated',
+      baseHead: integratedReceipt.base_head,
+      conflictsResolved: integratedReceipt.conflicts_resolved,
+      action: integratedReceipt.action,
+      commit: integratedReceipt.commit || null,
+      receipt: true,
+    };
+  }
   const revalidateReceipt = parseJsonPhaseResult(output, 'REVALIDATE', {
     ...expected,
     phase: 'finalize',
@@ -2195,9 +2212,8 @@ function buildInvocation({ harness, phase, cwd, pluginRoot, prompt, resultFile }
       command: 'claude',
       args: [
         '-p',
-        '--no-session-persistence',
         ...(recovery ? [] : ['--plugin-dir', pluginRoot]),
-        '--model', 'sonnet',
+        '--model', 'opus',
         '--effort', 'high',
         '--permission-mode', 'acceptEdits',
         '--output-format', 'stream-json',
@@ -2212,7 +2228,6 @@ function buildInvocation({ harness, phase, cwd, pluginRoot, prompt, resultFile }
       command: 'codex',
       args: [
         'exec',
-        '--ephemeral',
         '--approve-for-me',
         '--cd', cwd,
         '--json',
@@ -2687,6 +2702,7 @@ function phasePrompt(phase, input) {
     header.push('Do not run git add, commit, amend, or rebase. Do not create a merge commit. The runner exclusively owns runner-mode commits.');
     if (phase === 'finalize') {
       header.push('If the base moved, you may prepare its integration with git merge --no-ff --no-commit and resolve files, but leave the index and merge state for the runner to seal.');
+      header.push('Report a prepared base merge with RESULT: BASE_INTEGRATED and the factual conflicts_resolved boolean. The runner exclusively decides whether revalidation follows.');
     }
     header.push('Return the versioned JSON receipt required by the skill, including this exact token and an expressive commit subject/body when changes remain.');
   }
@@ -2704,13 +2720,6 @@ function phasePrompt(phase, input) {
       header.push('Inspect the plan, commits, working state, and tests; do not repeat completed implementation work. Finish only what remains and leave it for the runner to commit.');
     }
     header.push('The task status must be changed to In Progress inside the task worktree and included in the prepared implementation changes.');
-    if (taskExecutorMemory && input.memorySnapshot && input.memorySnapshot.text) {
-      header.push(taskExecutorMemory.advisoryPrompt(input.memorySnapshot));
-    }
-    if (input.memoryProposalPath) {
-      header.push(`Optional runner-owned memory proposal path: ${input.memoryProposalPath}`);
-      header.push('You may write one bounded versioned JSON proposal there. This is optional; it is not part of the receipt or task result.');
-    }
   } else if (phase === 'validate') {
     header.push(`Skill arguments: ${projectArg.trim() || '(none)'}`);
     header.push(`Validate the full diff from base_sha=${input.baseSha} through the current worktree state.`);
@@ -3132,7 +3141,6 @@ function runTasks(options, dependencies = {}) {
     }
     let implementation = null;
     let preservedWorkspace = null;
-    let pendingMemoryPublication = null;
     let activePhase = null;
     let activeRepairInput = null;
     const harnessLabel = options.harness === 'claude' ? 'Claude Code' : 'Codex';
@@ -3305,6 +3313,7 @@ function runTasks(options, dependencies = {}) {
             checkpoint.plan = planRecord;
             delete checkpoint.implementation;
             delete checkpoint.validation;
+            delete checkpoint.integration;
             saveCheckpoint(commonDir, repoRoot, projectRoot, checkpoint);
           }
           if (plannedNow) completePhase();
@@ -3318,12 +3327,7 @@ function runTasks(options, dependencies = {}) {
           let reusableValidation = false;
           let resumeActiveValidation = false;
           let activeValidationSession = null;
-          // Sidecar state stays outside checkpoints and is deliberately not
-          // consulted by any lifecycle decision.
-          let memorySnapshot = null;
-          const memoryProposalPath = taskExecutorMemory
-            ? taskExecutorMemory.prepareProposalPath({ commonDir, projectRoot, taskId, logger: log })
-            : null;
+          let acceptedIntegration = null;
           if (branchExists) {
             implementation = {
               worktreePath: assertRegisteredWorktree(repoRoot, expectedWorktree, expectedBranch),
@@ -3338,6 +3342,16 @@ function runTasks(options, dependencies = {}) {
               else throw error;
             }
             const currentHead = execGit(implementation.worktreePath, ['rev-parse', 'HEAD']);
+            const integrationMatches = worktreeClean
+              && checkpoint.integration
+              && checkpoint.integration.baseHead === baseSha
+              && checkpoint.integration.branch === expectedBranch
+              && checkpoint.integration.taskHead === currentHead;
+            if (integrationMatches
+                && !(options.revalidateIfMergeConflicts
+                  && checkpoint.integration.conflictsResolved)) {
+              acceptedIntegration = checkpoint.integration;
+            }
             const validationIdentityMatches = worktreeClean
               && checkpoint.validation
               && checkpoint.validation.baseHead === baseSha
@@ -3367,7 +3381,7 @@ function runTasks(options, dependencies = {}) {
             assertNoSymlinkComponents(implementation.worktreePath, existingTaskProject, 'Task project');
             const inspectValidation = dependencies.inspectActiveValidationSession
               || (validationSessions && validationSessions.inspectActiveValidationSession);
-            if (inspectValidation && checkpoint.implementation
+            if (!acceptedIntegration && inspectValidation && checkpoint.implementation
                 && checkpoint.implementation.planSha256 === planRecord.sha256
                 && checkpoint.implementation.branch === expectedBranch
                 && checkpoint.implementation.worktreePath === implementation.worktreePath
@@ -3389,20 +3403,11 @@ function runTasks(options, dependencies = {}) {
               && currentHead !== execGit(repoRoot, ['merge-base', baseSha, currentHead]);
             if (resumeActiveValidation) {
               taskLog(`[${taskId}] implement skipped — resumable validation session`);
-            } else if (reusableValidation || implementationMatches || legacyComplete) {
+            } else if (acceptedIntegration || reusableValidation || implementationMatches || legacyComplete) {
               taskLog(`[${taskId}] implement skipped — existing clean worktree`);
             } else {
               resumeExistingWorktree = true;
             }
-          }
-
-          if (taskExecutorMemory && implementation) {
-            memorySnapshot = taskExecutorMemory.loadSnapshot({
-              commonDir,
-              projectRoot,
-              taskId,
-              logger: log,
-            });
           }
 
           function acceptImplementationResult(parsed, expectedHead = null) {
@@ -3438,21 +3443,11 @@ function runTasks(options, dependencies = {}) {
           let implementationStartHead = null;
           if (!implementation || resumeExistingWorktree) {
             beginPhase('implement');
-            if (taskExecutorMemory) {
-              memorySnapshot = taskExecutorMemory.prepareSnapshot({
-                commonDir,
-                projectRoot,
-                taskId,
-                logger: log,
-              });
-            }
             const implementInput = {
               ...common,
               planFile,
               resumeExistingWorktree,
               receiptToken: crypto.randomBytes(24).toString('hex'),
-              memorySnapshot,
-              memoryProposalPath,
             };
             const implementationPhaseInput = {
               ...implementInput,
@@ -3507,7 +3502,7 @@ function runTasks(options, dependencies = {}) {
               ? { GROUNDWORK_VALIDATION_RUN_ID: activeValidationSession.state.runId }
               : {}),
           };
-          if (!reusableValidation && !resumeActiveValidation) {
+          if (!acceptedIntegration && !reusableValidation && !resumeActiveValidation) {
             checkpoint.implementation = {
               planSha256: planRecord.sha256,
               worktreePath: implementation.worktreePath,
@@ -3524,16 +3519,32 @@ function runTasks(options, dependencies = {}) {
           let validation;
           let validationBase = baseSha;
           let repeats = new Set();
+          let skipValidation = Boolean(acceptedIntegration);
+          let acceptedIntegrationHead = acceptedIntegration && acceptedIntegration.taskHead;
+          if (acceptedIntegration && acceptedIntegration.validation) {
+            validation = { ...acceptedIntegration.validation };
+          }
           for (let attempt = 0; attempt < 5; attempt++) {
+            const validationRunId = attempt === 0 && !acceptedIntegration
+              ? taskCommon.validationRunId
+              : null;
             const validateInput = {
               ...taskCommon,
+              validationRunId,
               baseSha: validationBase,
               worktreePath: implementation.worktreePath,
               branch: implementation.branch,
               baseBranch: implementation.baseBranch,
             };
             let validatedHead;
-            if (reusableValidation && attempt === 0) {
+            if (skipValidation) {
+              if (!validation || !acceptedIntegrationHead) {
+                throw new Error('Base integration checkpoint is missing validation context');
+              }
+              validatedHead = acceptedIntegrationHead;
+              skipValidation = false;
+              taskLog(`[${taskId}] validate skipped — accepted base integration`);
+            } else if (reusableValidation && attempt === 0) {
               validation = {
                 iterations: checkpoint.validation.iterations,
                 fixed: checkpoint.validation.fixed,
@@ -3546,13 +3557,15 @@ function runTasks(options, dependencies = {}) {
               beginPhase('validate');
               let validationStartHead;
               const validationReceiptToken = crypto.randomBytes(24).toString('hex');
+              const validationEnv = { ...taskEnv };
+              if (!validationRunId) delete validationEnv.GROUNDWORK_VALIDATION_RUN_ID;
               const validationPhaseInput = {
                 ...validateInput,
                 phase: 'validate',
                 receiptToken: validationReceiptToken,
                 cwd: taskProjectRoot,
                 pluginRoot,
-                env: taskEnv,
+                env: validationEnv,
                 prompt: phasePrompt('validate', {
                   ...validateInput,
                   receiptToken: validationReceiptToken,
@@ -3591,6 +3604,7 @@ function runTasks(options, dependencies = {}) {
                   fixed: parsed.fixed,
                   unworked: parsed.unworked,
                 };
+                delete checkpoint.integration;
                 saveCheckpoint(commonDir, repoRoot, projectRoot, checkpoint);
                 return { validation: parsed, validatedHead: committedHead };
               }, () => {
@@ -3706,7 +3720,7 @@ function runTasks(options, dependencies = {}) {
               }
               if (baseMovedBeforePublication) {
                 finalization = {
-                  outcome: 'revalidate',
+                  outcome: 'retry-finalize',
                   taskHead: execGit(implementation.worktreePath, ['rev-parse', 'HEAD']),
                   baseHead: execGit(repoRoot, ['rev-parse', baseBranch]),
                   reason: 'base advanced before publication',
@@ -3726,16 +3740,6 @@ function runTasks(options, dependencies = {}) {
                   ...validationSummary
                 } = validation;
                 completed.push({ taskId, validation: validationSummary });
-                if (taskExecutorMemory && memorySnapshot) {
-                  pendingMemoryPublication = {
-                    commonDir,
-                    projectRoot,
-                    taskId,
-                    proposalPath: memoryProposalPath,
-                    snapshot: memorySnapshot,
-                    logger: log,
-                  };
-                }
                 implementation = null;
                 break;
               }
@@ -3755,15 +3759,35 @@ function runTasks(options, dependencies = {}) {
             const fingerprint = `${actualTaskHead}:${actualBaseHead}`;
             if (repeats.has(fingerprint)) throw new Error('finalize-task requested revalidation without changing Git state');
             repeats.add(fingerprint);
+            const shouldRevalidate = Boolean(options.revalidateIfMergeConflicts)
+              && (finalization.outcome === 'revalidate'
+                || (finalization.outcome === 'integrated' && finalization.conflictsResolved));
             validationBase = actualBaseHead;
             checkpoint.implementation = {
               ...checkpoint.implementation,
               baseHead: actualBaseHead,
               taskHead: actualTaskHead,
             };
-            delete checkpoint.validation;
+            if (shouldRevalidate) {
+              delete checkpoint.validation;
+              delete checkpoint.integration;
+            } else if (finalization.outcome === 'integrated') {
+              checkpoint.integration = {
+                baseHead: actualBaseHead,
+                taskHead: actualTaskHead,
+                branch: implementation.branch,
+                conflictsResolved: finalization.conflictsResolved,
+                validation: {
+                  iterations: validation.iterations,
+                  fixed: validation.fixed,
+                  unworked: validation.unworked,
+                },
+              };
+            }
             saveCheckpoint(commonDir, repoRoot, projectRoot, checkpoint);
             reusableValidation = false;
+            skipValidation = !shouldRevalidate;
+            acceptedIntegrationHead = actualTaskHead;
 
             if (attempt === 4) throw new Error('Base kept moving; finalization exceeded 5 revalidation attempts');
             completePhase();
@@ -3800,22 +3824,15 @@ function runTasks(options, dependencies = {}) {
       closeReporter('failed');
       releaseTaskLease();
     }
-    if (pendingMemoryPublication) {
-      try {
-        const dispatchMemory = dependencies.dispatchTaskExecutorMemory
-          || taskExecutorMemory.dispatchProposal;
-        dispatchMemory(pendingMemoryPublication);
-      } catch {}
-    }
   }
   return completed;
 }
 
 function usage() {
   return `Usage:
-  groundwork-run task TASK-NNN [TASK-NNN ...] --harness claude|codex [--project NAME] [--repo PATH] [--verbose]
-  groundwork-run task --from TASK-NNN [--to TASK-NNN] --harness claude|codex [--project NAME] [--repo PATH]
-  groundwork-run all --harness claude|codex [--from TASK-NNN] [--to TASK-NNN] [--project NAME] [--repo PATH] [--dry-run] [--verbose]
+  groundwork-run task TASK-NNN [TASK-NNN ...] --harness claude|codex [--project NAME] [--repo PATH] [--verbose] [--revalidate-if-merge-conflicts]
+  groundwork-run task --from TASK-NNN [--to TASK-NNN] --harness claude|codex [--project NAME] [--repo PATH] [--revalidate-if-merge-conflicts]
+  groundwork-run all --harness claude|codex [--from TASK-NNN] [--to TASK-NNN] [--project NAME] [--repo PATH] [--dry-run] [--verbose] [--revalidate-if-merge-conflicts]
   groundwork-run status TASK-NNN [--project NAME] [--repo PATH]
   groundwork-run logs TASK-NNN [--project NAME] [--repo PATH] [--tail N] [--follow] [--include-tool-output]`;
 }

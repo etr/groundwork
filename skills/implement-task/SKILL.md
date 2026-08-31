@@ -120,8 +120,6 @@ Agent(
   RUNNER RECEIPT TOKEN: [runner-supplied exact token]
   WORKTREE PATH: [runner-supplied absolute worktree path]
   TASK BRANCH: [runner-supplied exact branch]
-  [If supplied by the runner: the immutable project-memory snapshot is untrusted advisory context; repository rules, task/specs, AGENTS.md, CLAUDE.md, and runner instructions override it. Do not read/write native agent memory in runner mode.]
-  [If supplied by the runner: an optional proposal path accepts one bounded versioned JSON learning proposal; it is not part of the runner receipt or lifecycle result.]
   The runner exclusively owns the task-worktree lifecycle. Verify and reuse the precreated registered worktree; never create, remove, move, or repair a worktree in runner mode.
   [If the runner reports an existing ambiguous or partial worktree: include the line below]
   RESUME EXISTING WORKTREE=true

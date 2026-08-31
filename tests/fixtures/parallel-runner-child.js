@@ -62,17 +62,17 @@ try {
         const baseHead = git(root, 'rev-parse', 'main');
         if (git(input.worktreePath, 'merge-base', 'HEAD', baseHead) !== baseHead) {
           git(input.worktreePath, 'merge', '--no-commit', '--no-ff', baseHead);
-          return `RESULT: REVALIDATE | ${JSON.stringify({
+          return `RESULT: BASE_INTEGRATED | ${JSON.stringify({
             v: 1,
             token: input.receiptToken,
             task_id: 'TASK-004',
             phase: 'finalize',
             action: 'commit',
             base_head: baseHead,
-            reason: 'Another project advanced the base branch.',
+            conflicts_resolved: false,
             commit: {
               subject: `TASK-004: Integrate base for ${project}`,
-              body: 'Prepares the concurrent project for another validation pass.',
+              body: 'Prepares the concurrent project for publication.',
             },
           })}`;
         }

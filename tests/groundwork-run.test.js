@@ -1773,6 +1773,7 @@ describe('module and CLI contract', () => {
         toTask: null,
         dryRun: false,
         verbose: false,
+        revalidateIfMergeConflicts: false,
         tail: 50,
         follow: false,
         includeToolOutput: false,
@@ -1792,6 +1793,20 @@ describe('module and CLI contract', () => {
     const options = parseArgs(['task', '5', '--harness', 'codex', '--verbose']);
 
     assert.strictEqual(options.verbose, true);
+  });
+
+  test('accepts opt-in revalidation after merge conflicts for run commands', () => {
+    const { parseArgs } = require(RUNNER);
+
+    const options = parseArgs([
+      'task', '5', '--harness', 'codex', '--revalidate-if-merge-conflicts',
+    ]);
+
+    assert.strictEqual(options.revalidateIfMergeConflicts, true);
+    assert.throws(
+      () => parseArgs(['status', 'TASK-005', '--revalidate-if-merge-conflicts']),
+      /status.*does not accept/i
+    );
   });
 
   test('accepts a read-only status command without a harness', () => {
@@ -2199,7 +2214,7 @@ for (let index = 0; index < 100000; index++) fs.writeSync(1, record);
     }
   });
 
-  test('never resumes Claude or Codex sessions', () => {
+  test('starts fresh persistent Claude Opus/high and Codex sessions', () => {
     const { buildInvocation } = require(RUNNER);
     const claude = buildInvocation({
       harness: 'claude',
@@ -2209,8 +2224,10 @@ for (let index = 0; index < 100000; index++) fs.writeSync(1, record);
       resultFile: '/tmp/result',
     });
     assert.strictEqual(claude.command, 'claude');
-    assert.ok(claude.args.includes('--no-session-persistence'));
+    assert.ok(!claude.args.includes('--no-session-persistence'));
     assert.ok(claude.args.includes('--plugin-dir'));
+    assert.strictEqual(claude.args[claude.args.indexOf('--model') + 1], 'opus');
+    assert.strictEqual(claude.args[claude.args.indexOf('--effort') + 1], 'high');
     assert.ok(claude.args.includes('stream-json'));
     assert.ok(claude.args.includes('--verbose'));
     assert.ok(!claude.args.includes('--resume'));
@@ -2223,7 +2240,8 @@ for (let index = 0; index < 100000; index++) fs.writeSync(1, record);
       resultFile: '/tmp/result',
     });
     assert.strictEqual(codex.command, 'codex');
-    assert.deepStrictEqual(codex.args.slice(0, 2), ['exec', '--ephemeral']);
+    assert.strictEqual(codex.args[0], 'exec');
+    assert.ok(!codex.args.includes('--ephemeral'));
     assert.ok(codex.args.includes('--approve-for-me'));
     assert.ok(!codex.args.includes('--sandbox'));
     assert.ok(codex.args.includes('--json'));
@@ -2233,7 +2251,7 @@ for (let index = 0; index < 100000; index++) fs.writeSync(1, record);
     assert.ok(!codex.args.includes('resume'));
   });
 
-  test('adds frozen untrusted memory only to equivalent Claude and Codex implementation prompts', () => {
+  test('does not inject runner-owned memory into either harness', () => {
     const { phasePrompt } = require(RUNNER);
     const input = {
       taskId: 'TASK-004', repoRoot: '/repo', projectRoot: '/repo', specsDir: '/repo/specs',
@@ -2244,8 +2262,11 @@ for (let index = 0; index < 100000; index++) fs.writeSync(1, record);
     };
     const claude = phasePrompt('implement', { ...input, harness: 'claude' });
     const codex = phasePrompt('implement', { ...input, harness: 'codex' });
-    assert.match(claude, /BEGIN UNTRUSTED PROJECT MEMORY/);
-    assert.strictEqual(claude.slice(claude.indexOf('Optional runner-owned')), codex.slice(codex.indexOf('Optional runner-owned')));
+    assert.doesNotMatch(claude, /UNTRUSTED PROJECT MEMORY/);
+    assert.doesNotMatch(claude, /runner-owned memory proposal path/);
+    assert.doesNotMatch(codex, /BEGIN UNTRUSTED PROJECT MEMORY/);
+    assert.doesNotMatch(codex, /runner-owned memory proposal path/);
+    assert.doesNotMatch(codex, /Run focused tests first/);
     assert.doesNotMatch(phasePrompt('validate', { ...input, harness: 'codex' }), /UNTRUSTED PROJECT MEMORY/);
     assert.doesNotMatch(phasePrompt('recovery', { ...input, harness: 'codex' }), /UNTRUSTED PROJECT MEMORY/);
   });
@@ -2526,6 +2547,25 @@ for (let index = 0; index < 100000; index++) fs.writeSync(1, record);
     assert.strictEqual(revalidate.outcome, 'revalidate');
     assert.strictEqual(revalidate.baseHead, 'b'.repeat(40));
     assert.match(revalidate.commit.body, /validation runs again/);
+
+    const integrated = runner.parseFinalizeResult(
+      `RESULT: BASE_INTEGRATED | ${JSON.stringify({
+        v: 1,
+        token,
+        task_id: 'TASK-004',
+        phase: 'finalize',
+        action: 'commit',
+        base_head: 'c'.repeat(40),
+        conflicts_resolved: true,
+        commit: {
+          subject: 'TASK-004: Resolve updated base conflicts',
+          body: 'Reports the integration facts for runner policy.',
+        },
+      })}`,
+      { token, taskId: 'TASK-004' }
+    );
+    assert.strictEqual(integrated.outcome, 'integrated');
+    assert.strictEqual(integrated.conflictsResolved, true);
   });
 
   test('runner seals prepared changes with the agent-authored message', () => {
@@ -3977,53 +4017,31 @@ describe('filesystem safety', () => {
 });
 
 describe('four-phase orchestration', () => {
-  test('dispatches memory once only after verified cleanup, completion, and writer-gate release', () => {
+  test('does not mediate the harness native-memory mechanism', () => {
     const { runTasks } = require(RUNNER);
-    const memory = require('../lib/task-executor-memory.js');
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-memory-publication-'));
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-claude-native-memory-'));
     const worktree = path.join(root, '.worktrees', 'TASK-004');
     let dispatches = 0;
-    let dispatchStatus;
     try {
       initRepo(root);
-      write(
-        path.join(root, '.claude', 'agent-memory', 'groundwork', 'task-executor', 'memory.md'),
-        'Keep runner fixtures deterministic\n'
-      );
-      git(root, 'add', '.claude');
-      git(root, 'commit', '-m', 'Add task-executor memory fixture');
-      const completed = runTasks(
-        { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
+      runTasks(
+        { command: 'task', harness: 'claude', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
         {
           pluginRoot: PLUGIN_ROOT,
           log: () => {},
-          dispatchTaskExecutorMemory(input) {
-            dispatches++;
-            assert.strictEqual(fs.existsSync(worktree), false, 'publication preceded worktree cleanup');
-            assert.strictEqual(
-              fs.existsSync(path.join(root, '.git', 'groundwork', 'repository-gate', 'writer.lock')),
-              false,
-              'publication preceded writer-gate release'
-            );
-            assert.match(fs.readFileSync(path.join(root, 'specs', 'tasks.md'), 'utf8'), /\*\*Status:\*\* Complete/);
-            assert.deepStrictEqual(memory.readProposal(input), [
-              { category: 'test', text: 'Run the focused runner test' },
-            ]);
-            dispatchStatus = memory.dispatchProposal(input).status;
-          },
+          dispatchTaskExecutorMemory() { dispatches++; },
           invokePhase(input) {
             if (input.phase === 'plan') {
               writePlan(root);
               return 'RESULT: PLANNED | plan_file_path=.groundwork-plans/TASK-004-plan.md | identifier=TASK-004 | branch_prefix=task';
             }
             if (input.phase === 'implement') {
+              assert.strictEqual(Object.hasOwn(input, 'memorySnapshot'), false);
+              assert.strictEqual(Object.hasOwn(input, 'memoryProposalPath'), false);
+              assert.doesNotMatch(input.prompt, /UNTRUSTED PROJECT MEMORY|runner-owned memory proposal path/);
               const taskFile = path.join(worktree, 'specs', 'tasks.md');
               fs.writeFileSync(taskFile, fs.readFileSync(taskFile, 'utf8').replace('Not Started', 'In Progress'));
               write(path.join(worktree, 'feature.txt'), 'implemented\n');
-              write(input.memoryProposalPath, JSON.stringify({
-                v: 1,
-                facts: [{ category: 'test', text: 'Run the focused runner test' }],
-              }));
               return implementationReceipt(input, worktree);
             }
             if (input.phase === 'validate') return validated(input);
@@ -4031,133 +4049,7 @@ describe('four-phase orchestration', () => {
           },
         }
       );
-      assert.strictEqual(completed.length, 1);
-      assert.strictEqual(dispatches, 1);
-      assert.strictEqual(dispatchStatus, 'dispatched');
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  test('does not dispatch memory when finalization fails', () => {
-    const { runTasks } = require(RUNNER);
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-memory-failed-finalize-'));
-    const worktree = path.join(root, '.worktrees', 'TASK-004');
-    let dispatches = 0;
-    try {
-      initRepo(root);
-      assert.throws(
-        () => runTasks(
-          { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
-          {
-            pluginRoot: PLUGIN_ROOT,
-            log: () => {},
-            dispatchTaskExecutorMemory() { dispatches++; },
-            invokePhase(input) {
-              if (input.phase === 'plan') {
-                writePlan(root);
-                return 'RESULT: PLANNED | plan_file_path=.groundwork-plans/TASK-004-plan.md | identifier=TASK-004 | branch_prefix=task';
-              }
-              if (input.phase === 'implement') {
-                const taskFile = path.join(worktree, 'specs', 'tasks.md');
-                fs.writeFileSync(taskFile, fs.readFileSync(taskFile, 'utf8').replace('Not Started', 'In Progress'));
-                write(path.join(worktree, 'feature.txt'), 'implemented\n');
-                return implementationReceipt(input, worktree);
-              }
-              if (input.phase === 'validate') return validated(input);
-              return 'RESULT: FAILURE | finalization rejected';
-            },
-          }
-        ),
-        /finalization rejected/
-      );
       assert.strictEqual(dispatches, 0);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  test('resumed publication reuses the frozen canonical identity and defers a stale proposal', () => {
-    const { runTasks } = require(RUNNER);
-    const memory = require('../lib/task-executor-memory.js');
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-memory-resume-cas-'));
-    const worktree = path.join(root, '.worktrees', 'TASK-004');
-    let commonDir;
-    let projectRoot;
-    let dispatchResult;
-    try {
-      initRepo(root);
-      commonDir = fs.realpathSync(path.join(root, '.git'));
-      projectRoot = fs.realpathSync(root);
-      assert.throws(
-        () => runTasks(
-          { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
-          {
-            pluginRoot: PLUGIN_ROOT,
-            log: () => {},
-            invokePhase(input) {
-              if (input.phase === 'plan') {
-                writePlan(root);
-                return 'RESULT: PLANNED | plan_file_path=.groundwork-plans/TASK-004-plan.md | identifier=TASK-004 | branch_prefix=task';
-              }
-              if (input.phase === 'implement') {
-                const taskFile = path.join(worktree, 'specs', 'tasks.md');
-                fs.writeFileSync(taskFile, fs.readFileSync(taskFile, 'utf8').replace('Not Started', 'In Progress'));
-                write(path.join(worktree, 'feature.txt'), 'implemented\n');
-                write(input.memoryProposalPath, JSON.stringify({
-                  v: 1,
-                  facts: [{ category: 'gotcha', text: 'Stale proposal from the interrupted task' }],
-                }));
-                return implementationReceipt(input, worktree);
-              }
-              if (input.phase === 'validate') throw new Error('interrupt after implementation');
-              throw new Error(`unexpected ${input.phase}`);
-            },
-          }
-        ),
-        /interrupt after implementation/
-      );
-
-      const interveningSnapshot = memory.prepareSnapshot({ commonDir, projectRoot, taskId: 'TASK-005' });
-      const interveningProposal = memory.prepareProposalPath({ commonDir, projectRoot, taskId: 'TASK-005' });
-      write(interveningProposal, JSON.stringify({
-        v: 1,
-        facts: [{ category: 'convention', text: 'Intervening canonical fact' }],
-      }));
-      assert.strictEqual(memory.publishProposal({
-        commonDir,
-        projectRoot,
-        taskId: 'TASK-005',
-        proposalPath: interveningProposal,
-        snapshot: interveningSnapshot,
-      }).status, 'published');
-      const before = fs.readFileSync(memory.canonicalPath({ commonDir, projectRoot }), 'utf8');
-      const frozen = memory.loadSnapshot({ commonDir, projectRoot, taskId: 'TASK-004' });
-      assert.strictEqual(
-        frozen.canonicalDigest,
-        crypto.createHash('sha256').update('').digest('hex')
-      );
-
-      runTasks(
-        { command: 'task', harness: 'codex', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
-        {
-          pluginRoot: PLUGIN_ROOT,
-          log: () => {},
-          dispatchTaskExecutorMemory(input) {
-            assert.strictEqual(input.snapshot.canonicalDigest, frozen.canonicalDigest);
-            dispatchResult = memory.publishProposal(input);
-          },
-          invokePhase(input) {
-            if (input.phase === 'validate') return validated(input);
-            if (input.phase === 'finalize') {
-              return finalizeMock(input, root, worktree, 'TASK-004', 'task/TASK-004', 'main');
-            }
-            throw new Error(`${input.phase} should have been checkpointed`);
-          },
-        }
-      );
-      assert.deepStrictEqual(dispatchResult, { status: 'deferred' });
-      assert.strictEqual(fs.readFileSync(memory.canonicalPath({ commonDir, projectRoot }), 'utf8'), before);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -5725,7 +5617,7 @@ describe('four-phase orchestration', () => {
     }
   });
 
-  test('revalidates in another fresh process when finalization integrates a moved base', () => {
+  test('skips revalidation after clean base integration even when conflict revalidation is enabled', () => {
     const { runTasks } = require(RUNNER);
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-revalidate-'));
     const worktree = path.join(root, '.worktrees', 'TASK-004');
@@ -5743,6 +5635,7 @@ describe('four-phase orchestration', () => {
           project: null,
           tasks: ['TASK-004'],
           dryRun: false,
+          revalidateIfMergeConflicts: true,
         },
         {
           pluginRoot: PLUGIN_ROOT,
@@ -5797,17 +5690,17 @@ describe('four-phase orchestration', () => {
             finalizeCalls++;
             if (finalizeCalls === 1) {
               git(worktree, 'merge', '--no-commit', '--no-ff', movedBase);
-              return `RESULT: REVALIDATE | ${JSON.stringify({
+              return `RESULT: BASE_INTEGRATED | ${JSON.stringify({
                 v: 1,
                 token: input.receiptToken,
                 task_id: 'TASK-004',
                 phase: 'finalize',
                 action: 'commit',
                 base_head: movedBase,
-                reason: 'The base branch advanced after validation.',
+                conflicts_resolved: false,
                 commit: {
                   subject: 'TASK-004: Integrate updated base branch',
-                  body: 'Includes the latest base before revalidating the task.',
+                  body: 'Includes the latest base before publishing the task.',
                 },
               })}`;
             }
@@ -5820,7 +5713,7 @@ describe('four-phase orchestration', () => {
               action: 'commit',
               commit: {
                 subject: 'TASK-004: Mark task complete',
-                body: 'Records completion after moved-base revalidation.',
+                body: 'Records completion after moved-base integration.',
               },
               merge: {
                 subject: 'Merge TASK-004: Complete moved-base fixture',
@@ -5830,15 +5723,106 @@ describe('four-phase orchestration', () => {
           },
         }
       );
-      assert.deepStrictEqual(phases, ['plan', 'implement', 'validate', 'finalize', 'validate', 'finalize']);
-      assert.strictEqual(validationBases[1], movedBase);
+      assert.deepStrictEqual(phases, ['plan', 'implement', 'validate', 'finalize', 'finalize']);
+      assert.strictEqual(validationBases.length, 1);
       assert.ok(git(root, 'log', '--format=%s').split('\n').includes('TASK-004: Integrate updated base branch'));
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
 
-  test('revalidates when the base advances after READY but before publication', () => {
+  test('revalidates after reported merge conflicts when explicitly enabled', () => {
+    const { runTasks } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-conflict-revalidate-'));
+    const worktree = path.join(root, '.worktrees', 'TASK-004');
+    const phases = [];
+    const validationBases = [];
+    let finalizeCalls = 0;
+    let movedBase;
+    try {
+      initRepo(root);
+      runTasks(
+        {
+          command: 'task',
+          harness: 'claude',
+          repo: root,
+          project: null,
+          tasks: ['TASK-004'],
+          dryRun: false,
+          revalidateIfMergeConflicts: true,
+        },
+        {
+          pluginRoot: PLUGIN_ROOT,
+          log: () => {},
+          beforePhase(input) {
+            if (input.phase === 'finalize' && !movedBase) {
+              write(path.join(root, 'base-update.txt'), 'new base\n');
+              git(root, 'add', '.');
+              git(root, 'commit', '-m', 'Advance base');
+              movedBase = git(root, 'rev-parse', 'HEAD');
+            }
+          },
+          invokePhase(input) {
+            phases.push(input.phase);
+            if (input.phase === 'plan') {
+              write(path.join(root, '.groundwork-plans', 'TASK-004-plan.md'), '# Plan\n');
+              return 'RESULT: PLANNED | plan_file_path=.groundwork-plans/TASK-004-plan.md | identifier=TASK-004 | branch_prefix=task';
+            }
+            if (input.phase === 'implement') {
+              assertPrecreatedWorktree(root, worktree, 'task/TASK-004');
+              const taskFile = path.join(worktree, 'specs', 'tasks.md');
+              fs.writeFileSync(taskFile, fs.readFileSync(taskFile, 'utf8').replace('Not Started', 'In Progress'));
+              write(path.join(worktree, 'feature.txt'), 'implemented\n');
+              return `RESULT: IMPLEMENTED | ${JSON.stringify({
+                v: 1,
+                token: input.receiptToken,
+                task_id: 'TASK-004',
+                phase: 'implement',
+                action: 'commit',
+                worktree_path: worktree,
+                branch: 'task/TASK-004',
+                base_branch: 'main',
+                commit: {
+                  subject: 'TASK-004: Implement conflict policy fixture',
+                  body: 'Prepares a task branch for opt-in conflict revalidation.',
+                },
+              })}`;
+            }
+            if (input.phase === 'validate') {
+              validationBases.push(input.baseSha);
+              return validated(input);
+            }
+            finalizeCalls++;
+            if (finalizeCalls === 1) {
+              git(worktree, 'merge', '--no-commit', '--no-ff', movedBase);
+              return `RESULT: BASE_INTEGRATED | ${JSON.stringify({
+                v: 1,
+                token: input.receiptToken,
+                task_id: 'TASK-004',
+                phase: 'finalize',
+                action: 'commit',
+                base_head: movedBase,
+                conflicts_resolved: true,
+                commit: {
+                  subject: 'TASK-004: Resolve updated base conflicts',
+                  body: 'Preserves the task while resolving the updated base.',
+                },
+              })}`;
+            }
+            return finalizeMock(input, root, worktree, 'TASK-004', 'task/TASK-004', 'main');
+          },
+        }
+      );
+
+      assert.deepStrictEqual(phases, ['plan', 'implement', 'validate', 'finalize', 'validate', 'finalize']);
+      assert.strictEqual(validationBases[1], movedBase);
+      assert.strictEqual(fs.existsSync(worktree), false);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('retries finalization without revalidation when the base advances before publication', () => {
     const { runTasks } = require(RUNNER);
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-ready-publication-race-'));
     const worktree = path.join(root, '.worktrees', 'TASK-004');
@@ -5902,7 +5886,7 @@ describe('four-phase orchestration', () => {
 
       assert.deepStrictEqual(phases, [
         'plan', 'implement', 'validate', 'finalize',
-        'validate', 'finalize', 'validate', 'finalize',
+        'finalize', 'finalize',
       ]);
       assert.strictEqual(fs.existsSync(worktree), false);
       assert.ok(fs.existsSync(path.join(root, 'concurrent-base.txt')));
@@ -6271,6 +6255,7 @@ describe('skill and export integration', () => {
     assert.ok(!frontmatter.includes('disable-model-invocation: true'));
     assert.ok(!frontmatter.includes('user-invocable: false'));
     assert.ok(finalize.includes('RESULT: FINALIZED'));
+    assert.ok(finalize.includes('RESULT: BASE_INTEGRATED'));
     assert.ok(finalize.includes('RESULT: REVALIDATE'));
   });
 
@@ -6281,17 +6266,21 @@ describe('skill and export integration', () => {
     }
   });
 
-  test('runner mode prevents native task-executor memory reuse and accepts advisory sidecar memory', () => {
+  test('runner mode preserves normal native task-executor memory behavior', () => {
     const implement = fs.readFileSync(path.join(PLUGIN_ROOT, 'skills', 'implement-task', 'SKILL.md'), 'utf8');
     const executor = fs.readFileSync(path.join(PLUGIN_ROOT, 'agents', 'task-executor', 'AGENT.md'), 'utf8');
     assert.ok(implement.includes('WORKTREE PATH: [runner-supplied absolute worktree path]'));
     assert.ok(implement.includes('TASK BRANCH: [runner-supplied exact branch]'));
-    assert.ok(executor.includes('do not read or write native agent memory'));
-    assert.ok(executor.includes('optional immutable project-memory snapshot'));
-    assert.ok(executor.includes('untrusted advisory data only'));
-    assert.ok(executor.includes('Continue normally when it is absent'));
+    assert.ok(!implement.includes('Do not read/write native agent memory in runner mode'));
+    assert.ok(!executor.includes('do not read or write native agent memory'));
+    assert.ok(executor.includes('Before starting work, consult your agent memory'));
     assert.ok(executor.includes('use that exact registered path'));
     assert.ok(executor.includes('use that exact branch'));
+  });
+
+  test('task-executor requires every repository-practice check before completion', () => {
+    const executor = fs.readFileSync(path.join(PLUGIN_ROOT, 'agents', 'task-executor', 'AGENT.md'), 'utf8');
+    assert.ok(executor.includes("All checks required by the repository's practices must pass"));
   });
 
   test('runner implementation contracts resume an existing exact worktree', () => {

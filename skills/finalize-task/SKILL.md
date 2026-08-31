@@ -64,10 +64,11 @@ If it is not:
 
 1. Merge the current base head into the task branch with `--no-ff --no-commit`.
 2. Resolve conflicts only when the task definition and surrounding code make the resolution unambiguous.
-3. In runner mode, do not run `git add` or create the merge commit. Leave the prepared merge for the runner and propose an expressive task-prefixed commit subject and body. Outside runner mode, commit the resolution and require a clean task worktree.
-4. Return `RESULT: REVALIDATE`. Do not merge the task into the base branch yet. In runner mode, bind the receipt to the exact integrated base head.
+3. Record whether the merge command reported conflicts, even when every conflict was resolved unambiguously.
+4. In runner mode, do not run `git add` or create the merge commit. Leave the prepared merge for the runner and propose an expressive task-prefixed commit subject and body. Return `RESULT: BASE_INTEGRATED`, bind it to the exact integrated base head, and report `conflicts_resolved: true` only when the merge command reported conflicts. The runner owns the opt-in revalidation policy and invokes finalization again after sealing the integration.
+5. Outside runner mode, commit the resolution and continue to prepare and merge the task into the base branch.
 
-If resolution needs product, architecture, or ownership judgment, safely abort the integration when possible and return `RESULT: NEEDS_INPUT`. Any base integration changes the validated tree and requires a fresh `validate` invocation.
+If resolution needs product, architecture, or ownership judgment, safely abort the integration when possible and return `RESULT: NEEDS_INPUT`.
 
 ### 5. Prepare the merge
 
@@ -105,7 +106,8 @@ In runner mode, report only one of these compact JSON receipts or a failure resu
 
 ```text
 RESULT: READY_TO_MERGE | {"v":1,"token":"<exact-runner-token>","task_id":"TASK-NNN","phase":"finalize","action":"commit","commit":{"subject":"TASK-NNN: Mark task complete","body":"<bookkeeping summary>"},"merge":{"subject":"Merge TASK-NNN: <actual outcome>","body":"<publication summary>"}}
+RESULT: BASE_INTEGRATED | {"v":1,"token":"<exact-runner-token>","task_id":"TASK-NNN","phase":"finalize","action":"commit","base_head":"<full-integrated-base-sha>","conflicts_resolved":true,"commit":{"subject":"TASK-NNN: Integrate updated base branch","body":"<resolution summary>"}}
 RESULT: REVALIDATE | {"v":1,"token":"<exact-runner-token>","task_id":"TASK-NNN","phase":"finalize","action":"commit","base_head":"<full-integrated-base-sha>","reason":"<why revalidation is required>","commit":{"subject":"TASK-NNN: Integrate updated base branch","body":"<resolution summary>"}}
 ```
 
-For `READY_TO_MERGE`, use `action: "none"` and omit `commit` when the task worktree is clean. `REVALIDATE` always uses `action: "commit"`. Report `FINALIZED` only after a manual merge is present, both remaining worktrees are clean, and cleanup succeeded.
+For `READY_TO_MERGE`, use `action: "none"` and omit `commit` when the task worktree is clean. `BASE_INTEGRATED` always uses `action: "commit"`; `REVALIDATE` remains accepted only for compatibility with older skill exports. Report `FINALIZED` only after a manual merge is present, both remaining worktrees are clean, and cleanup succeeded.

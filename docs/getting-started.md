@@ -70,6 +70,7 @@ node /path/to/groundwork/bin/groundwork-run.js task TASK-004 --harness claude
 node /path/to/groundwork/bin/groundwork-run.js task TASK-004 TASK-009 --harness codex
 node /path/to/groundwork/bin/groundwork-run.js all --harness codex --project api
 node /path/to/groundwork/bin/groundwork-run.js all --from TASK-010 --to TASK-025 --harness codex --project api
+node /path/to/groundwork/bin/groundwork-run.js all --harness codex --project api --revalidate-if-merge-conflicts
 node /path/to/groundwork/bin/groundwork-run.js status TASK-005 --project api
 node /path/to/groundwork/bin/groundwork-run.js logs TASK-005 --project api --tail 40 --follow
 ```
@@ -88,9 +89,9 @@ The runner's default output shows phase transitions, validation stages, named ga
 
 Durable output lives under `<git-common-dir>/groundwork/reporting/<project-hash>/TASK-NNN/`. `runner.log` is the compact human timeline; `events.jsonl` contains versioned lifecycle and semantic events; `transcript.jsonl` contains bounded credential-redacted activity, user-visible phase-agent messages, reviewer states, semantic markers, and tool output. Raw provider events and hidden reasoning are not persisted. `status` combines the newest run with its active validation session to show validation round, stage, and per-reviewer state. `logs --tail N` renders the transcript, and `logs --tail N --follow` streams it until the run becomes terminal. Successful tool output is shown only with `--include-tool-output`. Status and logs are read-only: neither starts a harness nor acquires a runner lease.
 
-The final phase prepares task bookkeeping, handles a moved base, and chooses the merge message. The harness rechecks the exact base and task heads under writer access before publication; if the base moved, it preserves the task worktree and returns to bounded revalidation before merging and cleanup.
+The final phase prepares task bookkeeping, handles a moved base, and chooses the merge message. The harness rechecks the exact base and task heads under writer access before publication. If the base moved, it preserves the task worktree, seals the prepared integration, and invokes finalization again before merging and cleanup. Validation does not repeat by default. Add `--revalidate-if-merge-conflicts` to repeat it only after the base merge reported resolved conflicts.
 
-The runner can optionally reuse safe project memory for implementation. It freezes a small, untrusted snapshot from a supported task-executor memory source, supplies it only to implementation, and keeps that exact snapshot for retries and resumes. Repository rules and the active task always override it. Implementation can leave a small learning proposal outside the worktree; Groundwork considers it only after a verified merge and cleanup. Memory is advisory: unavailable, invalid, secret-bearing, locked, conflicting, or failed memory never affects a task's lifecycle result. Do not store dependency setup or `.venv` reuse instructions in it.
+Runner phases start fresh persisted sessions. Claude and Codex each use their own native memory normally; Groundwork neither disables memory nor copies memory between harnesses. Durable runner state such as checkpoints, validation sessions, receipts, reporting, and locks remains repository-scoped workflow state, not agent memory.
 
 ### Skill Categories
 

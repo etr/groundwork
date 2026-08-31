@@ -260,10 +260,10 @@ codex_model_for_agent() {
         architecture-task-alignment-checker|code-simplifier|conventions-reviewer|design-task-alignment-checker|housekeeper|prd-task-alignment-checker)
             echo "gpt-5.6-luna"
             ;;
-        architecture-alignment-checker|cloud-infrastructure-reviewer|code-quality-reviewer|design-consistency-checker|performance-reviewer|prd-architecture-checker|spec-alignment-checker|task-executor|test-quality-reviewer|validation-fixer)
+        architecture-alignment-checker|cloud-infrastructure-reviewer|code-quality-reviewer|design-consistency-checker|performance-reviewer|prd-architecture-checker|spec-alignment-checker|test-quality-reviewer|validation-fixer)
             echo "gpt-5.6-terra"
             ;;
-        researcher|security-reviewer)
+        researcher|security-reviewer|task-executor)
             echo "gpt-5.6-sol"
             ;;
         *)
@@ -607,6 +607,25 @@ remove_legacy_codex_agent_skill() {
     fi
 }
 
+remove_legacy_codex_runner_memory() {
+    local dest_base="$1"
+    local legacy_sidecar="$dest_base/task-executor-memory.js"
+
+    if [[ ! -e "$legacy_sidecar" && ! -L "$legacy_sidecar" ]]; then
+        return 0
+    fi
+    if [[ "$DRY_RUN" == true ]]; then
+        echo "  [dry-run] remove $legacy_sidecar (legacy runner memory sidecar)"
+        return 0
+    fi
+    if [[ ! -f "$legacy_sidecar" && ! -L "$legacy_sidecar" ]]; then
+        echo "Error: Legacy runner memory sidecar is not a file: $legacy_sidecar" >&2
+        return 1
+    fi
+    rm -f -- "$legacy_sidecar"
+    echo "  [removed] $legacy_sidecar (legacy runner memory sidecar)"
+}
+
 # ============================================================
 # Install: Claude Code
 # ============================================================
@@ -759,7 +778,7 @@ install_external_runner() {
     local dest_base
     dest_base=$(get_dest_base "$target")
     write_codex_agent "$dest_base/groundwork-run.js" "$(<"$SOURCE_DIR/bin/groundwork-run.js")" "external task runner" "$dest_base"
-    write_codex_agent "$dest_base/task-executor-memory.js" "$(<"$SOURCE_DIR/lib/task-executor-memory.js")" "external task runner memory sidecar" "$dest_base"
+    remove_legacy_codex_runner_memory "$dest_base"
     write_codex_agent "$dest_base/run-reporting.js" "$(<"$SOURCE_DIR/lib/run-reporting.js")" "external runner reporting helper" "$dest_base"
     write_codex_agent "$dest_base/validation-session.js" "$(<"$SOURCE_DIR/lib/validation-session.js")" "external validation session helper" "$dest_base"
 }

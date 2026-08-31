@@ -26,37 +26,14 @@ function test(name, fn) {
 
 console.log('\napply-codex-skill-policy');
 
-test('requires project gates and reviewer approval on the same unchanged tree', () => {
+test('does not add a Codex-only initial project-gate barrier', () => {
   const exported = applyPolicy('validate', validateSource);
 
-  assert.ok(exported.includes('before the first reviewer batch'));
-  assert.ok(exported.includes('after every fixer mutation, before re-review'));
-  assert.ok(exported.includes('same unchanged worktree state'));
-  assert.ok(exported.includes('Do not declare PASS and then run a mutating fixer'));
-  assert.ok(exported.includes('### 1.75. Project Gate Barrier'));
-  assert.ok(!exported.includes('   - ALL approve → **PASS**, return success'));
-});
-
-test('preserves complete gate failures as stable manifest findings', () => {
-  const exported = applyPolicy('validate', validateSource);
-
-  assert.ok(exported.includes('Never pipe gate output through `tail`'));
-  assert.ok(exported.includes('complete failure inventory'));
-  assert.ok(exported.includes('reported failure count differs from the parsed inventory'));
-  assert.ok(exported.includes('findings-project-gates-iter<N>.json'));
-  assert.ok(exported.includes('command + check + file + normalized message'));
-  assert.ok(exported.includes('category` as `gate:<normalized-command>:<normalized-check>'));
-});
-
-test('keeps unrelated monorepo gate failures outside fixer authority', () => {
-  const exported = applyPolicy('validate', validateSource);
-
-  assert.ok(exported.includes('A failed repository-wide gate is evidence, not automatic repair authority'));
-  assert.ok(exported.includes('selected project root'));
-  assert.ok(exported.includes('original task diff'));
-  assert.ok(exported.includes('Never put an out-of-scope baseline failure in a fixer manifest'));
-  assert.ok(exported.includes('all in-scope checks passed'));
-  assert.ok(exported.includes('stop validation without source mutation'));
+  assert.ok(!exported.includes('### 1.75. Project Gate Barrier'));
+  assert.ok(!exported.includes('findings-project-gates-iter<N>.json'));
+  assert.ok(!exported.includes('agent `project-gates`'));
+  assert.ok(!exported.includes('return to the Project Gate Barrier'));
+  assert.ok(exported.includes('Run every required post-fix project gate on the current worktree'));
 });
 
 test('limits fixer scope and passes complete targeted re-review context', () => {
@@ -67,7 +44,7 @@ test('limits fixer scope and passes complete targeted re-review context', () => 
   assert.ok(exported.includes('prior finding records and status'));
   assert.ok(exported.includes('validated semantic repair claims'));
   assert.ok(exported.includes('repair delta'));
-  assert.ok(exported.includes('current project-gate result'));
+  assert.ok(!exported.includes('current project-gate result'));
   assert.ok(exported.includes('Reviewer prompts may contain only'));
   assert.ok(exported.includes('prior finding IDs/status'));
   assert.ok(exported.includes('Fixer prompts may contain only'));
@@ -115,24 +92,11 @@ test('fixer consumes only validator-authorized requested findings', () => {
   assert.ok(!exported.includes('build it as `{agent}-iter{iteration}-{id}` from each file'));
 });
 
-test('fixer independently rejects unrelated project-gate mutations', () => {
+test('fixer receives no synthetic project-gate authority', () => {
   const exported = applyAgentPolicy('validation-fixer', fixerSource);
 
-  assert.ok(exported.includes('A project-gate finding does not expand the frozen validation baseline'));
-  assert.ok(exported.includes('outside the selected project and original task diff'));
-  assert.ok(exported.includes('concrete causal chain from the task delta'));
-  assert.ok(exported.includes('make no source mutation'));
-});
-
-test('project-gate repair authority includes the complete causal setup closure', () => {
-  const validate = applyPolicy('validate', validateSource);
-  const fixer = applyAgentPolicy('validation-fixer', fixerSource);
-
-  assert.ok(validate.includes('repository-declared local setup is coordinator-owned work'));
-  assert.ok(validate.includes('complete causal dependency closure'));
-  assert.ok(validate.includes('Do not issue one repair finding per newly exposed missing dependency'));
-  assert.ok(fixer.includes('continue through newly exposed failures of the same gate invariant'));
-  assert.ok(fixer.includes('routine local environment setup is not a clarification boundary'));
+  assert.ok(!exported.includes('A project-gate finding does not expand the frozen validation baseline'));
+  assert.ok(exported.includes('continue through newly exposed failures of the same gate invariant'));
 });
 
 test('Codex fixer reports semantic repairs without treating repair size as a blocker', () => {

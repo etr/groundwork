@@ -45,7 +45,7 @@ const CODEX_AGENT_POLICY = {
   researcher: ['gpt-5.6-sol', 'high'],
   'security-reviewer': ['gpt-5.6-sol', 'high'],
   'spec-alignment-checker': ['gpt-5.6-terra', 'high'],
-  'task-executor': ['gpt-5.6-terra', 'high'],
+  'task-executor': ['gpt-5.6-sol', 'high'],
   'test-quality-reviewer': ['gpt-5.6-terra', 'high'],
   'validation-fixer': ['gpt-5.6-terra', 'high'],
 };
@@ -374,17 +374,22 @@ describe('portable shared reference export', () => {
   });
 });
 
-describe('external runner sidecars', () => {
-  test('Codex exports task-executor memory beside the standalone runner without native memory configuration', () => {
-    const root = runInstaller('codex');
-    if (root === null) return;
+describe('external runner support files', () => {
+  test('Codex exports the standalone runner without a Groundwork memory sidecar', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-install-memory-cleanup-'));
+    const sidecar = path.join(root, '.codex', 'task-executor-memory.js');
+    fs.mkdirSync(path.dirname(sidecar), { recursive: true });
+    fs.writeFileSync(sidecar, 'legacy sidecar\n');
+    const installed = runInstaller('codex', { root });
+    if (installed === null) {
+      fs.rmSync(root, { recursive: true, force: true });
+      return;
+    }
     try {
       const runnerDir = path.join(root, '.codex');
       const runner = fs.readFileSync(path.join(runnerDir, 'groundwork-run.js'), 'utf8');
-      const sidecar = path.join(runnerDir, 'task-executor-memory.js');
-      assert.ok(fs.existsSync(sidecar), 'task-executor memory sidecar was not exported');
-      assert.strictEqual(fs.readFileSync(sidecar, 'utf8'), fs.readFileSync(path.join(PLUGIN_ROOT, 'lib', 'task-executor-memory.js'), 'utf8'));
-      assert.match(runner, /task-executor-memory\.js/);
+      assert.strictEqual(fs.existsSync(sidecar), false, 'task-executor memory sidecar was exported');
+      assert.doesNotMatch(runner, /task-executor-memory\.js/);
       assert.doesNotMatch(fs.readFileSync(path.join(runnerDir, 'agents', 'task-executor.toml'), 'utf8'), /memory\s*=/);
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
   });
@@ -1430,7 +1435,7 @@ describe('Codex consumption guardrails', () => {
       assert.ok(validate.includes('prior finding records and status'));
       assert.ok(validate.includes('validated semantic repair claims'));
       assert.ok(validate.includes('repair delta'));
-      assert.ok(validate.includes('current project-gate result'));
+      assert.ok(!validate.includes('current project-gate result'));
       assert.ok(validate.includes('introduced-by-fix'));
       assert.ok(validate.includes('initial-audit-miss'));
       assert.ok(validate.includes('causal_ref'));
@@ -1444,9 +1449,9 @@ describe('Codex consumption guardrails', () => {
       assert.ok(validate.includes('notification-driven long waits'));
       assert.ok(!validate.includes('one-minute polling'));
       assert.ok(validate.includes('Never issue fixed-interval status polls'));
-      assert.ok(validate.includes('Never pipe gate output through `tail`'));
-      assert.ok(validate.includes('findings-project-gates-iter<N>.json'));
-      assert.ok(validate.includes('same unchanged worktree state'));
+      assert.ok(!validate.includes('### 1.75. Project Gate Barrier'));
+      assert.ok(!validate.includes('findings-project-gates-iter<N>.json'));
+      assert.ok(!validate.includes('agent `project-gates`'));
       assert.ok(validate.includes('Emit every independent reviewer `spawn_agent` call in one batch'));
       assert.ok(validate.includes('recommended twelve slots'));
       assert.ok(validate.includes('max_concurrent_threads_per_session = 12'));
