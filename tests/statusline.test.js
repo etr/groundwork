@@ -84,7 +84,13 @@ function waitForProcessExits(pidFile) {
 function runRenderer({ cwd, home, input, fakeCommands = {}, env = {} }) {
   const fakeBin = path.join(home, 'fake-bin');
   fs.mkdirSync(fakeBin, { recursive: true });
-  for (const [name, body] of Object.entries(fakeCommands)) {
+  const isolatedCommands = {
+    // Rendering tests must not inherit host-installed tools that launch detached
+    // cache refreshes into the temporary HOME. Refresh tests opt in explicitly.
+    nohup: 'exit 0',
+    ...fakeCommands,
+  };
+  for (const [name, body] of Object.entries(isolatedCommands)) {
     writeExecutable(path.join(fakeBin, name), `#!/usr/bin/env bash\n${body}\n`);
   }
   return execFileSync('bash', [SCRIPT], {
@@ -338,7 +344,6 @@ test('renders the selected project from a manual plugin installation', () => {
       input: basicInput(tmp),
       fakeCommands: {
         gh: 'exit 127',
-        nohup: '"$@"',
         tmux: 'printf \'/dev/pts/42\\n\'',
       },
       env: { TMUX_PANE: '%1' },

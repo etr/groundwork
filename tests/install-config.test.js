@@ -258,14 +258,21 @@ function createAgentFixture(agentMarkdown) {
   fs.mkdirSync(path.join(source, 'skills'));
   fs.mkdirSync(path.join(source, 'agents', 'fixture-agent'), { recursive: true });
   fs.mkdirSync(path.join(source, 'lib'));
+  fs.mkdirSync(path.join(source, 'bin'));
   fs.writeFileSync(path.join(source, 'install-config.txt'), '');
   fs.writeFileSync(path.join(source, 'agents', 'fixture-agent', 'AGENT.md'), agentMarkdown);
+  fs.copyFileSync(
+    path.join(PLUGIN_ROOT, 'bin', 'groundwork-run.js'),
+    path.join(source, 'bin', 'groundwork-run.js')
+  );
   for (const file of [
     'transform-agents.js',
     'render-codex-agent.js',
     'write-codex-agent.js',
     'remove-legacy-codex-agent-skill.js',
     'apply-codex-skill-policy.js',
+    'run-reporting.js',
+    'validation-session.js',
   ]) {
     const original = path.join(PLUGIN_ROOT, 'lib', file);
     if (fs.existsSync(original)) fs.copyFileSync(original, path.join(source, 'lib', file));

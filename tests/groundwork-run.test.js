@@ -5489,12 +5489,18 @@ describe('four-phase orchestration', () => {
       assert.ok(fs.existsSync(path.join(root, 'feature.txt')));
       assert.ok(fs.readFileSync(path.join(root, 'specs', 'tasks.md'), 'utf8').includes('**Status:** Complete'));
       assert.strictEqual(git(root, 'status', '--porcelain'), '');
-      const subjects = git(root, 'log', '--format=%s').split('\n');
-      assert.deepStrictEqual(subjects.slice(0, 3), [
-        'Merge TASK-004: Add the planned feature',
-        'TASK-004: Mark task complete',
-        'TASK-004: Add the planned feature',
-      ]);
+      assert.strictEqual(
+        git(root, 'show', '-s', '--format=%s', 'HEAD'),
+        'Merge TASK-004: Add the planned feature'
+      );
+      assert.strictEqual(
+        git(root, 'show', '-s', '--format=%s', 'HEAD^2'),
+        'TASK-004: Mark task complete'
+      );
+      assert.strictEqual(
+        git(root, 'show', '-s', '--format=%s', 'HEAD^2^'),
+        'TASK-004: Add the planned feature'
+      );
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
