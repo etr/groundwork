@@ -1,6 +1,6 @@
 # Groundwork
 
-A comprehensive skills library for Claude Code, consolidating proven techniques for planning, design, TDD, debugging, collaboration, and problem-solving.
+A comprehensive skills library for Claude Code and Codex, consolidating proven techniques for planning, design, TDD, debugging, collaboration, and problem-solving. Experimental exports are also available for OpenCode, Kiro, and Pi.
 
 ## Installation
 
@@ -35,21 +35,21 @@ git clone https://github.com/etr/groundwork.git
 
 Or use the installer provided with the codebase.
 
-### Other Platforms (Experimental)
+### Multi-target Installer
 
-> **Warning:** Installation on platforms other than Claude Code is experimental. Skills and agents are automatically transformed to work without Claude Code's plugin system, but some features (hooks, slash commands, skill chaining) may not work identically. Use at your own risk.
+Groundwork supports Claude Code and Codex. Exports for OpenCode, Kiro, and Pi are experimental: the installer transforms Claude Code-specific constructs for those harnesses, but hooks, invocation, and skill chaining may not behave identically.
 
-Groundwork skills and agents can be installed into other AI coding tools using the included installer script. The installer transforms skill content to remove Claude Code-specific constructs and adapts the format for each target.
+The included installer adapts Groundwork skills and agents to each target's native format. Claude Code users should normally use the marketplace; Codex users should use the installer.
 
 #### Supported Targets
 
-| Target | Flag | Description |
-|--------|------|-------------|
-| [Codex CLI](https://github.com/openai/codex) | `--codex` | Agents are installed as native custom-agent TOML files with Codex model and reasoning settings |
-| [OpenCode](https://github.com/opencode-ai/opencode) | `--opencode` | Agents are installed as standalone agent files |
-| [Kiro](https://kiro.dev) | `--kiro` | Agents use JSON config + prompt file pairs |
-| Pi | `--pi` | Agents install as `review-`prefixed skills, plus a pre-built TypeScript extension (`pi-extension/`) |
-| Claude Code | `--claude-code` | Recommends the marketplace install (no transformation needed) |
+| Target | Flag | Maturity | Description |
+|--------|------|----------|-------------|
+| Claude Code | `--claude-code` | Supported | Recommends the marketplace install; an explicit opt-in allows a full plugin copy with no transformation |
+| [Codex CLI](https://github.com/openai/codex) | `--codex` | Supported | Installs skills, native custom-agent TOML files with Codex model and reasoning settings, and the external task runner |
+| [OpenCode](https://github.com/opencode-ai/opencode) | `--opencode` | Experimental | Installs transformed skills and standalone agent files |
+| [Kiro](https://kiro.dev) | `--kiro` | Experimental | Installs transformed skills and JSON config + prompt file pairs for agents |
+| Pi | `--pi` | Experimental | Installs transformed skills, `review-`prefixed agent skills, and a pre-built TypeScript extension (`pi-extension/`) |
 
 ##### Codex Agent Conversion
 
@@ -118,20 +118,16 @@ You can install to multiple targets at once:
 
 - **Skills** — Workflow definitions (planning, TDD, debugging, etc.) are installed with a `groundwork-` prefix. On OpenCode, skill dependencies are automatically inlined as appendix sections.
 - **Agents** — Verification and review agents (code quality, security, architecture alignment, etc.) are installed in each target's native agent format.
-- **Hooks** — Not installed automatically. Event-driven automations (session start, pre-compact, commit alignment) require manual setup for each tool.
-- **Slash invocation** — Not applicable on other tools. Groundwork has no separate commands layer; other tools discover skills directly by name rather than through Claude Code slash commands.
+- **Hooks** — Included in the Claude Code plugin. Transformed exports do not install equivalent harness hooks automatically.
+- **Invocation** — Claude Code exposes `/groundwork:<name>` slash commands. Other harnesses discover the exported `groundwork-<name>` skills using their native skill interface.
 
-#### Limitations
+#### Cross-harness Limitations
 
-- Hooks (`SessionStart`, `PreCompact`, `PostToolUse`) are not portable and must be configured manually for each tool
+- Claude Code hooks (`SessionStart`, `PreCompact`, `PostToolUse`) are not portable and must be configured manually in other harnesses
 - On OpenCode, complex multi-skill workflows may lose interactivity since skill dependencies are inlined as static appendix sections rather than invoked at runtime
 - Update checking is not available outside Claude Code
 
-#### Task-runner isolation
-
-The task runner uses a linked worktree per selected task. It does not snapshot, roll back, or police other worktrees after a phase or repair session. Scoped leases still order runners that share Git state, and the normal phase handoffs still verify the selected task worktree and commit/merge results. Use OS sandboxing or private clones when hostile-process isolation is required.
-
-### Verify Installation
+### Verify the Claude Code Installation
 
 Restart Claude Code or start a new session. You should see:
 - Start typing `/groundwork:`. It should show groundwork skills available
@@ -203,7 +199,7 @@ Analyze existing code to generate initial specifications:
 
 ## Skills
 
-Every Groundwork capability is a skill. User-facing skills are invoked as slash commands, all prefixed with `groundwork:` (e.g., `/groundwork:design-product`); the prefix can be omitted if no other plugin uses the same name. Some skills are also invoked automatically by the model when relevant, and a few low-level "library" skills are used only by other skills (not listed below).
+Every Groundwork capability is a skill. The examples below use Claude Code's slash syntax: `/groundwork:<name>` (the prefix can be omitted if no other plugin uses the same name). Codex and the experimental exports install applicable capabilities as `groundwork-<name>` skills for native discovery and invocation. Some skills are also invoked automatically by the model when relevant, and a few low-level "library" skills are used only by other skills (not listed below).
 
 ### Planning Skills
 
@@ -391,9 +387,17 @@ Execute all remaining tasks in dependency order inside the current conversation:
 
 All task phases run inline. This remains useful for small batches and interactive oversight.
 
-#### Fresh-session terminal harness
+### External Task Runner
 
-The external runner is a start-once completion harness: it keeps driving the selected task set until every task is implemented, validated, integrated, and marked complete. It starts a new non-persistent Claude Code or ephemeral Codex process for each phase: `plan-task → implement-task → validate → finalize-task`. Only compact result lines and verified Git state cross phase boundaries.
+The external runner is a start-once completion harness for Claude Code and Codex. Give it one or more implementation tasks, a range, or all remaining tasks; it creates an isolated linked worktree for each selected task and drives `plan-task → implement-task → validate → finalize-task` until the work is implemented, validated, integrated, and marked complete.
+
+The runner is valuable when work should continue unattended. Fresh processes keep phase context focused, durable checkpoints make interrupted runs resumable, repair sessions handle recoverable failures, and verified Git handoffs prevent a model's claim of success from being treated as proof. Read-only status and logs expose phase progress, validation rounds, reviewer state, and credential-redacted diagnostics while it runs.
+
+Use the runner for well-specified tasks when you want hands-off completion, repeatable validation, or a batch processed in dependency order. Use the same skills manually when requirements or architecture still need discussion, you want to approve each phase, or the change is small enough that an interactive session is simpler. The runner can commit and merge completed task work into the local base branch, so start it only when that workflow is intended.
+
+Each phase runs in a fresh Claude Code or Codex process with the harness's native session persistence enabled. Groundwork passes compact receipts and verified Git state between phases; it neither disables native memory nor copies memory between harnesses.
+
+#### Usage
 
 ```bash
 node /path/to/groundwork/bin/groundwork-run.js task TASK-004 --harness claude
@@ -406,7 +410,7 @@ node /path/to/groundwork/bin/groundwork-run.js status TASK-005 --project api
 node /path/to/groundwork/bin/groundwork-run.js logs TASK-005 --project api --tail 40 --follow
 ```
 
-Codex exports install the runner at `~/.codex/groundwork-run.js` for user scope or `.codex/groundwork-run.js` for project scope. The runner creates each linked task worktree before planning and runs every phase from its project root. It repeatedly chooses the lowest-numbered currently unblocked task, so dependency constraints take precedence and numeric priority breaks ties. The workflow is plainly `plan-task → implement-task → validate → finalize-task`. When any phase invocation, receipt, or handoff fails, a fresh repair session receives the diagnostic, fixes the current selected-task worktree, and the runner retries that same phase. Repair changes remain for the retried phase and its normal commit flow; recovery creates no snapshots, rollback transaction, special commit, or repository-wide boundary comparison. Repair never publishes.
+Run the repository's `bin/groundwork-run.js` with either harness. Codex exports also install it at `~/.codex/groundwork-run.js` for user scope or `.codex/groundwork-run.js` for project scope. The runner creates each linked task worktree before planning and runs every phase from its project root. It repeatedly chooses the lowest-numbered currently unblocked task, so dependency constraints take precedence and numeric priority breaks ties. When any phase invocation, receipt, or handoff fails, a fresh repair session receives the diagnostic, fixes the current selected-task worktree, and the runner retries that same phase. Repair changes remain for the retried phase and its normal commit flow; recovery creates no snapshots, rollback transaction, special commit, or repository-wide boundary comparison. Repair sessions never publish.
 
 Range bounds are inclusive; either `--from` or `--to` may be used alone. Dependencies outside a selected list or range must already be complete. Default output is semantic: phase transitions, validation stages, named gate outcomes, repair summaries, next actions, and a heartbeat tied to the last known semantic state. Add `--verbose` to show sanitized commands and selected tool activity. Generic turn events and successful short-command completions remain suppressed; command failures and commands lasting at least 10 seconds remain visible.
 
@@ -424,7 +428,11 @@ In runner mode, agents leave prepared changes and return token-bound JSON receip
 
 The same four skills remain manually callable. Manual `finalize-task` still commits remaining validated work, merges into the base branch, and cleans up. In a monorepo, pass `--project <name>` to each phase.
 
-#### Swarming Mode (Claude Code only)
+#### Isolation boundary
+
+The runner isolates each selected task in a linked worktree. It does not snapshot, roll back, or police other worktrees after a phase or repair session. Scoped leases still order runners that share Git state, and phase handoffs verify the selected task worktree and commit/merge results. Use OS sandboxing or private clones when hostile-process isolation is required.
+
+### Swarming Mode (Claude Code only)
 
 For parallel task execution, use swarming mode to run each task in its own agent-team session:
 
@@ -451,7 +459,7 @@ Parallel mode groups tasks by dependency level and runs independent tasks simult
 }
 ```
 
-#### Swarm Debugging (Claude Code only)
+### Swarm Debugging (Claude Code only)
 
 When a bug has multiple plausible root causes, spawn an agent team to investigate hypotheses in parallel:
 
