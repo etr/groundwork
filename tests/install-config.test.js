@@ -1402,7 +1402,8 @@ describe('Codex consumption guardrails', () => {
       assert.ok(workOn.includes('Codex Phase Isolation'));
       assert.ok(workOn.includes('fresh validation coordinator'));
       assert.ok(workOn.includes('`fork_turns="none"`'));
-      assert.ok(workOn.includes('model `gpt-5.6-sol` at `high` effort'));
+      assert.ok(workOn.includes('model `gpt-5.6-terra` at `high` effort'));
+      assert.ok(!workOn.includes('model `gpt-5.6-sol` at `high` effort'));
       assert.ok(!workOn.includes('model `gpt-5.6-terra` at `medium` effort'));
       assert.ok(!workOn.includes('Optional Context Clear Pause'));
       assert.ok(!workOn.includes('run `/compact`'));
@@ -1465,10 +1466,12 @@ describe('Codex consumption guardrails', () => {
       assert.ok(validate.includes('recommended twelve slots'));
       assert.ok(validate.includes('max_concurrent_threads_per_session = 12'));
       assert.ok(validate.includes('Do not modify `~/.codex/config.toml`'));
-      assert.ok(validate.includes('Use Sol/high for the validation coordinator'));
+      assert.ok(validate.includes('Use Terra/high for the validation coordinator'));
+      assert.ok(!validate.includes('Use Sol/high for the validation coordinator'));
       assert.ok(!validate.includes('Terra at medium effort is the default coordinator'));
       assert.ok(!validate.includes('Use Terra/medium for routine orchestration'));
       assert.ok(validate.includes('two or more reviewer domains'));
+      assert.ok(validate.includes('closure review rejected the immediately preceding fix'));
       assert.ok(validate.includes('model `gpt-5.6-sol`'));
       assert.ok(validate.includes('`reasoning_effort: "high"`'));
       assert.ok(!validate.includes('max_validation_iterations'));

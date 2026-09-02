@@ -75,7 +75,10 @@ test('turns Codex rechecks into causal closure reviews', () => {
 test('makes cross-domain Sol elevation and concurrent fan-out executable', () => {
   const exported = applyPolicy('validate', validateSource);
 
+  assert.ok(exported.includes('Use Terra/high for the validation coordinator'));
+  assert.ok(!exported.includes('Use Sol/high for the validation coordinator'));
   assert.ok(exported.includes('two or more reviewer domains'));
+  assert.ok(exported.includes('closure review rejected the immediately preceding fix'));
   assert.ok(exported.includes('spawn a default agent with `fork_turns="none"`, model `gpt-5.6-sol`, and `reasoning_effort: "high"`'));
   assert.ok(exported.includes('Emit every independent reviewer `spawn_agent` call in one batch'));
   assert.ok(exported.includes('wait once for the batch'));

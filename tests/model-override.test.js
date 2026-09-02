@@ -253,6 +253,9 @@ describe('Codex model overrides', () => {
         path.join(root, '.codex', 'skills', 'groundwork-validate', 'SKILL.md'),
         'utf8'
       );
+      assert.ok(validate.includes('Use glm-5.3-flash/max for the validation coordinator'));
+      assert.ok(validate.includes('closure review rejected the immediately preceding fix'));
+      assert.ok(validate.includes('model `glm-5.3`'));
       assert.ok(validate.includes('glm-5.3'));
       assert.ok(!validate.includes('gpt-5.6-sol'));
       assert.ok(!validate.includes('Sol/high'));
