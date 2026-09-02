@@ -1,0 +1,8 @@
+{
+  "effort": "max",
+  "translation": {
+    "light": "glm-5.3-flash",
+    "balanced": "glm-5.3-flash",
+    "deep": "glm-5.3"
+  }
+}

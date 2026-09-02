@@ -71,6 +71,67 @@ Supported effort values (`low`, `medium`, `high`, and `max`) are preserved as
 effort values stop the install with an explicit error so a silent fallback
 cannot select an unintended model.
 
+##### Codex Model Overrides
+
+The Codex export can translate Groundwork's model policy without editing the
+Claude-native source skills. Pass a JSON file with `--model-override`:
+
+```bash
+./install-skills.sh --codex --global --force \
+  --model-override model-overrides/glm.json
+```
+
+The file has three logical tiers:
+
+| Tier | Current default | Groundwork meaning |
+|------|-----------------|--------------------|
+| `light` | `gpt-5.6-luna` / Claude `haiku` | monitoring and lightweight work |
+| `balanced` | `gpt-5.6-terra` / Claude `sonnet` | routine orchestration and bounded work |
+| `deep` | `gpt-5.6-sol` / Claude `opus[1m]` | implementation, validation, security, and escalation |
+
+A custom file may translate any subset of tiers and optionally force all
+installer-controlled reasoning policies to one effort:
+
+```json
+{
+  "effort": "max",
+  "translation": {
+    "light": "glm-5.3-flash",
+    "balanced": "glm-5.3-flash",
+    "deep": "glm-5.3"
+  },
+  "skills": {
+    "validate": "glm-5.3"
+  },
+  "agents": {
+    "task-executor": "glm-5.3"
+  }
+}
+```
+
+`translation` supplies the default actual model. Exact `skills` and `agents`
+entries are exceptions and use canonical Groundwork IDs such as `validate` and
+`task-executor`—not installed names such as `groundwork-validate`. A skill with
+no installer-controlled model directive continues inheriting the active Codex
+model; the installer rejects an exact override that would have no effect.
+
+The builtin conversion itself is versioned as
+`lib/codex-model-policy.json` and is the base policy for every install. A
+`--model-override` file is only an overlay; it does not replace or deselect the
+builtin validation rules.
+
+The bundled `model-overrides/glm.json` uses only `glm-5.3` and
+`glm-5.3-flash`, both at `max` effort; Flash handles both `light` and
+`balanced`, while `glm-5.3` is reserved for `deep`. With Codex itself
+configured for a GLM model, it prevents Groundwork's exported agent and
+subagent directives from
+selecting the built-in GPT models. It does not change unrelated Codex skills,
+custom agents, or user configuration.
+
+The option is Codex-only and must be the sole selected target. Existing files
+changed by an override require `--force`. Use `--dry-run` to validate the file
+and preview its effective values without writing output.
+
 When installing Codex agents, the installer also removes the exact legacy
 `.codex/skills/review-<bundled-agent>/SKILL.md` file for each bundled Groundwork
 agent. It does not use a wildcard: unrelated `review-*` skills and any sidecar
@@ -113,6 +174,7 @@ You can install to multiple targets at once:
 | `--dry-run` | Preview actions without making changes |
 | `--skills-only` | Install only skills (skip agents) |
 | `--source DIR` | Groundwork source directory (default: auto-detect) |
+| `--model-override FILE` | Apply a Codex-only model translation/exact-override JSON file |
 
 #### What Gets Installed
 

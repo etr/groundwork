@@ -13,6 +13,7 @@ SKILLS_ONLY=false
 ALLOW_MANUAL_CLAUDE=false
 SOURCE_DIR=""
 BODY_SED_CMDS=""           # Pre-built sed commands for name mapping
+MODEL_OVERRIDE_FILE=""      # Optional Codex model policy JSON
 
 # Counters
 SKILL_COUNT=0
@@ -44,12 +45,15 @@ Options:
   --dry-run        Preview actions without making changes
   --skills-only    Install only skills (skip agents)
   --source DIR     Groundwork source dir (default: auto-detect from script location)
+  --model-override FILE
+                   Apply a Codex model translation/exact-override JSON file
   --allow-manual-claude-code-install
                    Allow manual file-copy install for Claude Code
   --help           Show help
 
 Examples:
   ./install-skills.sh --codex --global --dry-run
+  ./install-skills.sh --codex --global --model-override model-overrides/glm.json
   ./install-skills.sh --kiro --project --force
   ./install-skills.sh --codex --opencode --global
   ./install-skills.sh --pi --global
@@ -73,6 +77,13 @@ parse_args() {
             --skills-only) SKILLS_ONLY=true ;;
             --allow-manual-claude-code-install) ALLOW_MANUAL_CLAUDE=true ;;
             --source)      shift; SOURCE_DIR="$1" ;;
+            --model-override)
+                           shift
+                           if [[ $# -eq 0 ]]; then
+                               echo "Error: --model-override requires a file path" >&2
+                               exit 1
+                           fi
+                           MODEL_OVERRIDE_FILE="$1" ;;
             --help)        usage; exit 0 ;;
             *)             echo "Error: Unknown option: $1"; echo; usage; exit 1 ;;
         esac
@@ -80,12 +91,17 @@ parse_args() {
     done
 
     if [[ ${#TARGETS[@]} -eq 0 ]]; then
-        echo "Error: At least one target required (--claude-code, --codex, --opencode, --kiro, --pi)"
+        echo "Error: At least one target required (--claude-code, --codex, --opencode, --kiro, --pi)" >&2
         exit 1
     fi
 
     if [[ -z "$SCOPE" ]]; then
-        echo "Error: Scope required (--global or --project)"
+        echo "Error: Scope required (--global or --project)" >&2
+        exit 1
+    fi
+
+    if [[ -n "$MODEL_OVERRIDE_FILE" && ( ${#TARGETS[@]} -ne 1 || "${TARGETS[0]}" != "codex" ) ]]; then
+        echo "Error: --model-override requires --codex as the only target" >&2
         exit 1
     fi
 }
@@ -189,6 +205,50 @@ load_config() {
     done
 }
 
+load_model_override() {
+    if [[ -z "$MODEL_OVERRIDE_FILE" ]]; then
+        return 0
+    fi
+
+    local args=(--source "$SOURCE_DIR" --file "$MODEL_OVERRIDE_FILE")
+    [[ "$SKILLS_ONLY" == true ]] && args+=(--skills-only)
+    node "$SOURCE_DIR/lib/model-override.js" validate "${args[@]}"
+}
+
+preflight_model_override_replacements() {
+    if [[ -z "$MODEL_OVERRIDE_FILE" || "$DRY_RUN" == true || "$FORCE" == true ]]; then
+        return 0
+    fi
+
+    local dest_base
+    dest_base=$(get_dest_base "codex")
+
+    local skill_dir skill_name skill_file installed dest
+    for skill_dir in "$SOURCE_DIR"/skills/*/; do
+        skill_name=$(basename "$skill_dir")
+        skill_file="$skill_dir/SKILL.md"
+        [[ -f "$skill_file" ]] || continue
+        should_export_skill "codex" "$skill_name" || continue
+        installed=$(installed_name "$skill_name")
+        [[ "$installed" == "drop" ]] && continue
+        dest="$dest_base/skills/$installed/SKILL.md"
+        require_model_override_replacement "$dest" "skill" "$skill_name"
+    done
+
+    if [[ "$SKILLS_ONLY" == true ]]; then
+        return 0
+    fi
+
+    local agent_dir agent_name agent_file
+    for agent_dir in "$SOURCE_DIR"/agents/*/; do
+        agent_name=$(basename "$agent_dir")
+        agent_file="$agent_dir/AGENT.md"
+        [[ -f "$agent_file" ]] || continue
+        dest="$dest_base/agents/${agent_name}.toml"
+        require_model_override_replacement "$dest" "agent" "$agent_name"
+    done
+}
+
 # ============================================================
 # Destination paths
 # ============================================================
@@ -229,59 +289,26 @@ get_body() {
     echo "$1" | awk 'BEGIN{c=0} /^---$/{c++;if(c==2){f=1;next}} f{print}'
 }
 
-codex_model_for_claude() {
-    local model="$1"
-    case "$model" in
-        ""|inherit) echo "" ;;
-        sonnet) echo "gpt-5.6-terra" ;;
-        'opus[1m]') echo "gpt-5.6-sol" ;;
-        *)
-            echo "Error: No Codex model mapping for Claude model '$model'" >&2
-            return 1
-            ;;
-    esac
-}
+# Resolve builtin and user-overridden Codex agent policy in one place. The
+# builtin policy is versioned in lib/codex-model-policy.json.
+resolve_codex_agent_policy() {
+    local agent_name="$1" source_model="$2" source_effort="$3"
+    local args=(
+        resolve-agent
+        --format shell
+        --name "$agent_name"
+        --source-model "$source_model"
+        --source-effort "$source_effort"
+    )
+    [[ -n "$MODEL_OVERRIDE_FILE" ]] && args+=(--file "$MODEL_OVERRIDE_FILE")
 
-codex_effort_for_claude() {
-    local effort="$1"
-    case "$effort" in
-        "") echo "" ;;
-        low|medium|high|max) echo "$effort" ;;
-        *)
-            echo "Error: No Codex reasoning-effort mapping for Claude effort '$effort'" >&2
-            return 1
-            ;;
-    esac
-}
-
-codex_model_for_agent() {
-    local agent_name="$1" source_model="$2"
-    case "$agent_name" in
-        architecture-task-alignment-checker|code-simplifier|conventions-reviewer|design-task-alignment-checker|housekeeper|prd-task-alignment-checker)
-            echo "gpt-5.6-luna"
-            ;;
-        architecture-alignment-checker|cloud-infrastructure-reviewer|code-quality-reviewer|design-consistency-checker|performance-reviewer|prd-architecture-checker|spec-alignment-checker|test-quality-reviewer|validation-fixer)
-            echo "gpt-5.6-terra"
-            ;;
-        researcher|security-reviewer|task-executor)
-            echo "gpt-5.6-sol"
-            ;;
-        *)
-            codex_model_for_claude "$source_model"
-            ;;
-    esac
-}
-
-codex_effort_for_agent() {
-    local agent_name="$1" source_effort="$2"
-    case "$agent_name" in
-        architecture-alignment-checker|architecture-task-alignment-checker|cloud-infrastructure-reviewer|code-quality-reviewer|code-simplifier|conventions-reviewer|design-consistency-checker|design-task-alignment-checker|housekeeper|performance-reviewer|prd-architecture-checker|prd-task-alignment-checker|researcher|security-reviewer|spec-alignment-checker|task-executor|test-quality-reviewer|validation-fixer)
-            echo "high"
-            ;;
-        *)
-            codex_effort_for_claude "$source_effort"
-            ;;
-    esac
+    local resolved
+    resolved=$(node "$SOURCE_DIR/lib/model-override.js" "${args[@]}")
+    if [[ "$resolved" != *$'\t'* ]]; then
+        echo "Error: Invalid Codex agent model policy result: $resolved" >&2
+        return 1
+    fi
+    IFS=$'\t' read -r CODEX_AGENT_MODEL CODEX_AGENT_EFFORT <<< "$resolved"
 }
 
 # Recursively inline required skill bodies into a parent skill.
@@ -491,6 +518,39 @@ EOF
 # ============================================================
 # File writing
 # ============================================================
+
+model_override_affects() {
+    local kind="$1" name="$2"
+    [[ -z "$MODEL_OVERRIDE_FILE" ]] && return 1
+
+    local result
+    result=$(node "$SOURCE_DIR/lib/model-override.js" affects \
+        --file "$MODEL_OVERRIDE_FILE" \
+        --source "$SOURCE_DIR" \
+        --kind "$kind" \
+        --name "$name")
+    [[ "$result" == "yes" ]]
+}
+
+require_model_override_replacement() {
+    local dest="$1" kind="$2" name="$3"
+    [[ "$DRY_RUN" == true ]] && return 0
+    [[ "$FORCE" == true ]] && return 0
+    model_override_affects "$kind" "$name" || return 0
+
+    if [[ -e "$dest" || -L "$dest" ]]; then
+        echo "Error: $dest exists and the model override changes it; rerun with --force" >&2
+        exit 1
+    fi
+}
+
+transform_codex_model_override() {
+    local kind="$1" name="$2" content="$3"
+    local args=(--kind "$kind" --name "$name")
+    [[ -n "$MODEL_OVERRIDE_FILE" ]] && args+=(--file "$MODEL_OVERRIDE_FILE")
+
+    printf '%s\n' "$content" | node "$SOURCE_DIR/lib/model-override.js" transform "${args[@]}"
+}
 
 write_file() {
     local dest="$1" content="$2" label="$3"
@@ -723,6 +783,9 @@ $new_body"
 
 $new_body"
         fi
+        if [[ "$target" == "codex" ]]; then
+            new_body=$(transform_codex_model_override "skill" "$skill_name" "$new_body")
+        fi
         result="$new_fm
 $new_body"
 
@@ -736,6 +799,9 @@ $new_body"
             pi)       dest="$dest_base/skills/$installed/SKILL.md" ;;
         esac
 
+        if [[ "$target" == "codex" ]]; then
+            require_model_override_replacement "$dest" "skill" "$skill_name"
+        fi
         write_file "$dest" "$result" "skill"
         write_portable_references "$raw_body" "$(dirname "$dest")"
         write_portable_skill_resources "$raw_body" "$skill_dir" "$(dirname "$dest")"
@@ -810,6 +876,7 @@ install_agents_for_target() {
         if [[ "$target" == "codex" ]]; then
             new_body=$(printf '%s\n' "$new_body" | node \
                 "$SOURCE_DIR/lib/apply-codex-skill-policy.js" --agent "$agent_name")
+            new_body=$(transform_codex_model_override "agent" "$agent_name" "$new_body")
         fi
 
         local dest_base
@@ -821,8 +888,9 @@ install_agents_for_target() {
                 local claude_model claude_effort codex_model codex_effort
                 claude_model=$(get_fm_value "$content" "model")
                 claude_effort=$(get_fm_value "$content" "effort")
-                codex_model=$(codex_model_for_agent "$agent_name" "$claude_model")
-                codex_effort=$(codex_effort_for_agent "$agent_name" "$claude_effort")
+                resolve_codex_agent_policy "$agent_name" "$claude_model" "$claude_effort"
+                codex_model="$CODEX_AGENT_MODEL"
+                codex_effort="$CODEX_AGENT_EFFORT"
 
                 local render_args=(
                     --name "$agent_name"
@@ -835,6 +903,7 @@ install_agents_for_target() {
                 codex_agent=$(printf '%s' "$new_body" | node \
                     "$SOURCE_DIR/lib/render-codex-agent.js" "${render_args[@]}")
                 local dest="$dest_base/agents/${agent_name}.toml"
+                require_model_override_replacement "$dest" "agent" "$agent_name"
                 write_codex_agent "$dest" "$codex_agent" "agent" "$dest_base"
                 if [[ "$agent_name" == "validation-fixer" ]]; then
                     write_codex_agent "$dest_base/agents/$agent_name/scripts/validate-fixer-result.js" \
@@ -926,6 +995,8 @@ main() {
     parse_args "$@"
     auto_detect_source
     load_config
+    load_model_override
+    preflight_model_override_replacements
 
     echo "Groundwork Installer"
     echo "  Source: $SOURCE_DIR"

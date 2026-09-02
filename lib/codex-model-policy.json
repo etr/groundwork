@@ -1,0 +1,33 @@
+{
+  "translation": {
+    "light": "gpt-5.6-luna",
+    "balanced": "gpt-5.6-terra",
+    "deep": "gpt-5.6-sol"
+  },
+  "sourceModels": {
+    "": "inherit",
+    "inherit": "inherit",
+    "sonnet": "balanced",
+    "opus[1m]": "deep"
+  },
+  "agents": {
+    "architecture-alignment-checker": { "tier": "balanced", "effort": "high" },
+    "architecture-task-alignment-checker": { "tier": "light", "effort": "high" },
+    "cloud-infrastructure-reviewer": { "tier": "balanced", "effort": "high" },
+    "code-quality-reviewer": { "tier": "balanced", "effort": "high" },
+    "code-simplifier": { "tier": "light", "effort": "high" },
+    "conventions-reviewer": { "tier": "light", "effort": "high" },
+    "design-consistency-checker": { "tier": "balanced", "effort": "high" },
+    "design-task-alignment-checker": { "tier": "light", "effort": "high" },
+    "housekeeper": { "tier": "light", "effort": "high" },
+    "performance-reviewer": { "tier": "balanced", "effort": "high" },
+    "prd-architecture-checker": { "tier": "balanced", "effort": "high" },
+    "prd-task-alignment-checker": { "tier": "light", "effort": "high" },
+    "researcher": { "tier": "deep", "effort": "high" },
+    "security-reviewer": { "tier": "deep", "effort": "high" },
+    "spec-alignment-checker": { "tier": "balanced", "effort": "high" },
+    "task-executor": { "tier": "deep", "effort": "high" },
+    "test-quality-reviewer": { "tier": "balanced", "effort": "high" },
+    "validation-fixer": { "tier": "balanced", "effort": "high" }
+  }
+}

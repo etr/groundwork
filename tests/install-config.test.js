@@ -271,6 +271,8 @@ function createAgentFixture(agentMarkdown) {
     'write-codex-agent.js',
     'remove-legacy-codex-agent-skill.js',
     'apply-codex-skill-policy.js',
+    'model-override.js',
+    'codex-model-policy.json',
     'run-reporting.js',
     'validation-session.js',
   ]) {
