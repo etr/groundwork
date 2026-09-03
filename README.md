@@ -71,7 +71,7 @@ Supported effort values (`low`, `medium`, `high`, and `max`) are preserved as
 effort values stop the install with an explicit error so a silent fallback
 cannot select an unintended model.
 
-##### Codex Model Overrides
+#### Codex Model Overrides
 
 The Codex export can translate Groundwork's model policy without editing the
 Claude-native source skills. Pass a JSON file with `--model-override`:
