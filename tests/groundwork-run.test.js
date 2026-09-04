@@ -2242,7 +2242,7 @@ for (let index = 0; index < 100000; index++) fs.writeSync(1, record);
     assert.strictEqual(codex.command, 'codex');
     assert.strictEqual(codex.args[0], 'exec');
     assert.ok(!codex.args.includes('--ephemeral'));
-    assert.ok(codex.args.includes('--approve-for-me'));
+    assert.ok(!codex.args.includes('--approve-for-me'));
     assert.ok(!codex.args.includes('--sandbox'));
     assert.ok(codex.args.includes('--json'));
     assert.ok(codex.args.includes('--color'));
@@ -2293,7 +2293,7 @@ for (let index = 0; index < 100000; index++) fs.writeSync(1, record);
       prompt: 'recover',
       resultFile: '/tmp/result',
     });
-    assert.ok(codex.args.includes('--approve-for-me'));
+    assert.ok(!codex.args.includes('--approve-for-me'));
     assert.ok(!codex.args.includes('--sandbox'));
     assert.deepStrictEqual(
       codex.args.slice(codex.args.indexOf('--cd'), codex.args.indexOf('--cd') + 2),

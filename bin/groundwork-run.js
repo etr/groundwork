@@ -2228,7 +2228,6 @@ function buildInvocation({ harness, phase, cwd, pluginRoot, prompt, resultFile }
       command: 'codex',
       args: [
         'exec',
-        '--approve-for-me',
         '--cd', cwd,
         '--json',
         '--color', 'never',
