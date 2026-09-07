@@ -24,8 +24,9 @@ groundwork/
 │   └── engineering-principles.md  # Named-principle vocabulary (deep modules, Hyrum's Law, Chesterton's Fence, …)
 ├── tests/                      # Node test suites; run via tests/run-tests.sh
 ├── docs/                       # User-facing documentation
-├── install-skills.sh           # Multi-target export installer (Codex, OpenCode, Kiro, Pi)
+├── install-skills.sh           # Multi-target export installer (Codex, OpenCode, Kiro, Pi, ZCode)
 ├── install-config.txt          # Export exceptions (drops + renames); fail-closed by default
+├── build-zcode-marketplace.sh  # Packages the --zcode-plugin export as a ZCode marketplace (dist/, gitignored)
 └── pi-extension/               # Pre-built TypeScript extension copied into Pi installs
 ```
 
@@ -117,13 +118,16 @@ Hooks are defined in `hooks/hooks.json` and use `${CLAUDE_PLUGIN_ROOT}` for port
 | `lib/resolve-template-vars.js` | Resolves `{{specs_dir}}` etc. in skill bodies (PostToolUse) |
 | `lib/persist-project.js`, `lib/persist-unworked-findings.js` | Persist per-pane project + validation state |
 | `lib/transform-agents.js` | Rewrites `Agent()` calls when exporting skills to other harnesses |
+| `lib/filter-zcode-hooks.js` | Filters hooks.json to the hook events ZCode supports (marketplace bundle) |
 | `lib/utils.js` | Shared helpers |
 
 ## Multi-target installation
 
-`install-skills.sh` exports the skills/agents to non-Claude harnesses (`--codex`, `--opencode`, `--kiro`, `--pi`; `--claude-code` recommends the marketplace). It is **fail-closed**: every skill in `skills/` is exported as `groundwork-<name>` automatically — `install-config.txt` lists only exceptions (`<name> = drop` or `<name> = <other-name>`), so a new skill can never be silently omitted.
+`install-skills.sh` exports the skills/agents to non-Claude harnesses (`--codex`, `--opencode`, `--kiro`, `--pi`, `--zcode`, `--zcode-plugin`; `--claude-code` recommends the marketplace). It is **fail-closed**: every skill in `skills/` is exported as `groundwork-<name>` automatically — `install-config.txt` lists only exceptions (`<name> = drop` or `<name> = <other-name>`), so a new skill can never be silently omitted.
 
-During export it rewrites Claude-specific constructs to harness-neutral prose: `Skill(...)`/`Agent(...)` calls (via `lib/transform-agents.js`), `${CLAUDE_PLUGIN_ROOT}`, `/groundwork:` slash hints, tool names (Pi). Agents install as native TOML custom agents (Codex), standalone agent files (OpenCode), JSON+prompt pairs (Kiro), or `review-`prefixed skills (Pi); Pi additionally gets `pi-extension/`. The script targets **bash 3.2 + BSD sed** (stock macOS) — avoid bash-4-only features (associative arrays, `mapfile`) and `;`-joined sed programs. `tests/install-config.test.js` enforces parity and no Claude-Code-only leakage; run it after touching the installer or adding skills.
+During export it rewrites Claude-specific constructs to harness-neutral prose: `Skill(...)`/`Agent(...)` calls (via `lib/transform-agents.js`), `${CLAUDE_PLUGIN_ROOT}`, `/groundwork:` slash hints, tool names (Pi), model names (Codex translation; ZCode translation to unversioned GLM family names — "GLM with reasoning at max" / "GLM-Flash" — phrased as model-picker/settings actions since ZCode has no `/model` or `/effort` commands). Agents install as native TOML custom agents (Codex), standalone agent files (OpenCode), JSON+prompt pairs (Kiro), `review-`prefixed skills (Pi and the ZCode file export), or native flat `agents/<name>.md` files with references inlined as appendices (the `--zcode-plugin` marketplace flavor — ZCode auto-discovers plugin agents from an `agents/` directory). Pi additionally gets `pi-extension/`.
+
+`build-zcode-marketplace.sh` packages the `--zcode-plugin` export as a self-contained ZCode marketplace (translated skills + native agents + hooks filtered to ZCode's seven supported events via `lib/filter-zcode-hooks.js` + `marketplace.json` with `source: "./"`). The output is force-pushed to the orphan `zcode-marketplace` branch of this repository (CI does it on every release); users add it as `etr/groundwork#zcode-marketplace`. The branch is generated output — never edit it by hand. The installer targets **bash 3.2 + BSD sed** (stock macOS) — avoid bash-4-only features (associative arrays, `mapfile`) and `;`-joined sed programs. `tests/install-config.test.js` enforces parity and no Claude-Code-only leakage, and `tests/zcode-marketplace.test.js` guards the bundle contract; run them after touching the installer or adding skills.
 
 ## External Dependencies
 

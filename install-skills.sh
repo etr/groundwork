@@ -35,6 +35,9 @@ Targets (at least one required):
   --opencode       Install to OpenCode
   --kiro           Install to Kiro
   --pi             Install to Pi coding agent
+  --zcode          Install to ZCode
+  --zcode-plugin   Export the ZCode marketplace-plugin flavor (native agents;
+                   packaged by build-zcode-marketplace.sh, not for direct install)
 
 Scope (exactly one required):
   --global         Install to user-level config directory
@@ -57,6 +60,8 @@ Examples:
   ./install-skills.sh --kiro --project --force
   ./install-skills.sh --codex --opencode --global
   ./install-skills.sh --pi --global
+  ./install-skills.sh --zcode --global
+  ./install-skills.sh --zcode-plugin --project   # then build-zcode-marketplace.sh
   ./install-skills.sh --claude-code --global --allow-manual-claude-code-install
 EOF
 }
@@ -70,6 +75,8 @@ parse_args() {
             --opencode)    TARGETS+=("opencode") ;;
             --kiro)        TARGETS+=("kiro") ;;
             --pi)          TARGETS+=("pi") ;;
+            --zcode)       TARGETS+=("zcode") ;;
+            --zcode-plugin) TARGETS+=("zcode-plugin") ;;
             --global)      SCOPE="global" ;;
             --project)     SCOPE="project" ;;
             --force)       FORCE=true ;;
@@ -91,7 +98,7 @@ parse_args() {
     done
 
     if [[ ${#TARGETS[@]} -eq 0 ]]; then
-        echo "Error: At least one target required (--claude-code, --codex, --opencode, --kiro, --pi)" >&2
+        echo "Error: At least one target required (--claude-code, --codex, --opencode, --kiro, --pi, --zcode, --zcode-plugin)" >&2
         exit 1
     fi
 
@@ -253,6 +260,12 @@ preflight_model_override_replacements() {
 # Destination paths
 # ============================================================
 
+# Harness identifier accepted by the portable runtime scripts
+# (lib/project-context-cli.js validates against a fixed list).
+harness_name() {
+    if [[ "$1" == "zcode-plugin" ]]; then echo "zcode"; else echo "$1"; fi
+}
+
 get_dest_base() {
     local target="$1"
     case "$target" in
@@ -271,6 +284,12 @@ get_dest_base() {
         pi)
             if [[ "$SCOPE" == "global" ]]; then echo "$HOME/.pi/agent"
             else echo ".pi"; fi ;;
+        zcode)
+            if [[ "$SCOPE" == "global" ]]; then echo "$HOME/.zcode"
+            else echo ".zcode"; fi ;;
+        zcode-plugin)
+            if [[ "$SCOPE" == "global" ]]; then echo "$HOME/.zcode"
+            else echo ".zcode"; fi ;;
     esac
 }
 
@@ -357,6 +376,28 @@ inline_requires() {
     done
 }
 
+# Inline ${CLAUDE_PLUGIN_ROOT}/references/<path> files into an agent body as
+# appendix sections. ZCode plugin agents are flat agents/<name>.md files with
+# no sibling directories, so references cannot ship alongside them.
+inline_agent_references() {
+    local content="$1"
+    local appendices="" refs ref rel source_file
+    refs=$(printf '%s\n' "$content" | \
+        grep -o '\${CLAUDE_PLUGIN_ROOT}/references/[A-Za-z0-9._/-]*' | \
+        sed 's|^.*references/||' | sort -u)
+    for ref in $refs; do
+        [[ -z "$ref" ]] && continue
+        source_file="$SOURCE_DIR/references/$ref"
+        [[ -f "$source_file" ]] || continue
+        rel="${ref%.md}"
+        content=$(printf '%s\n' "$content" | \
+            sed -e 's|`\${CLAUDE_PLUGIN_ROOT}/references/'"$ref"'`|the '"$rel"' appendix below|g' \
+                -e 's|\${CLAUDE_PLUGIN_ROOT}/references/'"$ref"'|the '"$rel"' appendix below|g')
+        appendices+=$'\n---\n\n## Appendix: '"${rel}"$'\n\n'"$(<"$source_file")"$'\n'
+    done
+    printf '%s%s\n' "$content" "$appendices"
+}
+
 # Rewrite frontmatter for target tool
 transform_frontmatter() {
     local target="$1" component="$2" content="$3" installed_name="$4"
@@ -371,7 +412,7 @@ transform_frontmatter() {
     case "$component" in
         skill)
             case "$target" in
-                codex|kiro|pi)
+                codex|kiro|pi|zcode|zcode-plugin)
                     echo "name: $installed_name"
                     echo "description: $desc"
                     ;;
@@ -418,6 +459,38 @@ transform_body() {
             -e 's|sonnet|terra|g' \
             -e 's|Opus|Sol|g' \
             -e 's|opus|sol|g'
+        )
+    fi
+
+    # ZCode runs the GLM model family and has no Claude-style /model or
+    # /effort slash commands, so translate model recommendations into concrete
+    # GLM family names (unversioned — GLM and GLM-Flash — since versions churn
+    # while family names are stable) and refer to the model picker/settings
+    # rather than slash commands.
+    if [[ "$target" == "zcode" || "$target" == "zcode-plugin" ]]; then
+        content=$(echo "$content" | sed \
+            -e 's|All required skills (\(.*\)) are preloaded into your context — you do NOT need to call `Skill()` to load them. Follow the skill instructions directly.|Required skills are not preloaded in this harness: load each via the Skill tool before starting (each is installed with the groundwork- prefix: \1), then follow the skill instructions directly.|' \
+            -e 's|The `\([a-z-]*\)` skill is preloaded into your context — you do NOT need to call `Skill()` to load it. Follow the skill instructions directly.|The \1 skill is not preloaded in this harness: load it via the Skill tool before starting (installed as groundwork-\1), then follow the skill instructions directly.|' \
+            -e 's|— you have all skills preloaded|— load any skills you need via the Skill tool|g' \
+            -e 's|you are Sonnet or Opus|you are on GLM with reasoning at max|g' \
+            -e 's|you are not Sonnet or Opus|you are not on GLM with reasoning at max|g' \
+            -e 's|you are Opus (1M context)|you are on GLM with reasoning at max|g' \
+            -e 's|you are not Opus (1M context)|you are not on GLM with reasoning at max|g' \
+            -e 's|Sonnet or Opus at high effort|GLM with reasoning at max|g' \
+            -e 's|Opus (1M context) at high effort|GLM with reasoning at max|g' \
+            -e 's|run `/effort high` (and `/model sonnet` if on Haiku)|raise the reasoning effort to max in the model settings (and switch to GLM in the model picker if you are on GLM-Flash)|g' \
+            -e 's|run `/model opus\[1m\]` and `/effort high`|switch to GLM in the model picker and set the reasoning effort to max|g' \
+            -e 's|`model: "opus"`|GLM|g' \
+            -e 's|Sonnet or Opus|GLM|g' \
+            -e 's|sonnet or opus|GLM|g' \
+            -e 's|Opus (1M context)|GLM|g' \
+            -e 's|opus\[1m\]|GLM|g' \
+            -e 's|Haiku|GLM-Flash|g' \
+            -e 's|haiku|GLM-Flash|g' \
+            -e 's|Sonnet|GLM|g' \
+            -e 's|sonnet|GLM|g' \
+            -e 's|Opus|GLM|g' \
+            -e 's|opus|GLM|g'
         )
     fi
 
@@ -769,7 +842,7 @@ $new_body"
         if [[ "$skill_name" == "select-project" ]]; then
             needs_project_runtime=true
             new_body=$(printf '%s' "$new_body" | sed \
-                "s|node the plugin directory/lib/persist-project.js \"<selected-name>\"|node <skill-directory>/scripts/project-context-cli.js select \"<selected-name>\" --harness ${target}|")
+                "s|node the plugin directory/lib/persist-project.js \"<selected-name>\"|node <skill-directory>/scripts/project-context-cli.js select \"<selected-name>\" --harness $(harness_name "$target")|")
         fi
         if [[ "$skill_name" == "validate" ]]; then
             new_body=$(printf '%s' "$new_body" | sed \
@@ -779,7 +852,7 @@ $new_body"
         fi
         if [[ "$raw_body" == *'{{project_name}}'* || "$raw_body" == *'{{project_root}}'* || "$raw_body" == *'{{specs_dir}}'* ]]; then
             needs_project_runtime=true
-            new_body="$(portable_project_context_preamble "$target")
+            new_body="$(portable_project_context_preamble "$(harness_name "$target")")
 
 $new_body"
         fi
@@ -797,6 +870,8 @@ $new_body"
             opencode) dest="$dest_base/skills/$installed/SKILL.md" ;;
             kiro)     dest="$dest_base/skills/$installed/SKILL.md" ;;
             pi)       dest="$dest_base/skills/$installed/SKILL.md" ;;
+            zcode)    dest="$dest_base/skills/$installed/SKILL.md" ;;
+            zcode-plugin) dest="$dest_base/skills/$installed/SKILL.md" ;;
         esac
 
         if [[ "$target" == "codex" ]]; then
@@ -870,7 +945,13 @@ install_agents_for_target() {
         local raw_body body_component new_body
         raw_body=$(get_body "$content")
         body_component="agent"
-        [[ "$target" == "pi" ]] && body_component="skill"
+        [[ "$target" == "pi" || "$target" == "zcode" ]] && body_component="skill"
+        if [[ "$target" == "zcode-plugin" ]]; then
+            # Native agents are single .md files: references must ship as
+            # inlined appendices rather than sibling directories
+            raw_body=$(inline_agent_references "$raw_body")
+            raw_body=$(printf '%s\n' "$raw_body" | sed 's| appendix below using the Read tool| appendix below|g')
+        fi
         new_body=$(transform_body "$target" "$raw_body" "$body_component")
 
         if [[ "$target" == "codex" ]]; then
@@ -936,6 +1017,31 @@ $new_body" "agent"
                 write_file "$dest" "$new_fm
 $new_body" "review agent"
                 ;;
+            zcode)
+                # Install as a skill with review- prefix (ZCode loads custom
+                # agents only from marketplace plugins, not from user files)
+                local installed_name="review-${agent_name}"
+                local new_fm
+                new_fm=$(transform_frontmatter "$target" "skill" "$content" "$installed_name")
+                local dest="$dest_base/skills/${installed_name}/SKILL.md"
+                portable_dir="$dest_base/skills/${installed_name}"
+                write_file "$dest" "$new_fm
+$new_body" "review agent"
+                ;;
+            zcode-plugin)
+                # Native plugin agent: ZCode loads agents from flat
+                # agents/<name>.md files inside a marketplace plugin
+                local agent_color
+                agent_color=$(get_fm_value "$content" "color")
+                local new_fm="---
+name: ${agent_name}
+description: ${desc}"
+                [[ -n "$agent_color" ]] && new_fm+=$'\n'"color: ${agent_color}"
+                new_fm+=$'\n---'
+                local dest="$dest_base/agents/${agent_name}.md"
+                write_file "$dest" "$new_fm
+$new_body" "agent"
+                ;;
         esac
 
         write_portable_references "$raw_body" "$portable_dir"
@@ -977,12 +1083,12 @@ print_summary() {
     local target="$1"
     echo ""
     echo "  Summary for $target:"
-    if [[ "$target" == "pi" && "$SKILLS_ONLY" != true && $AGENT_COUNT -gt 0 ]]; then
+    if [[ ( "$target" == "pi" || "$target" == "zcode" ) && "$SKILLS_ONLY" != true && $AGENT_COUNT -gt 0 ]]; then
         echo "    Skills installed: $((SKILL_COUNT + AGENT_COUNT)) (includes $AGENT_COUNT review agents)"
     else
         echo "    Skills installed: $SKILL_COUNT"
     fi
-    if [[ "$SKILLS_ONLY" != true && "$target" != "pi" ]]; then
+    if [[ "$SKILLS_ONLY" != true && "$target" != "pi" && "$target" != "zcode" ]]; then
         echo "    Agents installed: $AGENT_COUNT"
     fi
 }
@@ -1045,7 +1151,11 @@ main() {
 
         print_summary "$target"
         echo ""
-        echo "  Note: Hooks require manual setup for each tool."
+        if [[ "$target" == "zcode-plugin" ]]; then
+            echo "  Note: Plugin flavor — package with build-zcode-marketplace.sh (hooks included)."
+        else
+            echo "  Note: Hooks require manual setup for each tool."
+        fi
         echo ""
     done
 

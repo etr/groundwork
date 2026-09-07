@@ -37,7 +37,7 @@ Or use the installer provided with the codebase.
 
 ### Multi-target Installer
 
-Groundwork supports Claude Code and Codex. Exports for OpenCode, Kiro, and Pi are experimental: the installer transforms Claude Code-specific constructs for those harnesses, but hooks, invocation, and skill chaining may not behave identically.
+Groundwork supports Claude Code and Codex. Exports for OpenCode, Kiro, Pi, and ZCode are experimental: the installer transforms Claude Code-specific constructs for those harnesses, but hooks, invocation, and skill chaining may not behave identically.
 
 The included installer adapts Groundwork skills and agents to each target's native format. Claude Code users should normally use the marketplace; Codex users should use the installer.
 
@@ -50,6 +50,8 @@ The included installer adapts Groundwork skills and agents to each target's nati
 | [OpenCode](https://github.com/opencode-ai/opencode) | `--opencode` | Experimental | Installs transformed skills and standalone agent files |
 | [Kiro](https://kiro.dev) | `--kiro` | Experimental | Installs transformed skills and JSON config + prompt file pairs for agents |
 | Pi | `--pi` | Experimental | Installs transformed skills, `review-`prefixed agent skills, and a pre-built TypeScript extension (`pi-extension/`) |
+| ZCode | `--zcode` | Experimental | Installs transformed skills to `~/.zcode/skills/` (or `.zcode/skills/`); agents become `review-`prefixed skills |
+| ZCode (marketplace) | `--zcode-plugin` | Experimental | Plugin flavor for the managed marketplace: native `agents/*.md`, GLM model wording, filtered hooks — packaged by `build-zcode-marketplace.sh` |
 
 ##### Codex Agent Conversion
 
@@ -137,6 +139,39 @@ When installing Codex agents, the installer also removes the exact legacy
 agent. It does not use a wildcard: unrelated `review-*` skills and any sidecar
 files are preserved, and an empty legacy directory is removed.
 
+#### ZCode Notes
+
+There are two ZCode install paths.
+
+**Managed marketplace (recommended).** A generated marketplace lives on the
+[`zcode-marketplace` branch](https://github.com/etr/groundwork/tree/zcode-marketplace)
+of this repository — the translated export packaged as a plugin with native
+agents. In ZCode: **Settings → Plugin Management → Discover → `+`**, add
+`etr/groundwork#zcode-marketplace`, then install **Groundwork**. Updates and
+uninstall are handled by ZCode's plugin system. Rebuild the branch with:
+
+```bash
+bash build-zcode-marketplace.sh   # then push dist/zcode-marketplace to the branch
+```
+
+(CI republishes the branch automatically on every release.)
+
+**File export.** `./install-skills.sh --zcode --global` installs transformed
+skills to `~/.zcode/skills/` (`.zcode/skills/` for projects), each as a
+`groundwork-<name>` directory whose frontmatter carries only `name` and
+`description` (the fields ZCode honors; descriptions stay under its
+1024-character limit). Because ZCode loads custom agents only from
+marketplace-installed plugins, the file export ships agents as
+`review-<agent>` skills and rewrites agent spawns into sub-task delegation.
+
+Shared translation details: Claude model recommendations become concrete GLM
+family recommendations — GLM with reasoning at max (GLM-Flash for the lighter
+tier) — phrased as model-picker/settings actions, because ZCode has no
+Claude-style `/model` or `/effort` commands. The marketplace flavor additionally
+ships agents natively (`agents/*.md`, references inlined as appendices) and
+hooks filtered to the seven events ZCode supports (SessionStart and PostToolUse
+survive; SubagentStop and PreCompact have no ZCode equivalent).
+
 #### Installation
 
 Clone the repository and run the installer:
@@ -150,6 +185,7 @@ Install globally (available in all projects):
 
 ```bash
 ./install-skills.sh --codex --global
+./install-skills.sh --zcode --global
 ```
 
 Install for the current project only:
@@ -179,7 +215,7 @@ You can install to multiple targets at once:
 #### What Gets Installed
 
 - **Skills** — Workflow definitions (planning, TDD, debugging, etc.) are installed with a `groundwork-` prefix. On OpenCode, skill dependencies are automatically inlined as appendix sections.
-- **Agents** — Verification and review agents (code quality, security, architecture alignment, etc.) are installed in each target's native agent format.
+- **Agents** — Verification and review agents (code quality, security, architecture alignment, etc.) are installed in each target's native agent format. On Pi and ZCode, agents are exported as `review-`prefixed skills because those harnesses load custom agents only from plugins.
 - **Hooks** — Included in the Claude Code plugin. Transformed exports do not install equivalent harness hooks automatically.
 - **Invocation** — Claude Code exposes `/groundwork:<name>` slash commands. Other harnesses discover the exported `groundwork-<name>` skills using their native skill interface.
 
@@ -187,6 +223,7 @@ You can install to multiple targets at once:
 
 - Claude Code hooks (`SessionStart`, `PreCompact`, `PostToolUse`) are not portable and must be configured manually in other harnesses
 - On OpenCode, complex multi-skill workflows may lose interactivity since skill dependencies are inlined as static appendix sections rather than invoked at runtime
+- On ZCode, review agents run as `review-`prefixed skills (inline or via general-purpose subagents) rather than native custom agents; the invocation-tier frontmatter (`disable-model-invocation`, `user-invocable`) is not honored, so every exported skill is both model- and user-invocable
 - Update checking is not available outside Claude Code
 
 ### Verify the Claude Code Installation

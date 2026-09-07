@@ -309,7 +309,7 @@ describe('exported output is free of Claude-Code-only leakage', () => {
     { token: 'groundwork:', label: 'unmapped groundwork: reference' },
   ];
 
-  for (const target of ['codex', 'opencode']) {
+  for (const target of ['codex', 'opencode', 'zcode']) {
     test(`${target}: produced files contain no leakage`, () => {
       const root = runInstaller(target);
       if (root === null) {
@@ -439,6 +439,7 @@ describe('statusline target routing', () => {
     opencode: '.opencode',
     kiro: '.kiro',
     pi: '.pi',
+    zcode: '.zcode',
   };
 
   for (const target of Object.keys(targetDirs)) {
@@ -793,6 +794,7 @@ describe('exported project context runtime', () => {
   for (const [target, targetDir, stateEnv] of [
     ['codex', '.codex', 'CODEX_HOME'],
     ['opencode', '.opencode', 'OPENCODE_CONFIG_DIR'],
+    ['zcode', '.zcode', 'ZCODE_HOME'],
   ]) {
     test(`${target} select-project bundles and executes its local runtime`, () => {
       const root = runInstaller(target);
@@ -1555,6 +1557,175 @@ describe('Codex consumption guardrails', () => {
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe('ZCode export', () => {
+  test('exports skills with ZCode-compatible frontmatter', () => {
+    const root = runInstaller('zcode');
+    if (root === null) return;
+    try {
+      const skillFiles = allFiles(path.join(root, '.zcode', 'skills')).filter(
+        (file) => path.basename(file) === 'SKILL.md'
+      );
+      assert.ok(skillFiles.length > 0, 'ZCode export produced no skills');
+
+      for (const file of skillFiles) {
+        const rel = path.relative(root, file);
+        const text = fs.readFileSync(file, 'utf8');
+        // ZCode drops a skill whose description exceeds 1024 chars
+        const description = frontmatterValue(text, 'description');
+        assert.ok(description !== undefined, `${rel}: missing description`);
+        assert.ok(
+          description.length <= 1024,
+          `${rel}: description is ${description.length} chars (ZCode drops skills over 1024)`
+        );
+        // Only name + description are honored; the name must match the
+        // directory so the skill's identity is unambiguous.
+        const frontmatter = text.match(/^---\n([\s\S]*?)\n---/);
+        assert.ok(frontmatter, `${rel}: missing frontmatter`);
+        const keys = frontmatter[1]
+          .split('\n')
+          .map((line) => line.match(/^([A-Za-z-]+):/))
+          .filter(Boolean)
+          .map((match) => match[1]);
+        assert.deepStrictEqual(
+          keys.slice().sort(),
+          ['description', 'name'],
+          `${rel}: unexpected frontmatter keys`
+        );
+        assert.strictEqual(
+          frontmatterValue(text, 'name'),
+          path.basename(path.dirname(file)),
+          `${rel}: frontmatter name does not match its directory`
+        );
+      }
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('exports every agent exactly once as a review-* skill', () => {
+    const root = runInstaller('zcode');
+    if (root === null) return;
+    try {
+      const skillsDir = path.join(root, '.zcode', 'skills');
+      const expected = agentDirs().map((name) => `review-${name}`).sort();
+      const actual = fs
+        .readdirSync(skillsDir)
+        .filter((name) => name.startsWith('review-'))
+        .sort();
+      assert.deepStrictEqual(actual, expected);
+
+      for (const name of expected) {
+        const agentName = name.replace(/^review-/, '');
+        const source = fs.readFileSync(path.join(AGENTS_DIR, agentName, 'AGENT.md'), 'utf8');
+        const exported = fs.readFileSync(path.join(skillsDir, name, 'SKILL.md'), 'utf8');
+        assert.strictEqual(frontmatterValue(exported, 'name'), name);
+        assert.strictEqual(
+          frontmatterValue(exported, 'description'),
+          frontmatterValue(source, 'description'),
+          `${name}: description drifted from the source agent`
+        );
+      }
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('neutralizes Claude model names and model-switch commands', () => {
+    const root = runInstaller('zcode');
+    if (root === null) return;
+    try {
+      const claudeArtifacts =
+        /\b(?:Opus|Sonnet|Haiku|Fable)\b|opus\[1m\]|\/effort high|\/model (?:sonnet|opus)/;
+      const offenders = allFiles(path.join(root, '.zcode', 'skills')).filter((file) =>
+        claudeArtifacts.test(fs.readFileSync(file, 'utf8'))
+      );
+      assert.deepStrictEqual(
+        offenders,
+        [],
+        `ZCode export retained Claude model names or switch commands:\n  ${offenders.join('\n  ')}`
+      );
+
+      const workOn = fs.readFileSync(
+        path.join(root, '.zcode', 'skills', 'groundwork-work-on', 'SKILL.md'),
+        'utf8'
+      );
+      assert.ok(workOn.includes('you are on GLM with reasoning at max'));
+      assert.ok(
+        workOn.includes(
+          'raise the reasoning effort to max in the model settings (and switch to GLM in the model picker if you are on GLM-Flash)'
+        )
+      );
+      assert.ok(workOn.includes('Recommended: GLM with reasoning at max'));
+
+      const uxDesign = fs.readFileSync(
+        path.join(root, '.zcode', 'skills', 'groundwork-ux-design', 'SKILL.md'),
+        'utf8'
+      );
+      assert.ok(uxDesign.includes('you are not on GLM with reasoning at max'));
+      assert.ok(
+        uxDesign.includes('switch to GLM in the model picker and set the reasoning effort to max')
+      );
+
+      // Every skill that carried a model recommendation now carries the GLM
+      // family wording (unversioned names, per the ZCode translation policy).
+      const glmSkills = allFiles(path.join(root, '.zcode', 'skills')).filter((file) =>
+        /GLM/.test(fs.readFileSync(file, 'utf8'))
+      );
+      assert.ok(
+        glmSkills.length >= 20,
+        `expected the GLM wording across the model-recommending skills, found ${glmSkills.length}`
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('rewrites Agent() calls into review-skill delegation', () => {
+    const single = transformAgents(
+      '    Agent(subagent_type="groundwork:task-executor:task-executor", description="Execute", prompt="Implement TASK-001")',
+      'zcode'
+    );
+    assert.ok(single.includes('`review-task-executor` skill'));
+    assert.ok(single.includes('Implement TASK-001'));
+
+    const parallel = transformAgents(
+      [
+        '```',
+        'Agent(subagent_type="groundwork:code-quality-reviewer:code-quality-reviewer", description="Code quality", prompt="...")',
+        'Agent(subagent_type="groundwork:security-reviewer:security-reviewer", description="Security", prompt="...")',
+        '```',
+      ].join('\n'),
+      'zcode'
+    );
+    assert.ok(parallel.includes('in parallel as general-purpose subagents'));
+    assert.ok(parallel.includes('`review-code-quality-reviewer`'));
+    assert.ok(parallel.includes('`review-security-reviewer`'));
+  });
+
+  test('rewrites Agent() calls into native-agent delegation for the plugin flavor', () => {
+    const single = transformAgents(
+      '    Agent(subagent_type="groundwork:task-executor:task-executor", description="Execute", prompt="Implement TASK-001")',
+      'zcode-plugin'
+    );
+    assert.ok(single.includes('Spawn the `task-executor` agent'));
+    assert.ok(!single.includes('review-task-executor'));
+    assert.ok(single.includes('Implement TASK-001'));
+
+    const parallel = transformAgents(
+      [
+        '```',
+        'Agent(subagent_type="groundwork:code-quality-reviewer:code-quality-reviewer", description="Code quality", prompt="...")',
+        'Agent(subagent_type="groundwork:security-reviewer:security-reviewer", description="Security", prompt="...")',
+        '```',
+      ].join('\n'),
+      'zcode-plugin'
+    );
+    assert.ok(parallel.includes('Spawn these agents in parallel'));
+    assert.ok(parallel.includes('(agent: `code-quality-reviewer`)'));
+    assert.ok(parallel.includes('(agent: `security-reviewer`)'));
   });
 });
 

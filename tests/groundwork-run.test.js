@@ -2141,6 +2141,40 @@ describe('task catalog', () => {
     assert.deepStrictEqual(task.blockedBy, []);
   });
 
+  test('parses canonical task status with trailing disposition notes', () => {
+    const { parseTaskCatalog } = require(RUNNER);
+    const task = parseTaskCatalog(
+      '### TASK-195: Anthropic streaming\n\n**Status:** Complete — all items landed via TASK-211\n'
+    ).get('TASK-195');
+
+    assert.strictEqual(task.status, 'Complete');
+  });
+
+  test('normalizes the completed status alias', () => {
+    const { parseTaskCatalog } = require(RUNNER);
+    const task = parseTaskCatalog(
+      '### TASK-225: Sync release\n\n**Status:** Completed\n'
+    ).get('TASK-225');
+
+    assert.strictEqual(task.status, 'Complete');
+  });
+
+  test('keeps deferred tasks parked and unavailable to dependents', () => {
+    const { parseTaskCatalog, orderTasks } = require(RUNNER);
+    const catalog = parseTaskCatalog(
+      '### TASK-199: Parked work\n**Status:** Deferred — port on demand\n**Blocked by:** None\n\n' +
+      '### TASK-200: Depends on parked work\n**Status:** Not Started\n**Blocked by:** TASK-199\n\n' +
+      '### TASK-201: Independent work\n**Status:** Not Started\n**Blocked by:** None\n'
+    );
+
+    assert.strictEqual(catalog.get('TASK-199').status, 'Deferred');
+    assert.deepStrictEqual(orderTasks(catalog, ['TASK-199', 'TASK-201']), ['TASK-201']);
+    assert.throws(
+      () => orderTasks(catalog, ['TASK-199', 'TASK-200']),
+      /TASK-200 is blocked by deferred TASK-199/
+    );
+  });
+
   test('parses the canonical dependencies section emitted by the task template', () => {
     const { parseTaskCatalog } = require(RUNNER);
     const task = parseTaskCatalog(
@@ -4993,6 +5027,105 @@ describe('four-phase orchestration', () => {
       );
       assert.deepStrictEqual(phases, ['plan', 'recovery']);
       assert.strictEqual(planAttempts, 1);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('advances after recovery confirms the selected task completed externally', () => {
+    const { runTasks } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-recovery-complete-'));
+    const taskFourWorktree = path.join(root, '.worktrees', 'TASK-004');
+    const taskFiveWorktree = path.join(root, '.worktrees', 'TASK-005');
+    const phases = [];
+    let recoveries = 0;
+    try {
+      initRepo(root);
+      fs.appendFileSync(
+        path.join(root, 'specs', 'tasks.md'),
+        '\n### TASK-005: Five\n**Status:** Not Started\n**Blocked by:** None\n'
+      );
+      git(root, 'add', 'specs/tasks.md');
+      git(root, 'commit', '-m', 'Add TASK-005');
+
+      const completed = runTasks(
+        {
+          command: 'task',
+          harness: 'codex',
+          repo: root,
+          project: null,
+          tasks: ['TASK-004', 'TASK-005'],
+          dryRun: false,
+        },
+        {
+          pluginRoot: PLUGIN_ROOT,
+          log: () => {},
+          enableRecovery: true,
+          invokePhase(input) {
+            phases.push(`${input.taskId}:${input.phase}`);
+            if (input.taskId === 'TASK-004') {
+              if (input.phase === 'plan') return 'RESULT: FAILURE | TASK-004 is already Complete.';
+              if (input.phase === 'recovery') {
+                recoveries++;
+                if (recoveries > 1) return 'RESULT: RECOVERY | needs_user';
+                assert.match(input.prompt, /RESULT: RECOVERY \| task_complete/);
+                const taskFile = path.join(root, 'specs', 'tasks.md');
+                fs.writeFileSync(
+                  taskFile,
+                  fs.readFileSync(taskFile, 'utf8').replace(
+                    '**Status:** Not Started',
+                    '**Status:** Complete — completed by another verified workflow'
+                  )
+                );
+                git(root, 'add', 'specs/tasks.md');
+                git(root, 'commit', '-m', 'Complete TASK-004 externally');
+                return 'RESULT: RECOVERY | task_complete';
+              }
+              throw new Error(`unexpected phase ${input.phase}`);
+            }
+            if (input.phase === 'plan') {
+              writePlan(input.projectRoot, input.taskId);
+              return `RESULT: PLANNED | plan_file_path=.groundwork-plans/${input.taskId}-plan.md | identifier=${input.taskId} | branch_prefix=task`;
+            }
+            if (input.phase === 'implement') {
+              const taskFile = path.join(taskFiveWorktree, 'specs', 'tasks.md');
+              fs.writeFileSync(
+                taskFile,
+                fs.readFileSync(taskFile, 'utf8').replace(
+                  '**Status:** Not Started',
+                  '**Status:** In Progress'
+                )
+              );
+              return implementationReceipt(input, taskFiveWorktree, 'TASK-005');
+            }
+            if (input.phase === 'validate') return validated(input);
+            return finalizeMock(
+              input,
+              root,
+              taskFiveWorktree,
+              'TASK-005',
+              'task/TASK-005',
+              'main'
+            );
+          },
+        }
+      );
+
+      assert.deepStrictEqual(phases, [
+        'TASK-004:plan',
+        'TASK-004:recovery',
+        'TASK-005:plan',
+        'TASK-005:implement',
+        'TASK-005:validate',
+        'TASK-005:finalize',
+      ]);
+      assert.deepStrictEqual(completed.map((entry) => entry.taskId), ['TASK-005']);
+      assert.strictEqual(fs.existsSync(taskFourWorktree), false);
+      assert.strictEqual(fs.existsSync(taskFiveWorktree), false);
+      assert.strictEqual(
+        fs.existsSync(path.join(root, '.git', 'refs', 'heads', 'task', 'TASK-004')),
+        false
+      );
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

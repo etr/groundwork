@@ -15,3 +15,6 @@ Thumbs.db
 *.swp
 *.swo
 *~
+
+# Generated ZCode marketplace bundle (published to the zcode-marketplace branch)
+dist/

@@ -1,0 +1,41 @@
+name: Publish ZCode marketplace
+
+# Rebuilds the ZCode marketplace bundle (translated skills, native agents,
+# filtered hooks) and force-pushes it to the orphan `zcode-marketplace`
+# branch. ZCode users add that branch as a marketplace:
+#   etr/groundwork#zcode-marketplace
+# The branch is generated output — never edited by hand.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '20'
+
+      - name: Build bundle
+        run: bash build-zcode-marketplace.sh dist/zcode-marketplace
+
+      - name: Publish to zcode-marketplace branch
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd dist/zcode-marketplace
+          git init -q
+          git config user.name "groundwork-ci"
+          git config user.email "actions@github.com"
+          git add -A
+          git commit -qm "ZCode marketplace bundle (v$(node -p "require('./.zcode-plugin/plugin.json').version")"
+          git push -f "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:refs/heads/zcode-marketplace
