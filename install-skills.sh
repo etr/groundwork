@@ -466,12 +466,20 @@ transform_body() {
     # /effort slash commands, so translate model recommendations into concrete
     # GLM family names (unversioned — GLM and GLM-Flash — since versions churn
     # while family names are stable) and refer to the model picker/settings
-    # rather than slash commands.
+    # rather than slash commands. On ZCode the reasoning effort IS the effort
+    # setting (one axis, no separate model tier above GLM), so the Claude-era
+    # two-dimensional pre-flight gate (effort × model) must collapse to
+    # effort-only before the name substitutions below run: strip the model
+    # clause from the skip condition and drop the "not <model>" else-line.
     if [[ "$target" == "zcode" || "$target" == "zcode-plugin" ]]; then
         content=$(echo "$content" | sed \
             -e 's|All required skills (\(.*\)) are preloaded into your context — you do NOT need to call `Skill()` to load them. Follow the skill instructions directly.|Required skills are not preloaded in this harness: load each via the Skill tool before starting (each is installed with the groundwork- prefix: \1), then follow the skill instructions directly.|' \
             -e 's|The `\([a-z-]*\)` skill is preloaded into your context — you do NOT need to call `Skill()` to load it. Follow the skill instructions directly.|The \1 skill is not preloaded in this harness: load it via the Skill tool before starting (installed as groundwork-\1), then follow the skill instructions directly.|' \
             -e 's|— you have all skills preloaded|— load any skills you need via the Skill tool|g' \
+            -e 's| AND you are Sonnet or Opus\.|.|' \
+            -e 's| AND you are Opus (1M context)\.|.|' \
+            -e '/^If you are not Sonnet or Opus, you MUST show the recommendation prompt/d' \
+            -e '/^If you are not Opus (1M context), you MUST show the recommendation prompt/d' \
             -e 's|you are Sonnet or Opus|you are on GLM with reasoning at max|g' \
             -e 's|you are not Sonnet or Opus|you are not on GLM with reasoning at max|g' \
             -e 's|you are Opus (1M context)|you are on GLM with reasoning at max|g' \

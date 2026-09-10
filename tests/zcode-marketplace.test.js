@@ -275,7 +275,11 @@ describe('ZCode marketplace bundle', () => {
       path.join(bundle, 'skills', 'groundwork-work-on', 'SKILL.md'),
       'utf8'
     );
-    assert.ok(workOn.includes('you are on GLM with reasoning at max'));
+    // Effort-only pre-flight gate (effort == reasoning on ZCode), with the
+    // recommendation prompt still pointing at GLM with reasoning at max.
+    assert.ok(workOn.includes('so `xhigh` and `max` are already above `high`).'));
+    assert.ok(!workOn.includes('AND you are'));
+    assert.ok(!workOn.includes('you are not on GLM'));
     assert.ok(workOn.includes('GLM-Flash'));
   });
 

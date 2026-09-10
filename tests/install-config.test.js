@@ -1652,7 +1652,13 @@ describe('ZCode export', () => {
         path.join(root, '.zcode', 'skills', 'groundwork-work-on', 'SKILL.md'),
         'utf8'
       );
-      assert.ok(workOn.includes('you are on GLM with reasoning at max'));
+      // Effort and reasoning are one setting on ZCode, so the pre-flight gate
+      // collapses to effort-only: no model clause on the skip line and no
+      // "not <model>" else-branch. The recommendation prompt itself still
+      // recommends GLM with reasoning at max.
+      assert.ok(workOn.includes('so `xhigh` and `max` are already above `high`).'));
+      assert.ok(!workOn.includes('AND you are'));
+      assert.ok(!workOn.includes('you are not on GLM'));
       assert.ok(
         workOn.includes(
           'raise the reasoning effort to max in the model settings (and switch to GLM in the model picker if you are on GLM-Flash)'
@@ -1664,7 +1670,8 @@ describe('ZCode export', () => {
         path.join(root, '.zcode', 'skills', 'groundwork-ux-design', 'SKILL.md'),
         'utf8'
       );
-      assert.ok(uxDesign.includes('you are not on GLM with reasoning at max'));
+      assert.ok(uxDesign.includes('so `xhigh` and `max` are already above `high`).'));
+      assert.ok(!uxDesign.includes('you are not on GLM'));
       assert.ok(
         uxDesign.includes('switch to GLM in the model picker and set the reasoning effort to max')
       );
