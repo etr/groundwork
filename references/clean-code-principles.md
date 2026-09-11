@@ -56,6 +56,29 @@ Code is clean if it can be understood easily – by everyone on the team. Clean 
 7. Use as clarification of code.
 8. Use as warning of consequences.
 
+### AI comment slop (remove, don't write)
+
+Comments generated as decoration rather than information. Each pattern reads as machine-written and adds reading load without adding a fact:
+
+9. No banner separators: `// ==== Authentication ====`, ALL-CAPS labels, box-drawn headers. One plain line or nothing.
+10. No restating the line below: `// Initialize the variable` above `let count = 0`; `// User class` above `class User`.
+11. No workflow narration: `// Step 1: ...`, `// First ...`, `// Next ...`, `// Finally ...`. The control flow is already in the code.
+12. No empty labels: `// Main logic`, `// Helper function`, `// Note: this is important`. A label that names a category, not a fact, says nothing.
+13. No vague TODOs: `// TODO: improve this`. Keep a TODO only when it names a specific task with enough context to act on.
+14. No signature echo: JSDoc that only repeats `@param price The price`. Keep docs that explain rules, edge cases, or side effects.
+15. No decorative emoji: `// ✅ Validation`, `// 🚀 Performance`.
+16. No line-by-line narration of trivial statements. One comment per logical block at most.
+17. Length tracks facts, not importance: a workaround note is one line about the workaround. Padding a one-line constraint into a multi-line reasoning chain is the same slop.
+
+### Comments that must stay
+
+18. Business rules, architectural decisions, workarounds, security considerations, performance trade-offs, concurrency behavior, protocol/API contracts, edge cases and assumptions, licensing notices. These explain what the code cannot show; never remove them. A comment earns its place by carrying a constraint the code itself doesn't express:
+
+```js
+// Stripe may retry webhook deliveries for up to three days.
+// Ignore duplicate events using the event ID.
+```
+
 ## Source code structure
 
 1. Separate concepts vertically.

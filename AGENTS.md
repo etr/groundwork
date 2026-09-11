@@ -20,7 +20,7 @@ groundwork/
 ├── hooks/                      # Event-driven automation (SessionStart, PostToolUse, SubagentStop, PreCompact)
 ├── lib/                        # JavaScript utilities (+ co-located *.test.js)
 ├── references/                 # Runtime reference files loaded by skills/agents
-│   ├── checklists/             # Shared checklists read by BOTH a producer skill and a reviewer agent (testing: test-driven-development ↔ test-quality-reviewer; accessibility: ux-design ↔ design-consistency-checker)
+│   ├── checklists/             # Shared checklists read by BOTH a producer skill and a reviewer agent (testing: test-driven-development ↔ test-quality-reviewer; accessibility & design slop: ux-design ↔ design-consistency-checker)
 │   └── engineering-principles.md  # Named-principle vocabulary (deep modules, Hyrum's Law, Chesterton's Fence, …)
 ├── tests/                      # Node test suites; run via tests/run-tests.sh
 ├── docs/                       # User-facing documentation
@@ -108,6 +108,7 @@ Hooks are defined in `hooks/hooks.json` and use `${CLAUDE_PLUGIN_ROOT}` for port
 | File | Purpose |
 |------|---------|
 | `lib/skills-core.js` | Skill discovery, frontmatter parsing, path resolution |
+| `lib/contrast-check.js` | WCAG contrast ratio CLI — reviewers verify instead of eyeballing |
 | `lib/frontmatter.js` | YAML frontmatter parsing utilities |
 | `lib/validate-plugin.js` | Plugin validation (frontmatter, references, permissions) |
 | `lib/check-updates.js` | Git-based update checking (throttled to 1x/day) |

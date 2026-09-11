@@ -1013,6 +1013,26 @@ install_agents_for_target() {
         fi
         new_body=$(transform_model_override "agent" "$agent_name" "$target" "$new_body")
 
+        if [[ "$agent_name" == "design-consistency-checker" ]]; then
+            # The contrast-checker command must resolve on every target.
+            if [[ "$target" == "zcode-plugin" ]]; then
+                # Native plugin agents are single .md files (references ship as
+                # inlined appendices), so a script cannot travel alongside one.
+                # Rewrite to the self-contained formula instead of a dead path.
+                new_body=$(printf '%s' "$new_body" | sed \
+                    's|When available, run the plugin.s contrast checker: .node the plugin directory/lib/contrast-check.js <foreground> <background>. for each text/background pairing in changed code.|Compute the WCAG contrast ratio for each text/background pairing in changed code.|')
+                new_body=$(printf '%s' "$new_body" | sed \
+                    's|When the script is not available in this harness, compute the WCAG formula|Compute it with the WCAG formula|')
+            else
+                # Same scripts/ convention as exported skills: rewrite the
+                # command to the shipped copy (copied after the case below).
+                local dir_token="<agent-directory>"
+                [[ "$target" == "pi" || "$target" == "zcode" ]] && dir_token="<skill-directory>"
+                new_body=$(printf '%s' "$new_body" | sed \
+                    "s|node the plugin directory/lib/contrast-check.js|node ${dir_token}/scripts/contrast-check.js|g")
+            fi
+        fi
+
         local dest_base
         dest_base=$(get_dest_base "$target")
         local portable_dir="$dest_base/agents"
@@ -1102,6 +1122,19 @@ description: ${desc}"
 $new_body" "agent"
                 ;;
         esac
+
+        if [[ "$agent_name" == "design-consistency-checker" && "$target" != "zcode-plugin" ]]; then
+            # Ship the contrast checker the rewritten command points at
+            # (per-skill dir for pi/zcode, shared agents root otherwise).
+            local contrast_dir="$portable_dir/scripts"
+            if [[ "$target" == "codex" ]]; then
+                write_codex_agent "$contrast_dir/contrast-check.js" \
+                    "$(<"$SOURCE_DIR/lib/contrast-check.js")" "WCAG contrast checker" "$dest_base"
+            else
+                write_file "$contrast_dir/contrast-check.js" \
+                    "$(<"$SOURCE_DIR/lib/contrast-check.js")" "WCAG contrast checker"
+            fi
+        fi
 
         write_portable_references "$raw_body" "$portable_dir"
 

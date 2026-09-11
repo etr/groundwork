@@ -11,6 +11,8 @@ Establishes a complete design system through guided collaboration: foundations, 
 
 **Accessibility standard:** Design to the bar your patterns will be reviewed against. Treat `${CLAUDE_PLUGIN_ROOT}/references/checklists/accessibility.md` as the WCAG 2.1 AA standard your color choices, components, focus behavior, and patterns must meet — the same checklist `design-consistency-checker` enforces.
 
+**Anti-slop standard:** Real content or clearly-labeled placeholders, working controls, and no unreasoned default shapes. Treat `${CLAUDE_PLUGIN_ROOT}/references/checklists/design-slop.md` as the catalog of fabricated-content and default-shape patterns the design system must steer implementations away from — the same checklist `design-consistency-checker` reviews against.
+
 ## Pre-flight: Model Recommendation
 
 **Your current effort level is `{{effort_level}}`.**

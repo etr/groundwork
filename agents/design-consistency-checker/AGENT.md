@@ -1,6 +1,6 @@
 ---
 name: design-consistency-checker
-description: Verifies design system compliance - tokens, accessibility, and pattern consistency. Use after task implementation to verify design alignment.
+description: Verifies design system compliance - tokens, accessibility, pattern consistency, and content honesty (no fabricated data, dead controls, or default slop shapes). Use after task implementation to verify design alignment.
 maxTurns: 50
 color: magenta
 model: sonnet
@@ -76,6 +76,7 @@ Generic WCAG criteria live in `accessibility.md` (referenced in §2). This secti
 - For AA: 4.5:1 normal text, 3:1 large text
 - For AAA: 7:1 normal text, 4.5:1 large text
 - Check semantic colors (error, warning) also meet requirements
+- **Verify programmatically — never assert a ratio by eye.** When available, run the plugin's contrast checker: `node ${CLAUDE_PLUGIN_ROOT}/lib/contrast-check.js <foreground> <background>` for each text/background pairing in changed code. Greys that look fine routinely fail: #777777 on white computes to 4.48:1. When the script is not available in this harness, compute the WCAG formula (relative luminance, then `(L1 + 0.05) / (L2 + 0.05)`) and show the arithmetic in the finding.
 
 **Labels and Placeholders:**
 - ❌ `<input placeholder="Email address">` without a `<label>` element
@@ -193,7 +194,19 @@ Check copy patterns in the codebase for design system compliance (§3.11). These
 - Flag heading + immediately following text that restates the heading
 - Flag form labels that repeat the section heading verbatim
 
-### 7. Brand Alignment
+### 7. Content Honesty & Design Slop
+
+Read `${CLAUDE_PLUGIN_ROOT}/references/checklists/design-slop.md` — the authoritative slop criteria for this review, and the single source the `ux-design` skill produces against. Apply it in full; do not restate it here. The checklist is direction-independent: it applies even when `design_system.md` is missing. Group A items are **critical**; Groups B/C are minor individually and **major** when clustered.
+
+Beyond the checklist's criteria, flag these concrete code patterns in changed files:
+
+- Hardcoded plausible-looking data in product surfaces: `const stats = [{ value: '12,483', ... }]`, filler feed entries, `John Doe` / `johndoe@example.com` rows — anything fabricated presented as real
+- `Math.random()` or static arrays feeding stat cards, deltas, or charts that read as live data
+- Placeholder content without a placeholder marker: lorem ipsum, `"Let's build something"` taglines in data columns (honest placeholders — `[REAL DATA]`, "Coming soon", `Your Name` — pass)
+- `href="#"`, `onClick={() => {}}`, or commented-out handlers on shipped controls with no visible "Coming soon" label
+- Nav/footer link targets that resolve to no route, section, or page in the changed code
+
+## 8. Brand Alignment
 
 **Colors (check BRD-001 through BRD-005):**
 - Using specified primary/secondary/accent colors
@@ -219,8 +232,9 @@ You will receive:
 3. **Check token usage** - Flag hardcoded values
 4. **Verify accessibility** - Focus states, contrast, keyboard, ARIA
 5. **Compare patterns** - Match against UXD decisions
-6. **Check brand alignment** - Colors, typography, voice
-7. **Document findings** with specific file/line references
+6. **Check content honesty and slop** - Fabricated content, dead controls, default shapes (checklist in §7)
+7. **Check brand alignment** - Colors, typography, voice
+8. **Document findings** with specific file/line references
 
 ## Output Format
 
@@ -307,6 +321,10 @@ Your conversational response in file mode is exactly one JSON line (no findings 
 | `writing-buttons` | Generic button labels (OK, Submit, Yes) |
 | `writing-errors` | Vague or blame-the-user error messages |
 | `writing-alt` | Missing, vague, or incorrect alt text |
+| `content-fabrication` | Invented numbers, people, testimonials, trust claims, or filler data presented as real |
+| `dead-controls` | Buttons, links, dropdowns, tabs with no behavior and no visible coming-soon label |
+| `ghost-navigation` | Nav/footer links to sections or pages that do not exist |
+| `design-slop` | Default shapes and copy tells (checklist Groups B/C) — flag clusters, not isolated instances |
 | `brand-color` | Color palette violations |
 | `brand-typography` | Type system violations |
 
@@ -319,6 +337,7 @@ Your conversational response in file mode is exactly one JSON line (no findings 
   - `user-scalable=no` or `maximum-scale=1` in viewport meta
   - Animating layout properties (`width`, `height`, `top`, `left`) in frequently-triggered animations
   - Missing `<label>` elements on form inputs
+  - Fabricated content presented as real: invented statistics, people, testimonials, or compliance claims (slop checklist Group A)
 
 - **major**: Design inconsistency that affects user experience
   - Hardcoded values instead of tokens
@@ -330,6 +349,7 @@ Your conversational response in file mode is exactly one JSON line (no findings 
   - Generic button labels on destructive actions ("Yes" to confirm deletion)
   - Nested card components
   - Arbitrary z-index values outside design system scale
+  - Clustered default shapes or a template layout defining the page's composition (slop checklist Group B)
 
 - **minor**: Style preference, not blocking
   - Slightly different spacing that still works
@@ -339,6 +359,7 @@ Your conversational response in file mode is exactly one JSON line (no findings 
   - `will-change` declared statically in CSS
   - Exit animation duration exceeding entrance duration
   - Redundant heading/intro copy patterns
+  - Isolated default-shape or copy-tell instances without a cluster (slop checklist Groups B/C)
 
 ## Verdict Rules
 
@@ -357,7 +378,7 @@ Your conversational response in file mode is exactly one JSON line (no findings 
 
 **When design_system.md is missing:**
 - Cannot enforce specific tokens/patterns
-- Fall back to general accessibility checks only
+- Fall back to general accessibility checks plus the **full design-slop checklist** (§7) — it is direction-independent by design
 - Note in summary: "Design system not found - limited review"
 
 **When using Tailwind/CSS framework:**
