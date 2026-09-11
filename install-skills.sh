@@ -876,6 +876,7 @@ $inlined_deps"
 
         local needs_project_runtime=false
         local needs_runtime_context=false
+        local needs_validate_scripts=false
         if [[ "$target" == "codex" && ( "$raw_body" == *'{{effort_level}}'* || "$skill_name" == "validate" ) ]]; then
             needs_runtime_context=true
             new_body="$(portable_runtime_context_preamble)
@@ -887,9 +888,16 @@ $new_body"
             new_body=$(printf '%s' "$new_body" | sed \
                 "s|node the plugin directory/lib/persist-project.js \"<selected-name>\"|node <skill-directory>/scripts/project-context-cli.js select \"<selected-name>\" --harness $(harness_name "$target")|")
         fi
-        if [[ "$skill_name" == "validate" ]]; then
+        # Content-gated, not name-gated: OpenCode inlines required skill
+        # bodies (e.g. validate's commands inside work-on), and the inlined
+        # copies need the same rewrites and shipped scripts as the original.
+        if [[ "$new_body" == *"node the plugin directory/lib/persist-unworked-findings.js"* ]]; then
+            needs_validate_scripts=true
             new_body=$(printf '%s' "$new_body" | sed \
                 's|node the plugin directory/lib/persist-unworked-findings.js|node <skill-directory>/scripts/persist-unworked-findings.js|g')
+        fi
+        if [[ "$new_body" == *"node the plugin directory/lib/validation-session.js"* ]]; then
+            needs_validate_scripts=true
             new_body=$(printf '%s' "$new_body" | sed \
                 's|node the plugin directory/lib/validation-session.js|node <skill-directory>/scripts/validation-session.js|g')
         fi
@@ -935,16 +943,22 @@ $new_body"
             runtime_dir="$(dirname "$dest")/scripts"
             write_codex_agent "$runtime_dir/runtime-context-cli.js" "$(<"$SOURCE_DIR/lib/runtime-context-cli.js")" "runtime context resolver" "$dest_base"
         fi
-        if [[ "$skill_name" == "validate" ]]; then
+        if [[ "$skill_name" == "validate" && "$target" == "codex" ]]; then
+            # Codex's skill policy injection points validate's coordinator
+            # at the fixer result validator.
             local validator_dir
             validator_dir="$(dirname "$dest")/scripts"
+            write_codex_agent "$validator_dir/validate-fixer-result.js" "$(<"$SOURCE_DIR/lib/validate-fixer-result.js")" "fixer result validator" "$dest_base"
+        fi
+        if [[ "$needs_validate_scripts" == true ]]; then
+            local session_dir
+            session_dir="$(dirname "$dest")/scripts"
             if [[ "$target" == "codex" ]]; then
-                write_codex_agent "$validator_dir/validate-fixer-result.js" "$(<"$SOURCE_DIR/lib/validate-fixer-result.js")" "fixer result validator" "$dest_base"
-                write_codex_agent "$validator_dir/persist-unworked-findings.js" "$(<"$SOURCE_DIR/lib/persist-unworked-findings.js")" "unworked findings persistence helper" "$dest_base"
-                write_codex_agent "$validator_dir/validation-session.js" "$(<"$SOURCE_DIR/lib/validation-session.js")" "validation session helper" "$dest_base"
+                write_codex_agent "$session_dir/persist-unworked-findings.js" "$(<"$SOURCE_DIR/lib/persist-unworked-findings.js")" "unworked findings persistence helper" "$dest_base"
+                write_codex_agent "$session_dir/validation-session.js" "$(<"$SOURCE_DIR/lib/validation-session.js")" "validation session helper" "$dest_base"
             else
-                write_file "$validator_dir/persist-unworked-findings.js" "$(<"$SOURCE_DIR/lib/persist-unworked-findings.js")" "unworked findings persistence helper"
-                write_file "$validator_dir/validation-session.js" "$(<"$SOURCE_DIR/lib/validation-session.js")" "validation session helper"
+                write_file "$session_dir/persist-unworked-findings.js" "$(<"$SOURCE_DIR/lib/persist-unworked-findings.js")" "unworked findings persistence helper"
+                write_file "$session_dir/validation-session.js" "$(<"$SOURCE_DIR/lib/validation-session.js")" "validation session helper"
             fi
         fi
         ((SKILL_COUNT++)) || true

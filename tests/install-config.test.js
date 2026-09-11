@@ -1736,6 +1736,51 @@ describe('ZCode export', () => {
   });
 });
 
+// --- Export degradation guard ---
+// Every command or reference in an exported skill/agent body must either be
+// rewritten to a resolvable placeholder (<skill-directory>/<agent-directory>
+// pointing at a shipped file) or carry no path at all. A body that still
+// says "the plugin directory" (or a raw ${CLAUDE_PLUGIN_ROOT}) points at a
+// location that does not exist on the target.
+describe('export degradation guard', () => {
+  const TARGETS = ['codex', 'opencode', 'kiro', 'pi', 'zcode'];
+
+  test('rewrites every plugin-root pointer and ships every referenced script/reference', () => {
+    for (const target of TARGETS) {
+      const root = runInstaller(target);
+      if (root === null) continue; // no bash — end-to-end checks skipped
+
+      const files = allFiles(root).filter((f) => /\.(md|toml|json)$/.test(f));
+      assert.ok(files.length > 0, `${target}: export produced no files`);
+
+      const shipped = new Set(allFiles(root).map((f) => path.relative(root, f)));
+      const tokenRe = /<(?:skill|agent)-directory>\/((?:scripts|references)\/[A-Za-z0-9._/-]+\.(?:js|md))/g;
+
+      for (const file of files) {
+        const rel = path.relative(root, file);
+        const text = fs.readFileSync(file, 'utf8');
+        assert.ok(
+          !text.includes('the plugin directory'),
+          `${target} ${rel}: body still points at "the plugin directory" — the command degrades to a dead path`
+        );
+        assert.ok(
+          !text.includes('${CLAUDE_PLUGIN_ROOT}'),
+          `${target} ${rel}: raw \${CLAUDE_PLUGIN_ROOT} survived the export`
+        );
+        let match;
+        while ((match = tokenRe.exec(text)) !== null) {
+          const suffix = match[1];
+          const resolves = [...shipped].some((s) => s.endsWith(suffix));
+          assert.ok(
+            resolves,
+            `${target} ${rel}: references <*-directory>/${suffix} but no such file ships in the export`
+          );
+        }
+      }
+    }
+  });
+});
+
 // --- Summary ---
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exitCode = 1;

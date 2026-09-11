@@ -286,6 +286,39 @@ describe('ZCode marketplace bundle', () => {
     assert.ok(workOn.includes('GLM-Flash'));
   });
 
+  test('leaves no degraded plugin-root pointers in skill or agent bodies', () => {
+    if (bundle === null) return;
+    // hooks/hooks.json legitimately keeps ${CLAUDE_PLUGIN_ROOT}: the plugin
+    // runtime expands it in hook commands. Bodies must not rely on it.
+    const bodies = allFiles(bundle).filter(
+      (file) => /\.(md|json)$/.test(file) && !path.basename(file).startsWith('hooks')
+    );
+    const shipped = new Set(allFiles(bundle).map((f) => path.relative(bundle, f)));
+    const tokenRe = /<(?:skill|agent)-directory>\/((?:scripts|references)\/[A-Za-z0-9._/-]+\.(?:js|md))/g;
+
+    for (const file of bodies) {
+      const rel = path.relative(bundle, file);
+      const text = fs.readFileSync(file, 'utf8');
+      assert.ok(
+        !text.includes('the plugin directory'),
+        `${rel}: body still points at "the plugin directory" — the command degrades to a dead path`
+      );
+      assert.ok(
+        !text.includes('${CLAUDE_PLUGIN_ROOT}'),
+        `${rel}: raw \${CLAUDE_PLUGIN_ROOT} survived the export`
+      );
+      let match;
+      while ((match = tokenRe.exec(text)) !== null) {
+        const suffix = match[1];
+        const resolves = [...shipped].some((s) => s.endsWith(suffix));
+        assert.ok(
+          resolves,
+          `${rel}: references <*-directory>/${suffix} but no such file ships in the bundle`
+        );
+      }
+    }
+  });
+
   test('refuses to overwrite a directory that is not a previous bundle', () => {
     if (bundle === null) return;
     const foreign = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-zcode-mkt-foreign-'));
