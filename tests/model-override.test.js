@@ -231,6 +231,9 @@ describe('Codex model overrides', () => {
       assert.ok(files.length > 0, 'installer produced no Codex files');
 
       const offenders = files.filter((file) => {
+        // The standalone runner is the model-policy consumer (its coordinator
+        // default names a builtin model); the guard targets exported prose.
+        if (file.endsWith('groundwork-run.js')) return false;
         const content = fs.readFileSync(file, 'utf8');
         return /gpt-5\.6-(?:luna|terra|sol)/.test(content);
       });
@@ -365,22 +368,90 @@ describe('Codex model overrides', () => {
     }
   });
 
-  test('rejects non-Codex or multi-target use', () => {
-    const cases = [
-      { target: 'opencode', extraArgs: ['--model-override', GLM_PRESET] },
-      {
-        target: 'codex',
-        extraArgs: ['--opencode', '--model-override', GLM_PRESET],
-      },
-    ];
-
-    for (const scenario of cases) {
-      const result = runInstallerFailure(scenario);
-      assert.notStrictEqual(result.status, 0, JSON.stringify(scenario));
-      assert.ok(
-        result.stderr.includes('--model-override requires --codex as the only target'),
-        `unexpected failure output: ${result.stderr}`
+  test('applies the GLM preset to the ZCode export', () => {
+    const { root } = runInstaller({ target: 'zcode', extraArgs: ['--model-override', GLM_PRESET] });
+    try {
+      const validate = fs.readFileSync(
+        path.join(root, '.zcode', 'skills', 'groundwork-validate', 'SKILL.md'),
+        'utf8'
       );
+      assert.ok(validate.includes('glm-5.3'), 'expected pinned glm-5.3 in ZCode export');
+      assert.ok(validate.includes('glm-5.3-flash'), 'expected pinned glm-5.3-flash in ZCode export');
+      assert.ok(!/\bGLM\b/.test(validate), 'ZCode export kept unpinned GLM family name');
+      assert.ok(!/\bGLM-Flash\b/.test(validate), 'ZCode export kept unpinned GLM-Flash family name');
+      assert.ok(!/\b(?:Sonnet|Opus|Haiku)\b/.test(validate), 'ZCode export kept Claude model names');
+
+      const researcher = fs.readFileSync(
+        path.join(root, '.zcode', 'skills', 'review-researcher', 'SKILL.md'),
+        'utf8'
+      );
+      assert.ok(!/\b(?:Sonnet|Opus|Haiku|GLM-Flash)\b/.test(researcher), 'review agent kept model names');
+    } finally {
+      cleanup(root);
+    }
+  });
+
+  test('applies the GLM preset to the OpenCode export', () => {
+    const { root } = runInstaller({ target: 'opencode', extraArgs: ['--model-override', GLM_PRESET] });
+    try {
+      const validate = fs.readFileSync(
+        path.join(root, '.opencode', 'skills', 'groundwork-validate', 'SKILL.md'),
+        'utf8'
+      );
+      assert.ok(validate.includes('glm-5.3-flash'), 'expected pinned glm-5.3-flash in OpenCode export');
+      assert.ok(!/\b(?:Sonnet|Opus|Haiku)\b/.test(validate), 'OpenCode export kept Claude model names');
+    } finally {
+      cleanup(root);
+    }
+  });
+
+  test('applies the GLM preset to a full-copy Claude Code install', () => {
+    const { root, stdout } = runInstaller({
+      target: 'claude-code',
+      extraArgs: ['--allow-manual-claude-code-install', '--model-override', GLM_PRESET],
+    });
+    try {
+      assert.ok(stdout.includes('[override] applied model override'), 'override step not reported');
+      const validate = fs.readFileSync(
+        path.join(root, '.claude', 'plugins', 'groundwork', 'skills', 'validate', 'SKILL.md'),
+        'utf8'
+      );
+      assert.ok(validate.includes('glm-5.3-flash'), 'expected pinned glm-5.3-flash in Claude Code copy');
+      assert.ok(!/\b(?:Sonnet|Opus|Haiku)\b/.test(validate), 'Claude Code copy kept Claude model names');
+
+      const fixer = fs.readFileSync(
+        path.join(root, '.claude', 'plugins', 'groundwork', 'agents', 'validation-fixer', 'AGENT.md'),
+        'utf8'
+      );
+      assert.ok(!/\b(?:Sonnet|Opus|Haiku)\b/.test(fixer), 'agent copy kept Claude model names');
+    } finally {
+      cleanup(root);
+    }
+  });
+
+  test('applies the override across multiple targets at once', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-model-multi-'));
+    const args = [
+      INSTALLER,
+      '--codex', '--opencode', '--project', '--force',
+      '--model-override', GLM_PRESET,
+    ];
+    try {
+      execFileSync('bash', args, {
+        cwd: root,
+        encoding: 'utf8',
+        env: process.env,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      for (const base of ['.codex', '.opencode']) {
+        const validate = fs.readFileSync(
+          path.join(root, base, 'skills', 'groundwork-validate', 'SKILL.md'),
+          'utf8'
+        );
+        assert.ok(validate.includes('glm-5.3'), `${base}: expected pinned glm-5.3`);
+      }
+    } finally {
+      cleanup(root);
     }
   });
 

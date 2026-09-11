@@ -14,6 +14,10 @@ const { execFileSync, spawn } = require('child_process');
 const PLUGIN_ROOT = path.resolve(__dirname, '..');
 const RUNNER = path.join(PLUGIN_ROOT, 'bin', 'groundwork-run.js');
 
+// Fixture repositories have no real Groundwork install; the runner's
+// install preflight would otherwise fail on machines (like CI) without one.
+process.env.GROUNDWORK_SKIP_INSTALL_CHECK = '1';
+
 let passed = 0;
 let failed = 0;
 
@@ -197,6 +201,9 @@ describe('module and CLI contract', () => {
       'parseFinalizeResult',
       'sealPreparedCommit',
       'buildInvocation',
+      'resolveZcodeCommand',
+      'readZcodeResult',
+      'groundworkInstallStatus',
       'formatElapsed',
       'formatLocalTimestamp',
       'normalizeActivity',
@@ -1777,6 +1784,8 @@ describe('module and CLI contract', () => {
         tail: 50,
         follow: false,
         includeToolOutput: false,
+        coordinatorModel: null,
+        coordinatorEffort: null,
       }
     );
     assert.deepStrictEqual(
@@ -1784,7 +1793,47 @@ describe('module and CLI contract', () => {
       'all'
     );
     assert.throws(() => parseArgs(['--harness', 'codex']), /task or all/);
-    assert.throws(() => parseArgs(['all', '--harness', 'pi']), /claude or codex/);
+    assert.throws(() => parseArgs(['all', '--harness', 'pi']), /--harness must be one of/);
+  });
+
+  test('accepts zcode as a harness', () => {
+    const { parseArgs } = require(RUNNER);
+    assert.strictEqual(parseArgs(['task', '4', '--harness', 'zcode']).harness, 'zcode');
+    assert.strictEqual(parseArgs(['all', '--harness', 'zcode', '--dry-run']).harness, 'zcode');
+  });
+
+  test('parses coordinator model and effort options', () => {
+    const { parseArgs } = require(RUNNER);
+    const options = parseArgs([
+      'task', '4', '--harness', 'codex',
+      '--coordinator-model', 'glm-5.3', '--coordinator-effort', 'max',
+    ]);
+    assert.strictEqual(options.coordinatorModel, 'glm-5.3');
+    assert.strictEqual(options.coordinatorEffort, 'max');
+    assert.throws(
+      () => parseArgs(['task', '4', '--harness', 'codex', '--coordinator-effort', 'ultra']),
+      /--coordinator-effort must be one of/
+    );
+    assert.throws(
+      () => parseArgs(['task', '4', '--harness', 'codex', '--coordinator-model', 'a b']),
+      /Invalid --coordinator-model/
+    );
+    assert.throws(
+      () => parseArgs(['task', '4', '--harness', 'zcode', '--coordinator-effort', 'max']),
+      /--coordinator-effort has no effect with --harness zcode/
+    );
+    assert.throws(
+      () => parseArgs(['task', '4', '--coordinator-effort', 'max', '--harness', 'zcode']),
+      /--coordinator-effort has no effect with --harness zcode/
+    );
+    assert.strictEqual(
+      parseArgs(['task', '4', '--harness', 'zcode', '--coordinator-model', 'glm-5.3']).coordinatorModel,
+      'glm-5.3'
+    );
+    assert.throws(
+      () => parseArgs(['status', 'TASK-004', '--coordinator-model', 'glm-5.3']),
+      /status.*does not accept/i
+    );
   });
 
   test('accepts verbose activity output for run commands', () => {
@@ -2283,6 +2332,47 @@ for (let index = 0; index < 100000; index++) fs.writeSync(1, record);
     assert.ok(codex.args.includes('never'));
     assert.ok(codex.args.includes('--output-last-message'));
     assert.ok(!codex.args.includes('resume'));
+  });
+
+  test('defaults the coordinator model per harness and honors overrides', () => {
+    const { buildInvocation } = require(RUNNER);
+
+    const claude = buildInvocation({
+      harness: 'claude', cwd: '/repo', pluginRoot: '/plugin', prompt: 'p', resultFile: '/tmp/r',
+    });
+    assert.deepStrictEqual(
+      [claude.args[claude.args.indexOf('--model') + 1], claude.args[claude.args.indexOf('--effort') + 1]],
+      ['opus', 'high']
+    );
+
+    const codex = buildInvocation({
+      harness: 'codex', cwd: '/repo', pluginRoot: '/plugin', prompt: 'p', resultFile: '/tmp/r',
+    });
+    assert.deepStrictEqual(
+      [codex.args[codex.args.indexOf('-m') + 1], codex.args[codex.args.indexOf('-c') + 1]],
+      ['gpt-5.6-sol', 'model_reasoning_effort="high"']
+    );
+
+    const overridden = buildInvocation({
+      harness: 'codex', cwd: '/repo', pluginRoot: '/plugin', prompt: 'p', resultFile: '/tmp/r',
+      coordinatorModel: 'glm-5.3', coordinatorEffort: 'max',
+    });
+    assert.deepStrictEqual(
+      [overridden.args[overridden.args.indexOf('-m') + 1], overridden.args[overridden.args.indexOf('-c') + 1]],
+      ['glm-5.3', 'model_reasoning_effort="max"']
+    );
+
+    const claudeOverride = buildInvocation({
+      harness: 'claude', cwd: '/repo', pluginRoot: '/plugin', prompt: 'p', resultFile: '/tmp/r',
+      coordinatorModel: 'sonnet', coordinatorEffort: 'medium',
+    });
+    assert.deepStrictEqual(
+      [
+        claudeOverride.args[claudeOverride.args.indexOf('--model') + 1],
+        claudeOverride.args[claudeOverride.args.indexOf('--effort') + 1],
+      ],
+      ['sonnet', 'medium']
+    );
   });
 
   test('does not inject runner-owned memory into either harness', () => {
@@ -3203,6 +3293,371 @@ fs.writeFileSync(args[resultIndex + 1], 'RESULT: TEST\\n');
     } finally {
       process.env.PATH = previousPath;
       fs.rmSync(fakeBin, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('ZCode headless harness', () => {
+  test('invokes zcode with a prompt argument and stream-json output', () => {
+    const { buildInvocation, resolveZcodeCommand } = require(RUNNER);
+    const invocation = buildInvocation({
+      harness: 'zcode',
+      phase: 'implement',
+      cwd: '/repo',
+      pluginRoot: '/plugin',
+      prompt: 'phase prompt',
+      resultFile: '/tmp/result',
+    });
+    const resolved = resolveZcodeCommand();
+    assert.strictEqual(invocation.command, resolved.command);
+    assert.deepStrictEqual(
+      invocation.args.slice(0, resolved.prefixArgs.length),
+      resolved.prefixArgs
+    );
+    assert.deepStrictEqual(
+      invocation.args.slice(invocation.args.indexOf('--prompt'), invocation.args.indexOf('--prompt') + 2),
+      ['--prompt', 'phase prompt']
+    );
+    assert.deepStrictEqual(
+      invocation.args.slice(invocation.args.indexOf('--mode'), invocation.args.indexOf('--mode') + 2),
+      ['--mode', 'yolo']
+    );
+    assert.deepStrictEqual(
+      invocation.args.slice(invocation.args.indexOf('--output-format'), invocation.args.indexOf('--output-format') + 2),
+      ['--output-format', 'stream-json']
+    );
+    assert.strictEqual(invocation.input, undefined, 'zcode takes the prompt as an option, not stdin');
+    assert.ok(!invocation.args.includes('--plugin-dir'), 'zcode has no plugin-dir injection');
+  });
+
+  test('resolves the zcode command from PATH or the bundled macOS CLI', () => {
+    const { resolveZcodeCommand } = require(RUNNER);
+    const fakeBin = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-zcode-bin-'));
+    try {
+      const fakeZcode = path.join(fakeBin, 'zcode');
+      write(fakeZcode, '#!/bin/sh\n');
+      fs.chmodSync(fakeZcode, 0o755);
+      assert.deepStrictEqual(resolveZcodeCommand('darwin', fakeBin), {
+        command: fakeZcode,
+        prefixArgs: [],
+      });
+
+      const bundled = '/Applications/ZCode.app/Contents/Resources/glm/zcode.cjs';
+      const expected = fs.existsSync(bundled)
+        ? { command: process.execPath, prefixArgs: [bundled] }
+        : { command: 'zcode', prefixArgs: [] };
+      assert.deepStrictEqual(resolveZcodeCommand('darwin', '/nonexistent-groundwork-path'), expected);
+      assert.deepStrictEqual(resolveZcodeCommand('linux', '/nonexistent-groundwork-path'), {
+        command: 'zcode',
+        prefixArgs: [],
+      });
+    } finally {
+      fs.rmSync(fakeBin, { recursive: true, force: true });
+    }
+  });
+
+  test('parses zcode stream events for markers, activity, and the final result', () => {
+    const { runnerSignalFromEvent, normalizeActivity, readZcodeResult } = require(RUNNER);
+    const marker = JSON.stringify({ v: 1, type: 'gate.finished', gate: 'tests', outcome: 'pass' });
+    const marked = `Working.\nGROUNDWORK_RUNNER_EVENT ${marker}\n`;
+
+    assert.deepStrictEqual(
+      runnerSignalFromEvent('zcode', {
+        type: 'message.upserted',
+        payload: { role: 'assistant', content: [{ type: 'text', text: marked }] },
+      }),
+      { type: 'gate.finished', gate: 'tests', outcome: 'pass' }
+    );
+    assert.deepStrictEqual(
+      runnerSignalFromEvent('zcode', {
+        type: 'result',
+        response: `done\nGROUNDWORK_RUNNER_EVENT ${marker}`,
+      }),
+      { type: 'gate.finished', gate: 'tests', outcome: 'pass' }
+    );
+    assert.strictEqual(
+      runnerSignalFromEvent('zcode', { type: 'message.upserted', payload: { role: 'user', content: marked } }),
+      null,
+      'user prompts must not be parsed for runner markers'
+    );
+    assert.strictEqual(runnerSignalFromEvent('zcode', { type: 'turn.started' }), null);
+
+    assert.strictEqual(normalizeActivity('zcode', { type: 'session.created' }, {}, 0), 'ZCode session started');
+    assert.strictEqual(normalizeActivity('zcode', { type: 'turn.completed' }, {}, 0), null);
+    const state = {};
+    assert.strictEqual(
+      normalizeActivity('zcode', {
+        type: 'tool.updated',
+        payload: { kind: 'started', toolCallId: 't1', toolName: 'Bash', input: { command: 'npm test' } },
+      }, state, 1_000),
+      '$ npm test'
+    );
+    assert.strictEqual(
+      normalizeActivity('zcode', { type: 'tool.updated', payload: { kind: 'result', toolCallId: 't1' } }, state, 2_000),
+      null
+    );
+    assert.strictEqual(
+      normalizeActivity('zcode', { type: 'tool.updated', payload: { kind: 'error', toolCallId: 't2' } }, state, 2_000),
+      'command failed'
+    );
+
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-zcode-result-'));
+    try {
+      const stream = path.join(dir, 'stdout.jsonl');
+      write(stream, [
+        JSON.stringify({ type: 'session.created', sessionId: 's' }),
+        JSON.stringify({ type: 'message.upserted', payload: { role: 'assistant', content: 'hello' } }),
+        JSON.stringify({ type: 'result', sessionId: 's', response: 'final message' }),
+      ].join('\n') + '\n');
+      assert.strictEqual(readZcodeResult(stream), 'final message');
+
+      const empty = path.join(dir, 'empty.jsonl');
+      write(empty, JSON.stringify({ type: 'session.created', sessionId: 's' }) + '\n');
+      assert.throws(() => readZcodeResult(empty), /ZCode stream did not contain a final result/);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('keeps zcode environment variables for headless children', () => {
+    const { buildChildEnv } = require(RUNNER);
+    const previous = {
+      ZCODE_CONFIG: process.env.ZCODE_CONFIG,
+      CODEX_HOME: process.env.CODEX_HOME,
+      OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+      ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
+    };
+    process.env.ZCODE_CONFIG = '/tmp/zcode-config';
+    process.env.CODEX_HOME = '/tmp/codex';
+    process.env.OPENAI_API_KEY = 'sk-test';
+    process.env.ANTHROPIC_API_KEY = 'ak-test';
+    try {
+      const env = buildChildEnv('zcode', {});
+      assert.strictEqual(env.ZCODE_CONFIG, '/tmp/zcode-config');
+      assert.strictEqual(env.CODEX_HOME, undefined);
+      assert.strictEqual(env.OPENAI_API_KEY, undefined);
+      assert.strictEqual(env.ANTHROPIC_API_KEY, undefined);
+    } finally {
+      for (const [key, value] of Object.entries(previous)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
+
+  test('injects the coordinator model through a temporary zcode HOME', () => {
+    const { resolveZcodeCoordinatorHome } = require(RUNNER);
+    const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-zcode-home-'));
+    try {
+      // No providers (pre-login): the fallback provider is injected with the
+      // default model ref, and every other zcode entry is symlinked.
+      const realHome = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-zcode-real-'));
+      fs.mkdirSync(path.join(realHome, '.zcode', 'cli'), { recursive: true });
+      fs.mkdirSync(path.join(realHome, '.zcode', 'cli', 'agents'), { recursive: true });
+      write(path.join(realHome, '.zcode', 'cli', 'config.json'), JSON.stringify({
+        plugins: { enabledPlugins: { 'groundwork@groundwork-zcode': true } },
+      }));
+      const home = resolveZcodeCoordinatorHome(baseDir, null, {
+        HOME: realHome,
+      });
+      assert.ok(home, 'expected a temporary HOME');
+      const config = JSON.parse(
+        fs.readFileSync(path.join(home, '.zcode', 'cli', 'config.json'), 'utf8')
+      );
+      assert.strictEqual(config.model.main, 'zai-coding-plan/glm-5.3');
+      assert.strictEqual(config.provider['zai-coding-plan'].options.baseURL, 'https://api.z.ai/api/coding/paas/v4');
+      assert.ok(config.plugins.enabledPlugins['groundwork@groundwork-zcode'], 'plugins not preserved');
+      assert.ok(
+        fs.existsSync(path.join(home, '.zcode', 'cli', 'agents')),
+        'sibling zcode entries are not symlinked'
+      );
+
+      // A login-style config (authenticated provider + model.main): the
+      // coordinator model is pinned onto the user's provider — the fallback
+      // definition must not be added — with or without an explicit flag.
+      write(path.join(realHome, '.zcode', 'cli', 'config.json'), JSON.stringify({
+        model: { main: 'zai/glm-5.1', lite: 'zai/glm-4.7' },
+        provider: {
+          zai: { kind: 'anthropic', options: { baseURL: 'https://api.z.ai/api/anthropic', apiKey: 'k' } },
+        },
+      }));
+      const pinned = resolveZcodeCoordinatorHome(baseDir, 'glm-4.5-air', { HOME: realHome });
+      const pinnedConfig = JSON.parse(
+        fs.readFileSync(path.join(pinned, '.zcode', 'cli', 'config.json'), 'utf8')
+      );
+      assert.strictEqual(pinnedConfig.model.main, 'zai/glm-4.5-air');
+      assert.strictEqual(pinnedConfig.model.lite, 'zai/glm-4.7', 'lite ref not preserved');
+      assert.ok(!pinnedConfig.provider['zai-coding-plan'], 'fallback provider added despite user auth');
+
+      const defaulted = resolveZcodeCoordinatorHome(baseDir, null, { HOME: realHome });
+      const defaultedConfig = JSON.parse(
+        fs.readFileSync(path.join(defaulted, '.zcode', 'cli', 'config.json'), 'utf8')
+      );
+      assert.strictEqual(defaultedConfig.model.main, 'zai/glm-5.3');
+
+      // An existing-but-unparseable config is left alone rather than rebuilt
+      // without its plugin enablement; ZCode surfaces its own diagnostic.
+      write(path.join(realHome, '.zcode', 'cli', 'config.json'), '{not json');
+      assert.strictEqual(
+        resolveZcodeCoordinatorHome(baseDir, 'glm-5.3', { HOME: realHome }),
+        null
+      );
+      fs.rmSync(realHome, { recursive: true, force: true });
+    } finally {
+      fs.rmSync(baseDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('groundwork install preflight', () => {
+  const PHASE_SKILLS = ['plan-task', 'implement-task', 'validate', 'finalize-task'];
+
+  // The suite enables the install-check skip seam for fixture runs; the unit
+  // tests below exercise the real check and must bypass the seam.
+  function withoutSkipSeam(fn) {
+    const previous = process.env.GROUNDWORK_SKIP_INSTALL_CHECK;
+    delete process.env.GROUNDWORK_SKIP_INSTALL_CHECK;
+    try {
+      fn();
+    } finally {
+      if (previous === undefined) delete process.env.GROUNDWORK_SKIP_INSTALL_CHECK;
+      else process.env.GROUNDWORK_SKIP_INSTALL_CHECK = previous;
+    }
+  }
+
+  // Stub harness CLIs so the checks do not depend on the host machine's
+  // installed tools (CI images ship none of them).
+  function fakeCliPath() {
+    const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-cli-bin-'));
+    for (const name of ['claude', 'codex', 'zcode']) {
+      const stub = path.join(bin, name);
+      write(stub, '#!/bin/sh\n');
+      fs.chmodSync(stub, 0o755);
+    }
+    return bin;
+  }
+
+  test('accepts a complete install through each harness discovery path', () => {
+    withoutSkipSeam(() => {
+      const { groundworkInstallStatus } = require(RUNNER);
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-preflight-home-'));
+      const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-preflight-repo-'));
+      const cliBin = fakeCliPath();
+      try {
+        const env = { PATH: cliBin };
+        for (const skill of PHASE_SKILLS) {
+          write(path.join(repo, '.codex', 'skills', `groundwork-${skill}`, 'SKILL.md'), 'skill');
+        }
+        const codex = groundworkInstallStatus('codex', repo, { home, env });
+        assert.ok(codex.installed, `codex project install not detected: ${codex.message}`);
+
+        const zplugin = path.join(home, '.zcode', 'cli', 'plugins', 'cache', 'm', 'groundwork', '1.0.0');
+        for (const skill of PHASE_SKILLS) {
+          write(path.join(zplugin, 'skills', `groundwork-${skill}`, 'SKILL.md'), 'skill');
+        }
+        write(path.join(home, '.zcode', 'cli', 'plugins', 'installed_plugins.json'), JSON.stringify({
+          version: 1,
+          plugins: [{ id: 'groundwork@groundwork-zcode', installPath: zplugin }],
+        }));
+        const zcode = groundworkInstallStatus('zcode', repo, {
+          home, env, platform: 'linux',
+        });
+        assert.ok(zcode.installed, `zcode plugin install not detected: ${zcode.message}`);
+
+        const cplugin = path.join(home, '.claude', 'plugins', 'cache', 'm', 'groundwork', '1.0.0');
+        for (const skill of PHASE_SKILLS) {
+          write(path.join(cplugin, 'skills', skill, 'SKILL.md'), 'skill');
+        }
+        write(path.join(home, '.claude', 'plugins', 'installed_plugins.json'), JSON.stringify({
+          version: 2,
+          plugins: { 'groundwork@groundwork-marketplace': [{ installPath: cplugin }] },
+        }));
+        const claude = groundworkInstallStatus('claude', repo, { home, env });
+        assert.ok(claude.installed, `claude plugin install not detected: ${claude.message}`);
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+        fs.rmSync(repo, { recursive: true, force: true });
+        fs.rmSync(cliBin, { recursive: true, force: true });
+      }
+    });
+  });
+
+  test('rejects partial installs and reports the probed locations', () => {
+    withoutSkipSeam(() => {
+      const { groundworkInstallStatus } = require(RUNNER);
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-preflight-miss-home-'));
+      const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-preflight-miss-repo-'));
+      const cliBin = fakeCliPath();
+      try {
+        const env = { PATH: cliBin };
+        for (const skill of ['plan-task', 'validate']) {
+          write(path.join(repo, '.codex', 'skills', `groundwork-${skill}`, 'SKILL.md'), 'skill');
+        }
+        const codex = groundworkInstallStatus('codex', repo, { home, env });
+        assert.strictEqual(codex.installed, false);
+        assert.match(codex.message, /Groundwork is not installed for Codex/);
+
+        const none = groundworkInstallStatus('zcode', repo, {
+          home, env, platform: 'linux',
+        });
+        assert.strictEqual(none.installed, false);
+        assert.match(none.message, /Groundwork is not installed for ZCode/);
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+        fs.rmSync(repo, { recursive: true, force: true });
+        fs.rmSync(cliBin, { recursive: true, force: true });
+      }
+    });
+  });
+
+  test('fails fast when the harness CLI itself is missing', () => {
+    withoutSkipSeam(() => {
+      const { groundworkInstallStatus } = require(RUNNER);
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-preflight-nocli-home-'));
+      const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-preflight-nocli-repo-'));
+      const emptyBin = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-empty-bin-'));
+      try {
+        const env = { PATH: emptyBin };
+        const codex = groundworkInstallStatus('codex', repo, { home, env });
+        assert.strictEqual(codex.installed, false);
+        assert.match(codex.message, /Codex CLI not found on PATH/);
+
+        // linux + no PATH binary + no macOS bundle → zcode is unusable.
+        const zcode = groundworkInstallStatus('zcode', repo, {
+          home, env, platform: 'linux',
+        });
+        assert.strictEqual(zcode.installed, false);
+        assert.match(zcode.message, /ZCode CLI not found/);
+      } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+        fs.rmSync(repo, { recursive: true, force: true });
+        fs.rmSync(emptyBin, { recursive: true, force: true });
+      }
+    });
+  });
+
+  test('runTasks fails before any phase when the harness lacks groundwork', () => {
+    const { runTasks } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-preflight-run-'));
+    try {
+      initRepo(root);
+      assert.throws(
+        () => runTasks({
+          command: 'task',
+          harness: 'codex',
+          repo: root,
+          project: null,
+          tasks: [],
+          dryRun: false,
+        }, {
+          log: () => {},
+          invokePhase: () => { throw new Error('phase should not run'); },
+          groundworkInstallStatus: () => ({ installed: false, message: 'no groundwork for codex' }),
+        }),
+        /no groundwork for codex/
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
     }
   });
 });

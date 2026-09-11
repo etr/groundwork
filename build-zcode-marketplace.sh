@@ -156,9 +156,11 @@ EOF
 
 # --- 5. Fail-closed sanity checks ---------------------------------------------
 
-if grep -rqE '\b(Opus|Sonnet|Haiku|Fable)\b|opus\[1m\]|/effort high|/model (sonnet|opus)' "$OUT_DIR"; then
+# lib/model-override.js is the model-policy transform engine: its token table
+# names the models it rewrites, so it is exempt from the prose-leak scan.
+if grep -rqE --exclude='model-override.js' '\b(Opus|Sonnet|Haiku|Fable)\b|opus\[1m\]|/effort high|/model (sonnet|opus)' "$OUT_DIR"; then
     echo "Error: Claude model names or commands leaked into the bundle:" >&2
-    grep -rlE '\b(Opus|Sonnet|Haiku|Fable)\b|opus\[1m\]|/effort high|/model (sonnet|opus)' "$OUT_DIR" >&2
+    grep -rlE --exclude='model-override.js' '\b(Opus|Sonnet|Haiku|Fable)\b|opus\[1m\]|/effort high|/model (sonnet|opus)' "$OUT_DIR" >&2
     exit 1
 fi
 

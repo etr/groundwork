@@ -29,6 +29,22 @@ const {
 } = runReportingModule ? require(runReportingModule) : {};
 
 const TASK_ID = /^TASK-(\d{3})$/;
+const SUPPORTED_HARNESSES = ['claude', 'codex', 'zcode'];
+const HARNESS_LABELS = {
+  claude: 'Claude Code',
+  codex: 'Codex',
+  zcode: 'ZCode',
+};
+const COORDINATOR_EFFORTS = ['low', 'medium', 'high', 'max'];
+// Per-harness phase-session (coordinator) model defaults. ZCode cannot set a
+// reasoning effort headlessly (it is session state, not config), so its effort
+// stays unset and the GLM model default applies.
+const COORDINATOR_DEFAULTS = {
+  claude: { model: 'opus', effort: 'high' },
+  codex: { model: 'gpt-5.6-sol', effort: 'high' },
+  // Concrete registry id (display name "GLM" is not a valid model ref).
+  zcode: { model: 'glm-5.3', effort: null },
+};
 const PHASE_SKILLS = {
   plan: 'plan-task',
   implement: 'implement-task',
@@ -201,6 +217,28 @@ function normalizeActivity(harness, event, state = {}, now = Date.now()) {
       return `tool ${name || 'call'} completed`;
     }
   }
+  if (harness === 'zcode') {
+    if (event.type === 'session.created') return 'ZCode session started';
+    if (event.type === 'turn.started' || event.type === 'turn.completed') return null;
+    if (event.type === 'turn.failed') return 'turn failed';
+    if (event.type === 'message.upserted') {
+      const text = zcodeEventText(event.payload);
+      return runnerProgress(text) || validationProgress(text);
+    }
+    if (event.type === 'tool.updated' && event.payload) {
+      const payload = event.payload;
+      const toolId = payload.toolCallId ?? payload.id ?? '';
+      const name = payload.toolName || 'tool';
+      if (payload.kind === 'started' || payload.kind === 'scheduled') {
+        if (name === 'Bash') {
+          return startCommand(toolId, payload.input && payload.input.command);
+        }
+        return `${name} started`;
+      }
+      if (payload.kind === 'result') return finishCommand(toolId, false, null);
+      if (payload.kind === 'error') return finishCommand(toolId, true, payload.exitCode);
+    }
+  }
   return null;
 }
 
@@ -226,6 +264,8 @@ function parseArgs(argv) {
     tail: 50,
     follow: false,
     includeToolOutput: false,
+    coordinatorModel: null,
+    coordinatorEffort: null,
   };
 
   let index = 0;
@@ -251,14 +291,34 @@ function parseArgs(argv) {
     else if (arg === '--tail') result.tail = Number(argv[++index]);
     else if (arg === '--follow' || arg === '-f') result.follow = true;
     else if (arg === '--include-tool-output') result.includeToolOutput = true;
+    else if (arg === '--coordinator-model') result.coordinatorModel = argv[++index] || null;
+    else if (arg === '--coordinator-effort') result.coordinatorEffort = argv[++index] || null;
     else if (arg === '--help' || arg === '-h') result.help = true;
     else if (arg.startsWith('-')) throw new Error(`Unknown option: ${arg}`);
     else result.tasks.push(normalizeTaskId(arg));
   }
 
+  if (result.coordinatorModel !== null
+      && !/^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(result.coordinatorModel)) {
+    throw new Error(`Invalid --coordinator-model: ${JSON.stringify(result.coordinatorModel)}`);
+  }
+  if (result.coordinatorEffort !== null
+      && !COORDINATOR_EFFORTS.includes(result.coordinatorEffort)) {
+    throw new Error(
+      `--coordinator-effort must be one of: ${COORDINATOR_EFFORTS.join(', ')}`
+    );
+  }
+  if (result.coordinatorEffort !== null && result.harness === 'zcode') {
+    throw new Error(
+      '--coordinator-effort has no effect with --harness zcode: ZCode reasoning effort is '
+      + 'session state with no headless surface and follows the model default. '
+      + 'Drop the flag or pick claude or codex.'
+    );
+  }
+
   if (!result.help && ['task', 'all'].includes(result.command)
-      && !['claude', 'codex'].includes(result.harness)) {
-    throw new Error('--harness must be claude or codex');
+      && !SUPPORTED_HARNESSES.includes(result.harness)) {
+    throw new Error(`--harness must be one of: ${SUPPORTED_HARNESSES.join(', ')}`);
   }
   if (result.tasks.length && (result.fromTask || result.toTask)) {
     throw new Error('Choose either an explicit task list or a --from/--to range, not both');
@@ -279,13 +339,13 @@ function parseArgs(argv) {
   if (result.command === 'status'
       && (result.harness || result.fromTask || result.toTask || result.dryRun || result.verbose
         || result.revalidateIfMergeConflicts || result.tail !== 50 || result.follow
-        || result.includeToolOutput)) {
-    throw new Error('status does not accept --harness, --from, --to, --dry-run, --verbose, --revalidate-if-merge-conflicts, --tail, --follow, or --include-tool-output');
+        || result.includeToolOutput || result.coordinatorModel || result.coordinatorEffort)) {
+    throw new Error('status does not accept --harness, --from, --to, --dry-run, --verbose, --revalidate-if-merge-conflicts, --tail, --follow, --include-tool-output, or --coordinator-*');
   }
   if (result.command === 'logs'
       && (result.harness || result.fromTask || result.toTask || result.dryRun || result.verbose
-        || result.revalidateIfMergeConflicts)) {
-    throw new Error('logs does not accept --harness, --from, --to, --dry-run, --verbose, or --revalidate-if-merge-conflicts');
+        || result.revalidateIfMergeConflicts || result.coordinatorModel || result.coordinatorEffort)) {
+    throw new Error('logs does not accept --harness, --from, --to, --dry-run, --verbose, --revalidate-if-merge-conflicts, or --coordinator-*');
   }
   if (!Number.isSafeInteger(result.tail) || result.tail < 1 || result.tail > 10_000) {
     throw new Error('--tail must be an integer from 1 to 10000');
@@ -2053,6 +2113,22 @@ function readClaudeResult(outputPath) {
   return result;
 }
 
+// ZCode headless stream-json emits one JSON object per line and closes with a
+// `{type: "result", response: ...}` summary carrying the final message.
+function readZcodeResult(outputPath) {
+  let result = null;
+  forEachFileLine(outputPath, (line) => {
+    try {
+      const event = JSON.parse(line);
+      if (event && event.type === 'result' && typeof event.response === 'string') {
+        result = event.response;
+      }
+    } catch {}
+  });
+  if (result === null) throw new Error('ZCode stream did not contain a final result');
+  return result;
+}
+
 function readFileTail(filePath, maxBytes = MAX_DIAGNOSTIC_BYTES) {
   const stat = fs.statSync(filePath);
   if (stat.size === 0) return '';
@@ -2189,7 +2265,7 @@ const interval = setInterval(() => {
       phase: input.phase || 'phase',
       harness: input.harness,
       verbose: Boolean(input.verbose),
-      harnessLabel: input.harness === 'claude' ? 'Claude Code' : 'Codex',
+      harnessLabel: HARNESS_LABELS[input.harness] || input.harness,
       runReportingModule,
       transcript,
       agentName: input.phase === 'validate'
@@ -2212,16 +2288,55 @@ function stopProgressMonitor(monitor) {
   if (result === 'timed-out') monitor.worker.terminate();
 }
 
-function buildInvocation({ harness, phase, cwd, pluginRoot, prompt, resultFile }) {
+function executableOnPath(command, pathEnv = process.env.PATH || '') {
+  for (const dir of pathEnv.split(path.delimiter)) {
+    if (!dir) continue;
+    const candidate = path.join(dir, command);
+    try {
+      fs.accessSync(candidate, fs.constants.X_OK);
+      if (fs.statSync(candidate).isFile()) return candidate;
+    } catch {}
+  }
+  return null;
+}
+
+// Prefer a `zcode` binary on PATH; fall back to the CLI bundled with the
+// macOS desktop app, which headless installs may not symlink.
+function resolveZcodeCommand(platform = process.platform, pathEnv = process.env.PATH) {
+  const found = executableOnPath('zcode', pathEnv);
+  if (found) return { command: found, prefixArgs: [] };
+  const bundled = platform === 'darwin'
+    ? '/Applications/ZCode.app/Contents/Resources/glm/zcode.cjs'
+    : null;
+  if (bundled && fs.existsSync(bundled)) {
+    return { command: process.execPath, prefixArgs: [bundled] };
+  }
+  return { command: 'zcode', prefixArgs: [] };
+}
+
+function coordinatorSettings(input) {
+  const defaults = COORDINATOR_DEFAULTS[input.harness] || {};
+  return {
+    model: input.coordinatorModel || defaults.model || null,
+    effort: input.coordinatorEffort || defaults.effort || null,
+  };
+}
+
+function buildInvocation({ harness, phase, cwd, pluginRoot, prompt, resultFile, coordinatorModel, coordinatorEffort }) {
   const recovery = phase === 'recovery';
+  const coordinator = coordinatorSettings({
+    harness,
+    coordinatorModel,
+    coordinatorEffort,
+  });
   if (harness === 'claude') {
     return {
       command: 'claude',
       args: [
         '-p',
         ...(recovery ? [] : ['--plugin-dir', pluginRoot]),
-        '--model', 'opus',
-        '--effort', 'high',
+        '--model', coordinator.model,
+        '--effort', coordinator.effort,
         '--permission-mode', 'acceptEdits',
         '--output-format', 'stream-json',
         '--verbose',
@@ -2239,10 +2354,31 @@ function buildInvocation({ harness, phase, cwd, pluginRoot, prompt, resultFile }
         '--json',
         '--color', 'never',
         '--output-last-message', resultFile,
+        '-m', coordinator.model,
+        '-c', `model_reasoning_effort="${coordinator.effort}"`,
         '-',
       ],
       cwd,
       input: prompt,
+    };
+  }
+  if (harness === 'zcode') {
+    // ZCode headless has no plugin-dir injection: groundwork must already be
+    // installed for ZCode (marketplace plugin or file export). The prompt is
+    // passed as an option value instead of stdin, and --mode yolo keeps an
+    // unattended run from stalling on a permission question.
+    const zcode = resolveZcodeCommand();
+    return {
+      command: zcode.command,
+      args: [
+        ...zcode.prefixArgs,
+        '--prompt', prompt,
+        '--mode', 'yolo',
+        '--output-format', 'stream-json',
+        '--no-color',
+      ],
+      cwd,
+      input: undefined,
     };
   }
   throw new Error(`Unsupported harness: ${harness}`);
@@ -2353,6 +2489,27 @@ function phaseChildEnvironment(input) {
   };
 }
 
+// Extract user-visible text from a ZCode `message.upserted` payload. The
+// payload shape varies across CLI versions: content may be a string, a block
+// array, or split across `parts`.
+function zcodeEventText(payload) {
+  if (!payload || typeof payload !== 'object') return '';
+  if (payload.role === 'user') return '';
+  const blocksToText = (blocks) => blocks
+    .map((block) => {
+      if (typeof block === 'string') return block;
+      if (block && typeof block.text === 'string') return block.text;
+      if (block && typeof block.content === 'string') return block.content;
+      return '';
+    })
+    .join('\n');
+  if (typeof payload.text === 'string') return payload.text;
+  if (typeof payload.content === 'string') return payload.content;
+  if (Array.isArray(payload.content)) return blocksToText(payload.content);
+  if (Array.isArray(payload.parts)) return blocksToText(payload.parts);
+  return '';
+}
+
 function runnerSignalFromEvent(harness, event) {
   if (harness === 'codex') {
     if (event && event.type === 'item.completed' && event.item && event.item.type === 'agent_message') {
@@ -2368,6 +2525,15 @@ function runnerSignalFromEvent(harness, event) {
       .map((block) => block.text)
       .join('\n');
     return parseRunnerMarker(text);
+  }
+  if (harness === 'zcode') {
+    if (!event || typeof event !== 'object') return null;
+    if (event.type === 'result') {
+      return typeof event.response === 'string' ? parseRunnerMarker(event.response) : null;
+    }
+    if (event.type === 'message.upserted') {
+      return parseRunnerMarker(zcodeEventText(event.payload));
+    }
   }
   return null;
 }
@@ -2439,6 +2605,86 @@ function journalPhaseOutput(input, outputPath) {
   }
 }
 
+// ZCode headless takes its session model from `~/.zcode/cli/config.json`
+// (`model.main` as a `provider/model` ref); there is no --model flag and the
+// help-only --settings option is not implemented in the CLI parser. To pin the
+// coordinator model without touching the user's real config, the runner builds
+// a temporary HOME whose `.zcode/cli/config.json` is the user's config with the
+// model section injected, and every other entry symlinked to the real one (this
+// preserves plugin enablement, session state, and credentials). Reasoning
+// effort is session state with no config surface, so it is not injected.
+const ZCODE_COORDINATOR_FALLBACK_PROVIDER = 'zai-coding-plan';
+const ZCODE_PROVIDER_DEFAULTS = {
+  kind: 'openai-compatible',
+  name: 'Z.AI Coding Plan',
+  options: { baseURL: 'https://api.z.ai/api/coding/paas/v4' },
+};
+
+function resolveZcodeCoordinatorHome(baseDir, coordinatorModel, env = process.env) {
+  const realHome = env.HOME && env.HOME.trim() ? env.HOME : os.homedir();
+  const userConfigPath = path.join(realHome, '.zcode', 'cli', 'config.json');
+  const configExists = fs.existsSync(userConfigPath);
+  const userConfig = configExists ? readJsonFile(userConfigPath) : {};
+  // An existing-but-unparseable config must not be silently rebuilt without
+  // its plugin enablement: leave the environment alone and let ZCode surface
+  // its own config diagnostic.
+  if (configExists && userConfig === null) return null;
+  const requestedModel = coordinatorModel || COORDINATOR_DEFAULTS.zcode.model;
+
+  // Reuse a provider the user already authenticated (login writes one with an
+  // inline API key); only a config with no providers gets the fallback
+  // definition — the fallback alone cannot satisfy request signing.
+  const providers = userConfig.provider && typeof userConfig.provider === 'object'
+    ? Object.keys(userConfig.provider).filter((key) => userConfig.provider[key])
+    : [];
+  let providerId = ZCODE_COORDINATOR_FALLBACK_PROVIDER;
+  if (providers.length) {
+    const mainProvider = typeof userConfig.model?.main === 'string'
+      && userConfig.model.main.includes('/')
+      ? userConfig.model.main.split('/')[0]
+      : null;
+    providerId = providers.includes(mainProvider) ? mainProvider : providers[0];
+  }
+
+  const merged = {
+    ...userConfig,
+    model: {
+      ...userConfig.model,
+      main: `${providerId}/${requestedModel}`,
+    },
+  };
+  if (!providers.length) {
+    merged.provider = {
+      ...userConfig.provider,
+      [ZCODE_COORDINATOR_FALLBACK_PROVIDER]: ZCODE_PROVIDER_DEFAULTS,
+    };
+  }
+
+  const home = fs.mkdtempSync(path.join(baseDir, 'zcode-home-'));
+  const cliDir = path.join(home, '.zcode', 'cli');
+  fs.mkdirSync(cliDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(cliDir, 'config.json'),
+    `${JSON.stringify(merged, null, 2)}\n`,
+    { mode: 0o600 }
+  );
+  const realZcodeDir = path.join(realHome, '.zcode');
+  if (fs.existsSync(realZcodeDir)) {
+    for (const entry of fs.readdirSync(realZcodeDir, { withFileTypes: true })) {
+      if (entry.name === 'cli') continue;
+      fs.symlinkSync(path.join(realZcodeDir, entry.name), path.join(home, '.zcode', entry.name));
+    }
+  }
+  const realCliDir = path.join(realZcodeDir, 'cli');
+  if (fs.existsSync(realCliDir)) {
+    for (const entry of fs.readdirSync(realCliDir, { withFileTypes: true })) {
+      if (entry.name === 'config.json') continue;
+      fs.symlinkSync(path.join(realCliDir, entry.name), path.join(cliDir, entry.name));
+    }
+  }
+  return home;
+}
+
 function invokePhase(input) {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'groundwork-phase-'));
   const resultFile = path.join(tempDir, 'result.txt');
@@ -2453,7 +2699,14 @@ function invokePhase(input) {
     outputFd = fs.openSync(outputPath, 'wx', 0o600);
     errorFd = fs.openSync(errorPath, 'wx', 0o600);
     const invocation = buildInvocation({ ...input, resultFile });
-    const env = buildChildEnv(input.harness, input.env);
+    let zcodeHome = null;
+    if (input.harness === 'zcode') {
+      zcodeHome = resolveZcodeCoordinatorHome(tempDir, input.coordinatorModel);
+    }
+    const env = buildChildEnv(input.harness, {
+      ...input.env,
+      ...(zcodeHome ? { HOME: zcodeHome } : {}),
+    });
     phaseChild = phaseChildEnvironment(input);
     monitor = startProgressMonitor(input, outputPath, Date.now());
     result = spawnSync(phaseChild ? '/bin/sh' : invocation.command, phaseChild ? [
@@ -2486,6 +2739,7 @@ function invokePhase(input) {
       if (!fs.existsSync(resultFile)) throw new Error('Codex did not write its final result');
       return fs.readFileSync(resultFile, 'utf8');
     }
+    if (input.harness === 'zcode') return readZcodeResult(outputPath);
     return readClaudeResult(outputPath);
   } finally {
     if (outputFd !== undefined) fs.closeSync(outputFd);
@@ -2506,6 +2760,8 @@ function buildChildEnv(harness, additions = {}) {
   const prefixes = ['LC_', 'XDG_'];
   if (harness === 'claude') {
     prefixes.push('ANTHROPIC_', 'CLAUDE_', 'AWS_', 'GOOGLE_', 'VERTEX_', 'AZURE_');
+  } else if (harness === 'zcode') {
+    prefixes.push('ZCODE_');
   } else {
     exact.add('CODEX_HOME');
     prefixes.push('OPENAI_', 'CODEX_', 'AZURE_OPENAI_');
@@ -2991,6 +3247,137 @@ function cleanupCompletedTaskWorkspace(commonDir, repoRoot, projectRoot, taskId,
   return true;
 }
 
+// The runner drives these skills through the selected harness, so an install
+// that is missing any of them cannot complete a task.
+const RUNNER_PHASE_SKILLS = ['plan-task', 'implement-task', 'validate', 'finalize-task'];
+
+function readJsonFile(filePath) {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function pluginSkillPaths(installPath, harness) {
+  return RUNNER_PHASE_SKILLS.map((skill) => path.join(
+    installPath,
+    'skills',
+    harness === 'claude' ? skill : `groundwork-${skill}`,
+    'SKILL.md'
+  ));
+}
+
+function directoryHasPhaseSkills(baseDir, harness) {
+  const paths = pluginSkillPaths(baseDir, harness);
+  return paths.every((skillPath) => fs.existsSync(skillPath));
+}
+
+function claudeCodePluginSources(home, repoRoot) {
+  const sources = [];
+  for (const manifest of [
+    path.join(home, '.claude', 'plugins', 'installed_plugins.json'),
+    path.join(repoRoot, '.claude', 'plugins', 'installed_plugins.json'),
+  ]) {
+    const parsed = readJsonFile(manifest);
+    const plugins = parsed && typeof parsed === 'object' ? parsed.plugins : null;
+    for (const [name, entries] of Object.entries(plugins || {})) {
+      if (!name.startsWith('groundwork@') || !Array.isArray(entries)) continue;
+      for (const entry of entries) {
+        if (entry && typeof entry.installPath === 'string') sources.push(entry.installPath);
+      }
+    }
+  }
+  // Manual/legacy installs clone the plugin next to the marketplace cache.
+  for (const legacy of [
+    path.join(home, '.claude', 'plugins', 'groundwork'),
+    path.join(repoRoot, '.claude', 'plugins', 'groundwork'),
+  ]) {
+    if (fs.existsSync(legacy)) sources.push(legacy);
+  }
+  return sources;
+}
+
+function zcodePluginSources(home, repoRoot) {
+  const sources = [];
+  for (const manifest of [
+    path.join(home, '.zcode', 'cli', 'plugins', 'installed_plugins.json'),
+    path.join(repoRoot, '.zcode', 'cli', 'plugins', 'installed_plugins.json'),
+  ]) {
+    const parsed = readJsonFile(manifest);
+    for (const entry of (parsed && Array.isArray(parsed.plugins) ? parsed.plugins : [])) {
+      if (entry && typeof entry.id === 'string' && entry.id.startsWith('groundwork@')
+          && typeof entry.installPath === 'string') {
+        sources.push(entry.installPath);
+      }
+    }
+  }
+  for (const exported of [
+    path.join(home, '.zcode', 'skills'),
+    path.join(repoRoot, '.zcode', 'skills'),
+  ]) {
+    if (fs.existsSync(exported)) sources.push(exported);
+  }
+  return sources;
+}
+
+function codexSkillSources(home, repoRoot, env = process.env) {
+  const sources = [];
+  for (const base of [env.CODEX_HOME || path.join(home, '.codex'), path.join(repoRoot, '.codex')]) {
+    if (fs.existsSync(path.join(base, 'skills'))) sources.push(base);
+  }
+  return sources;
+}
+
+// Verify the selected harness can actually discover Groundwork before any
+// phase starts: a missing install otherwise surfaces as a confusing mid-run
+// failure when the harness cannot invoke the first phase skill.
+function groundworkInstallStatus(harness, repoRoot, options = {}) {
+  if (process.env.GROUNDWORK_SKIP_INSTALL_CHECK === '1') {
+    return { installed: true, source: 'GROUNDWORK_SKIP_INSTALL_CHECK' };
+  }
+  const home = options.home || os.homedir();
+  const env = options.env || process.env;
+  const label = HARNESS_LABELS[harness] || harness;
+  if (harness === 'zcode') {
+    // resolveZcodeCommand falls back to the macOS-bundled CLI, so a bare
+    // `zcode` result means neither a PATH binary nor the bundle exists.
+    const resolved = resolveZcodeCommand(options.platform, env.PATH);
+    if (resolved.command === 'zcode' && resolved.prefixArgs.length === 0) {
+      return {
+        installed: false,
+        message: 'ZCode CLI not found: install ZCode (or add a zcode binary to PATH)'
+          + ' before running the runner with this harness',
+      };
+    }
+  } else if (!executableOnPath(harness, env.PATH)) {
+    return {
+      installed: false,
+      message: `${label} CLI not found on PATH; install it before running the runner with this harness`,
+    };
+  }
+
+  let sources;
+  if (harness === 'claude') sources = claudeCodePluginSources(home, repoRoot);
+  else if (harness === 'zcode') sources = zcodePluginSources(home, repoRoot);
+  else sources = codexSkillSources(home, repoRoot, env);
+
+  for (const source of sources) {
+    if (directoryHasPhaseSkills(source, harness)) {
+      return { installed: true, source };
+    }
+  }
+  const expected = RUNNER_PHASE_SKILLS
+    .map((skill) => (harness === 'claude' ? skill : `groundwork-${skill}`))
+    .join(', ');
+  return {
+    installed: false,
+    message: `Groundwork is not installed for ${label}. The harness must discover the runner phase skills (${expected}).`
+      + ` Probed: ${sources.length ? sources.join('; ') : 'no Groundwork install locations found'}.`
+      + ` Install Groundwork for ${label} (Claude Code and ZCode: marketplace plugin; Codex and ZCode file export: ./install-skills.sh), then rerun.`,
+  };
+}
+
 function runTasks(options, dependencies = {}) {
   const log = dependencies.log || console.log;
   const now = dependencies.now || Date.now;
@@ -3000,6 +3387,13 @@ function runTasks(options, dependencies = {}) {
   const primaryRoot = fs.realpathSync(path.dirname(commonDir));
   if (repoRoot !== primaryRoot) {
     throw new Error(`Run from the primary worktree or pass --repo ${primaryRoot}`);
+  }
+  // A dry run only previews task selection; every real run needs the selected
+  // harness to actually discover Groundwork.
+  if (!options.dryRun) {
+    const installStatus = dependencies.groundworkInstallStatus || groundworkInstallStatus;
+    const status = installStatus(options.harness, repoRoot);
+    if (!status.installed) throw new Error(status.message);
   }
   const leaseDependencies = {
     log,
@@ -3182,7 +3576,7 @@ function runTasks(options, dependencies = {}) {
     let preservedWorkspace = null;
     let activePhase = null;
     let activeRepairInput = null;
-    const harnessLabel = options.harness === 'claude' ? 'Claude Code' : 'Codex';
+    const harnessLabel = HARNESS_LABELS[options.harness] || options.harness;
     function taskLog(message, at = now()) {
       log(`[${formatLocalTimestamp(at)}] ${message}`);
     }
@@ -3295,6 +3689,8 @@ function runTasks(options, dependencies = {}) {
           assertNoSymlinkComponents(preparedTaskProjectRoot, preparedTaskSpecsDir, 'Task specs');
           const common = {
             harness: options.harness,
+            coordinatorModel: options.coordinatorModel || null,
+            coordinatorEffort: options.coordinatorEffort || null,
             verbose: Boolean(options.verbose),
             reporter,
             taskId,
@@ -3913,11 +4309,17 @@ function runTasks(options, dependencies = {}) {
 
 function usage() {
   return `Usage:
-  groundwork-run task TASK-NNN [TASK-NNN ...] --harness claude|codex [--project NAME] [--repo PATH] [--verbose] [--revalidate-if-merge-conflicts]
-  groundwork-run task --from TASK-NNN [--to TASK-NNN] --harness claude|codex [--project NAME] [--repo PATH] [--revalidate-if-merge-conflicts]
-  groundwork-run all --harness claude|codex [--from TASK-NNN] [--to TASK-NNN] [--project NAME] [--repo PATH] [--dry-run] [--verbose] [--revalidate-if-merge-conflicts]
+  groundwork-run task TASK-NNN [TASK-NNN ...] --harness claude|codex|zcode [--project NAME] [--repo PATH] [--verbose] [--revalidate-if-merge-conflicts]
+  groundwork-run task --from TASK-NNN [--to TASK-NNN] --harness claude|codex|zcode [--project NAME] [--repo PATH] [--revalidate-if-merge-conflicts]
+  groundwork-run all --harness claude|codex|zcode [--from TASK-NNN] [--to TASK-NNN] [--project NAME] [--repo PATH] [--dry-run] [--verbose] [--revalidate-if-merge-conflicts]
   groundwork-run status TASK-NNN [--project NAME] [--repo PATH]
-  groundwork-run logs TASK-NNN [--project NAME] [--repo PATH] [--tail N] [--follow] [--include-tool-output]`;
+  groundwork-run logs TASK-NNN [--project NAME] [--repo PATH] [--tail N] [--follow] [--include-tool-output]
+
+Coordinator model (phase sessions):
+  Defaults per harness: Claude Code opus/high, Codex gpt-5.6-sol/high, ZCode glm-5.3
+  (effort follows the model default). Override with --coordinator-model MODEL and
+  --coordinator-effort low|medium|high|max. --coordinator-effort is rejected with
+  --harness zcode, which cannot set reasoning effort headlessly.`;
 }
 
 function main(argv) {
@@ -3955,11 +4357,16 @@ module.exports = {
   parseFinalizeResult,
   sealPreparedCommit,
   buildInvocation,
+  resolveZcodeCommand,
+  resolveZcodeCoordinatorHome,
+  readZcodeResult,
+  groundworkInstallStatus,
   phasePrompt,
   buildChildEnv,
   formatElapsed,
   formatLocalTimestamp,
   normalizeActivity,
+  runnerSignalFromEvent,
   transcriptSignalsFromEvent,
   createRunReporter,
   createTranscriptWriter,

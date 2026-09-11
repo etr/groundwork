@@ -263,7 +263,10 @@ describe('ZCode marketplace bundle', () => {
   test('carries the GLM wording and no Claude-Code-only artifacts', () => {
     if (bundle === null) return;
     const offenders = allFiles(bundle).filter((file) =>
-      CLAUDE_ARTIFACTS.test(fs.readFileSync(file, 'utf8'))
+      // lib/model-override.js is the model-policy transform engine: its token
+      // table names the models it rewrites and is exempt from the prose scan.
+      !file.endsWith(`${path.sep}model-override.js`)
+      && CLAUDE_ARTIFACTS.test(fs.readFileSync(file, 'utf8'))
     );
     assert.deepStrictEqual(
       offenders,

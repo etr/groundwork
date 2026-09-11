@@ -1,6 +1,6 @@
 # Groundwork
 
-A comprehensive skills library for Claude Code and Codex, consolidating proven techniques for planning, design, TDD, debugging, collaboration, and problem-solving. Experimental exports are also available for OpenCode, Kiro, and Pi.
+A comprehensive skills library for Claude Code and Codex, consolidating proven techniques for planning, design, TDD, debugging, collaboration, and problem-solving. ZCode is also supported (installer export and managed marketplace); experimental exports are available for OpenCode, Kiro, and Pi.
 
 ## Installation
 
@@ -37,7 +37,7 @@ Or use the installer provided with the codebase.
 
 ### Multi-target Installer
 
-Groundwork supports Claude Code and Codex. Exports for OpenCode, Kiro, Pi, and ZCode are experimental: the installer transforms Claude Code-specific constructs for those harnesses, but hooks, invocation, and skill chaining may not behave identically.
+Groundwork supports Claude Code, Codex, and ZCode (both the installer export and the managed marketplace). Exports for OpenCode, Kiro, and Pi are experimental: the installer transforms Claude Code-specific constructs for those harnesses, but hooks, invocation, and skill chaining may not behave identically.
 
 The included installer adapts Groundwork skills and agents to each target's native format. Claude Code users should normally use the marketplace; Codex users should use the installer.
 
@@ -50,8 +50,8 @@ The included installer adapts Groundwork skills and agents to each target's nati
 | [OpenCode](https://github.com/opencode-ai/opencode) | `--opencode` | Experimental | Installs transformed skills and standalone agent files |
 | [Kiro](https://kiro.dev) | `--kiro` | Experimental | Installs transformed skills and JSON config + prompt file pairs for agents |
 | Pi | `--pi` | Experimental | Installs transformed skills, `review-`prefixed agent skills, and a pre-built TypeScript extension (`pi-extension/`) |
-| ZCode | `--zcode` | Experimental | Installs transformed skills to `~/.zcode/skills/` (or `.zcode/skills/`); agents become `review-`prefixed skills |
-| ZCode (marketplace) | `--zcode-plugin` | Experimental | Plugin flavor for the managed marketplace: native `agents/*.md`, GLM model wording, filtered hooks — packaged by `build-zcode-marketplace.sh` |
+| ZCode | `--zcode` | Supported | Installs transformed skills to `~/.zcode/skills/` (or `.zcode/skills/`); agents become `review-`prefixed skills |
+| ZCode (marketplace) | `--zcode-plugin` | Supported | Plugin flavor for the managed marketplace: native `agents/*.md`, GLM model wording, filtered hooks — packaged by `build-zcode-marketplace.sh` |
 
 ##### Codex Agent Conversion
 
@@ -73,10 +73,12 @@ Supported effort values (`low`, `medium`, `high`, and `max`) are preserved as
 effort values stop the install with an explicit error so a silent fallback
 cannot select an unintended model.
 
-#### Codex Model Overrides
+#### Model Overrides
 
-The Codex export can translate Groundwork's model policy without editing the
-Claude-native source skills. Pass a JSON file with `--model-override`:
+Groundwork's model policy can be translated at install time without editing the
+Claude-native source skills. Pass a JSON file with `--model-override`; the
+option applies to every install target (`--codex`, `--claude-code`, `--zcode`,
+`--zcode-plugin`, `--opencode`, `--kiro`, `--pi`), alone or combined:
 
 ```bash
 ./install-skills.sh --codex --global --force \
@@ -114,25 +116,34 @@ installer-controlled reasoning policies to one effort:
 `translation` supplies the default actual model. Exact `skills` and `agents`
 entries are exceptions and use canonical Groundwork IDs such as `validate` and
 `task-executor`—not installed names such as `groundwork-validate`. A skill with
-no installer-controlled model directive continues inheriting the active Codex
-model; the installer rejects an exact override that would have no effect.
+no installer-controlled model directive continues inheriting the harness's
+active model; the installer rejects an exact override that would have no
+effect.
 
-The builtin conversion itself is versioned as
+The override rewrites the model recommendations in every exported skill and
+agent body, whichever names the target uses: the Codex export's tier models
+(`terra`, `sol`, …), the Claude source names kept by the Claude Code copy and
+the OpenCode/Kiro/Pi exports (`Sonnet`, `opus[1m]`, …), and the ZCode exports'
+GLM family names (`GLM`, `GLM-Flash` — so a ZCode user can pin concrete GLM
+versions). Codex additionally resolves agent model/effort directives through
+the override; on Claude Code the override is applied to the freshly copied
+plugin's skills and agents.
+
+The builtin Codex conversion itself is versioned as
 `lib/codex-model-policy.json` and is the base policy for every install. A
 `--model-override` file is only an overlay; it does not replace or deselect the
 builtin validation rules.
 
 The bundled `model-overrides/glm.json` uses only `glm-5.3` and
 `glm-5.3-flash`, both at `max` effort; Flash handles both `light` and
-`balanced`, while `glm-5.3` is reserved for `deep`. With Codex itself
+`balanced`, while `glm-5.3` is reserved for `deep`. With a harness itself
 configured for a GLM model, it prevents Groundwork's exported agent and
-subagent directives from
-selecting the built-in GPT models. It does not change unrelated Codex skills,
-custom agents, or user configuration.
+subagent directives from selecting built-in models that do not exist there.
+It does not change unrelated skills, custom agents, or user configuration.
 
-The option is Codex-only and must be the sole selected target. Existing files
-changed by an override require `--force`. Use `--dry-run` to validate the file
-and preview its effective values without writing output.
+Existing files changed by an override require `--force` (except the Claude
+Code copy, which is written fresh on every install). Use `--dry-run` to
+validate the file and preview its effective values without writing output.
 
 When installing Codex agents, the installer also removes the exact legacy
 `.codex/skills/review-<bundled-agent>/SKILL.md` file for each bundled Groundwork
@@ -210,7 +221,7 @@ You can install to multiple targets at once:
 | `--dry-run` | Preview actions without making changes |
 | `--skills-only` | Install only skills (skip agents) |
 | `--source DIR` | Groundwork source directory (default: auto-detect) |
-| `--model-override FILE` | Apply a Codex-only model translation/exact-override JSON file |
+| `--model-override FILE` | Apply a model translation/exact-override JSON file (any target) |
 
 #### What Gets Installed
 
@@ -298,7 +309,7 @@ Analyze existing code to generate initial specifications:
 
 ## Skills
 
-Every Groundwork capability is a skill. The examples below use Claude Code's slash syntax: `/groundwork:<name>` (the prefix can be omitted if no other plugin uses the same name). Codex and the experimental exports install applicable capabilities as `groundwork-<name>` skills for native discovery and invocation. Some skills are also invoked automatically by the model when relevant, and a few low-level "library" skills are used only by other skills (not listed below).
+Every Groundwork capability is a skill. The examples below use Claude Code's slash syntax: `/groundwork:<name>` (the prefix can be omitted if no other plugin uses the same name). The other installs discover the same capabilities as `groundwork-<name>` skills. Some skills are also invoked automatically by the model when relevant, and a few low-level "library" skills are used only by other skills (not listed below).
 
 ### Planning Skills
 
@@ -488,19 +499,20 @@ All task phases run inline. This remains useful for small batches and interactiv
 
 ### External Task Runner
 
-The external runner is a start-once completion harness for Claude Code and Codex. Give it one or more implementation tasks, a range, or all remaining tasks; it creates an isolated linked worktree for each selected task and drives `plan-task → implement-task → validate → finalize-task` until the work is implemented, validated, integrated, and marked complete.
+The external runner is a start-once completion harness for Claude Code, Codex, and ZCode (headless). Give it one or more implementation tasks, a range, or all remaining tasks; it creates an isolated linked worktree for each selected task and drives `plan-task → implement-task → validate → finalize-task` until the work is implemented, validated, integrated, and marked complete.
 
 The runner is valuable when work should continue unattended. Fresh processes keep phase context focused, durable checkpoints make interrupted runs resumable, repair sessions handle recoverable failures, and verified Git handoffs prevent a model's claim of success from being treated as proof. Read-only status and logs expose phase progress, validation rounds, reviewer state, and credential-redacted diagnostics while it runs.
 
 Use the runner for well-specified tasks when you want hands-off completion, repeatable validation, or a batch processed in dependency order. Use the same skills manually when requirements or architecture still need discussion, you want to approve each phase, or the change is small enough that an interactive session is simpler. The runner can commit and merge completed task work into the local base branch, so start it only when that workflow is intended.
 
-Each phase runs in a fresh Claude Code or Codex process with the harness's native session persistence enabled. Groundwork passes compact receipts and verified Git state between phases; it neither disables native memory nor copies memory between harnesses.
+Each phase runs in a fresh Claude Code, Codex, or ZCode process with the harness's native session persistence enabled. Groundwork passes compact receipts and verified Git state between phases; it neither disables native memory nor copies memory between harnesses.
 
 #### Usage
 
 ```bash
 node /path/to/groundwork/bin/groundwork-run.js task TASK-004 --harness claude
 node /path/to/groundwork/bin/groundwork-run.js task TASK-004 TASK-009 TASK-012 --harness codex
+node /path/to/groundwork/bin/groundwork-run.js task TASK-004 --harness zcode
 node /path/to/groundwork/bin/groundwork-run.js all --harness codex
 node /path/to/groundwork/bin/groundwork-run.js all --from TASK-010 --to TASK-025 --harness codex
 node /path/to/groundwork/bin/groundwork-run.js all --harness codex --project api --dry-run
@@ -509,7 +521,9 @@ node /path/to/groundwork/bin/groundwork-run.js status TASK-005 --project api
 node /path/to/groundwork/bin/groundwork-run.js logs TASK-005 --project api --tail 40 --follow
 ```
 
-Run the repository's `bin/groundwork-run.js` with either harness. Codex exports also install it at `~/.codex/groundwork-run.js` for user scope or `.codex/groundwork-run.js` for project scope. The runner creates each linked task worktree before planning and runs every phase from its project root. It repeatedly chooses the lowest-numbered currently unblocked task, so dependency constraints take precedence and numeric priority breaks ties. When any phase invocation, receipt, or handoff fails, a fresh repair session receives the diagnostic, fixes the current selected-task worktree, and the runner retries that same phase. Repair changes remain for the retried phase and its normal commit flow; recovery creates no snapshots, rollback transaction, special commit, or repository-wide boundary comparison. Repair sessions never publish.
+Run the repository's `bin/groundwork-run.js` with any supported `--harness`. Codex exports also install it at `~/.codex/groundwork-run.js` for user scope or `.codex/groundwork-run.js` for project scope. Before the first phase, the runner verifies the selected harness can actually discover Groundwork — the harness CLI must be on `PATH`, and the phase skills must be installed (Claude Code and ZCode: marketplace plugin or file export; Codex: `install-skills.sh`) — and fails with an actionable error instead of a confusing mid-run failure. ZCode headless has no plugin-dir injection and no `--output-last-message` file, so the runner invokes `zcode --prompt … --output-format stream-json` (falling back to the CLI bundled with the macOS ZCode app when no `zcode` binary is on `PATH`) and reads the final message from the stream's `result` event. The runner creates each linked task worktree before planning and runs every phase from its project root. It repeatedly chooses the lowest-numbered currently unblocked task, so dependency constraints take precedence and numeric priority breaks ties. When any phase invocation, receipt, or handoff fails, a fresh repair session receives the diagnostic, fixes the current selected-task worktree, and the runner retries that same phase. Repair changes remain for the retried phase and its normal commit flow; recovery creates no snapshots, rollback transaction, special commit, or repository-wide boundary comparison. Repair sessions never publish.
+
+Each phase session (the coordinator) runs on a per-harness default model: **Claude Code** `opus` at high effort, **Codex** `gpt-5.6-sol` at high effort (passed as `-m`/`-c model_reasoning_effort=…`), and **ZCode** `glm-5.3` (the concrete registry id behind the "GLM" picker entry). ZCode has no per-invocation model flag, so the runner pins it through a temporary HOME whose `.zcode/cli/config.json` merges the user's config (plugins, credentials, and state preserved via symlinks) with a `model.main` ref of `<provider>/glm-5.3`, reusing the provider written by `zcode login` when present. The coordinator is always pinned this way — login's own default model (for example `zai/glm-5.1`) does not downshift it; reasoning effort follows the model's default. Pass `--coordinator-model MODEL` and `--coordinator-effort low|medium|high|max` to override on any harness; `--coordinator-effort` is rejected outright with `--harness zcode`, which cannot set reasoning effort headlessly. Headless ZCode runs require a one-time `zcode login zai-coding-plan` so CLI processes carry their own credentials — the desktop app's session credentials are not reachable from CLI processes.
 
 Range bounds are inclusive; either `--from` or `--to` may be used alone. Dependencies outside a selected list or range must already be complete. Default output is semantic: phase transitions, validation stages, named gate outcomes, repair summaries, next actions, and a heartbeat tied to the last known semantic state. Add `--verbose` to show sanitized commands and selected tool activity. Generic turn events and successful short-command completions remain suppressed; command failures and commands lasting at least 10 seconds remain visible.
 

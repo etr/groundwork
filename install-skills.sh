@@ -13,7 +13,7 @@ SKILLS_ONLY=false
 ALLOW_MANUAL_CLAUDE=false
 SOURCE_DIR=""
 BODY_SED_CMDS=""           # Pre-built sed commands for name mapping
-MODEL_OVERRIDE_FILE=""      # Optional Codex model policy JSON
+MODEL_OVERRIDE_FILE=""      # Optional model policy JSON (all export targets)
 
 # Counters
 SKILL_COUNT=0
@@ -49,7 +49,7 @@ Options:
   --skills-only    Install only skills (skip agents)
   --source DIR     Groundwork source dir (default: auto-detect from script location)
   --model-override FILE
-                   Apply a Codex model translation/exact-override JSON file
+                   Apply a model translation/exact-override JSON file (any target)
   --allow-manual-claude-code-install
                    Allow manual file-copy install for Claude Code
   --help           Show help
@@ -57,6 +57,7 @@ Options:
 Examples:
   ./install-skills.sh --codex --global --dry-run
   ./install-skills.sh --codex --global --model-override model-overrides/glm.json
+  ./install-skills.sh --zcode --global --model-override model-overrides/glm.json
   ./install-skills.sh --kiro --project --force
   ./install-skills.sh --codex --opencode --global
   ./install-skills.sh --pi --global
@@ -104,11 +105,6 @@ parse_args() {
 
     if [[ -z "$SCOPE" ]]; then
         echo "Error: Scope required (--global or --project)" >&2
-        exit 1
-    fi
-
-    if [[ -n "$MODEL_OVERRIDE_FILE" && ( ${#TARGETS[@]} -ne 1 || "${TARGETS[0]}" != "codex" ) ]]; then
-        echo "Error: --model-override requires --codex as the only target" >&2
         exit 1
     fi
 }
@@ -227,32 +223,42 @@ preflight_model_override_replacements() {
         return 0
     fi
 
-    local dest_base
-    dest_base=$(get_dest_base "codex")
+    local target
+    for target in "${TARGETS[@]}"; do
+        # Claude Code is a fresh full-copy install; the override is applied to
+        # the copy after it is written, so there is nothing to preflight.
+        [[ "$target" == "claude-code" ]] && continue
 
-    local skill_dir skill_name skill_file installed dest
-    for skill_dir in "$SOURCE_DIR"/skills/*/; do
-        skill_name=$(basename "$skill_dir")
-        skill_file="$skill_dir/SKILL.md"
-        [[ -f "$skill_file" ]] || continue
-        should_export_skill "codex" "$skill_name" || continue
-        installed=$(installed_name "$skill_name")
-        [[ "$installed" == "drop" ]] && continue
-        dest="$dest_base/skills/$installed/SKILL.md"
-        require_model_override_replacement "$dest" "skill" "$skill_name"
-    done
+        local dest_base
+        dest_base=$(get_dest_base "$target")
 
-    if [[ "$SKILLS_ONLY" == true ]]; then
-        return 0
-    fi
+        local skill_dir skill_name skill_file installed dest
+        for skill_dir in "$SOURCE_DIR"/skills/*/; do
+            skill_name=$(basename "$skill_dir")
+            skill_file="$skill_dir/SKILL.md"
+            [[ -f "$skill_file" ]] || continue
+            should_export_skill "$target" "$skill_name" || continue
+            installed=$(installed_name "$skill_name")
+            [[ "$installed" == "drop" ]] && continue
+            dest="$dest_base/skills/$installed/SKILL.md"
+            require_model_override_replacement "$dest" "skill" "$skill_name"
+        done
 
-    local agent_dir agent_name agent_file
-    for agent_dir in "$SOURCE_DIR"/agents/*/; do
-        agent_name=$(basename "$agent_dir")
-        agent_file="$agent_dir/AGENT.md"
-        [[ -f "$agent_file" ]] || continue
-        dest="$dest_base/agents/${agent_name}.toml"
-        require_model_override_replacement "$dest" "agent" "$agent_name"
+        [[ "$SKILLS_ONLY" == true ]] && continue
+
+        local agent_dir agent_name
+        for agent_dir in "$SOURCE_DIR"/agents/*/; do
+            agent_name=$(basename "$agent_dir")
+            [[ -f "$agent_dir/AGENT.md" ]] || continue
+            case "$target" in
+                codex)        dest="$dest_base/agents/${agent_name}.toml" ;;
+                opencode)     dest="$dest_base/agents/review-${agent_name}.md" ;;
+                kiro)         dest="$dest_base/agents/${agent_name}-prompt.md" ;;
+                pi|zcode)     dest="$dest_base/skills/review-${agent_name}/SKILL.md" ;;
+                zcode-plugin) dest="$dest_base/agents/${agent_name}.md" ;;
+            esac
+            require_model_override_replacement "$dest" "agent" "$agent_name"
+        done
     done
 }
 
@@ -625,10 +631,15 @@ require_model_override_replacement() {
     fi
 }
 
-transform_codex_model_override() {
-    local kind="$1" name="$2" content="$3"
-    local args=(--kind "$kind" --name "$name")
-    [[ -n "$MODEL_OVERRIDE_FILE" ]] && args+=(--file "$MODEL_OVERRIDE_FILE")
+transform_model_override() {
+    local kind="$1" name="$2" target="$3" content="$4"
+    # No override file: identity — skip the node spawn per component.
+    if [[ -z "$MODEL_OVERRIDE_FILE" ]]; then
+        printf '%s\n' "$content"
+        return
+    fi
+    local args=(--kind "$kind" --name "$name" --harness "$target")
+    args+=(--file "$MODEL_OVERRIDE_FILE")
 
     printf '%s\n' "$content" | node "$SOURCE_DIR/lib/model-override.js" transform "${args[@]}"
 }
@@ -771,12 +782,35 @@ remove_legacy_codex_runner_memory() {
 # Install: Claude Code
 # ============================================================
 
+# Apply the model override to a fresh full-copy Claude Code install. The copy
+# was just written, so the existing-file preflight does not apply; files are
+# rewritten in place (frontmatter included, since agents carry model fields).
+apply_claude_code_model_override() {
+    local dest="$1"
+    [[ -z "$MODEL_OVERRIDE_FILE" || "$DRY_RUN" == true ]] && return 0
+
+    local item_file item_name kind count=0
+    for item_file in "$dest"/skills/*/SKILL.md "$dest"/agents/*/AGENT.md; do
+        [[ -f "$item_file" ]] || continue
+        item_name=$(basename "$(dirname "$item_file")")
+        kind="skill"
+        [[ "$item_file" == *"/agents/"* ]] && kind="agent"
+        printf '%s\n' "$(<"$item_file")" | node "$SOURCE_DIR/lib/model-override.js" transform \
+            --kind "$kind" --name "$item_name" --harness claude-code \
+            --file "$MODEL_OVERRIDE_FILE" > "$item_file.override"
+        mv "$item_file.override" "$item_file"
+        ((count++)) || true
+    done
+    echo "  [override] applied model override to $count files"
+}
+
 install_claude_code() {
     local dest
     dest=$(get_dest_base "claude-code")
 
     if [[ "$DRY_RUN" == true ]]; then
         echo "  [dry-run] Would copy $SOURCE_DIR → $dest"
+        [[ -n "$MODEL_OVERRIDE_FILE" ]] && echo "  [dry-run] Would apply model override to the copied skills and agents"
         return 0
     fi
 
@@ -791,6 +825,7 @@ install_claude_code() {
     fi
     cp -r "$SOURCE_DIR" "$dest"
     echo "  [copied] $SOURCE_DIR → $dest"
+    apply_claude_code_model_override "$dest"
 }
 
 # ============================================================
@@ -864,9 +899,7 @@ $new_body"
 
 $new_body"
         fi
-        if [[ "$target" == "codex" ]]; then
-            new_body=$(transform_codex_model_override "skill" "$skill_name" "$new_body")
-        fi
+        new_body=$(transform_model_override "skill" "$skill_name" "$target" "$new_body")
         result="$new_fm
 $new_body"
 
@@ -882,9 +915,7 @@ $new_body"
             zcode-plugin) dest="$dest_base/skills/$installed/SKILL.md" ;;
         esac
 
-        if [[ "$target" == "codex" ]]; then
-            require_model_override_replacement "$dest" "skill" "$skill_name"
-        fi
+        require_model_override_replacement "$dest" "skill" "$skill_name"
         write_file "$dest" "$result" "skill"
         write_portable_references "$raw_body" "$(dirname "$dest")"
         write_portable_skill_resources "$raw_body" "$skill_dir" "$(dirname "$dest")"
@@ -965,8 +996,8 @@ install_agents_for_target() {
         if [[ "$target" == "codex" ]]; then
             new_body=$(printf '%s\n' "$new_body" | node \
                 "$SOURCE_DIR/lib/apply-codex-skill-policy.js" --agent "$agent_name")
-            new_body=$(transform_codex_model_override "agent" "$agent_name" "$new_body")
         fi
+        new_body=$(transform_model_override "agent" "$agent_name" "$target" "$new_body")
 
         local dest_base
         dest_base=$(get_dest_base "$target")
@@ -1004,6 +1035,7 @@ install_agents_for_target() {
                 local new_fm
                 new_fm=$(transform_frontmatter "$target" "agent" "$content" "$agent_name")
                 local dest="$dest_base/agents/review-${agent_name}.md"
+                require_model_override_replacement "$dest" "agent" "$agent_name"
                 write_file "$dest" "$new_fm
 $new_body" "agent"
                 ;;
@@ -1013,7 +1045,9 @@ $new_body" "agent"
                 json_content=$(printf '{\n  "name": "%s",\n  "description": "%s",\n  "prompt": "file://./%s-prompt.md"\n}' \
                     "$agent_name" "$desc" "$agent_name")
                 write_file "$dest_base/agents/${agent_name}.json" "$json_content" "agent config"
-                write_file "$dest_base/agents/${agent_name}-prompt.md" "$new_body" "agent prompt"
+                local prompt_dest="$dest_base/agents/${agent_name}-prompt.md"
+                require_model_override_replacement "$prompt_dest" "agent" "$agent_name"
+                write_file "$prompt_dest" "$new_body" "agent prompt"
                 ;;
             pi)
                 # Install as a skill with review- prefix (Pi has no native agent concept)
@@ -1022,6 +1056,7 @@ $new_body" "agent"
                 new_fm=$(transform_frontmatter "$target" "skill" "$content" "$installed_name")
                 local dest="$dest_base/skills/${installed_name}/SKILL.md"
                 portable_dir="$dest_base/skills/${installed_name}"
+                require_model_override_replacement "$dest" "agent" "$agent_name"
                 write_file "$dest" "$new_fm
 $new_body" "review agent"
                 ;;
@@ -1033,6 +1068,7 @@ $new_body" "review agent"
                 new_fm=$(transform_frontmatter "$target" "skill" "$content" "$installed_name")
                 local dest="$dest_base/skills/${installed_name}/SKILL.md"
                 portable_dir="$dest_base/skills/${installed_name}"
+                require_model_override_replacement "$dest" "agent" "$agent_name"
                 write_file "$dest" "$new_fm
 $new_body" "review agent"
                 ;;
@@ -1047,6 +1083,7 @@ description: ${desc}"
                 [[ -n "$agent_color" ]] && new_fm+=$'\n'"color: ${agent_color}"
                 new_fm+=$'\n---'
                 local dest="$dest_base/agents/${agent_name}.md"
+                require_model_override_replacement "$dest" "agent" "$agent_name"
                 write_file "$dest" "$new_fm
 $new_body" "agent"
                 ;;
