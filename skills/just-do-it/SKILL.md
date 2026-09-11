@@ -152,7 +152,7 @@ If the plan does not mention worktree or TDD, reject it and re-invoke the Plan a
 
 After validation, persist the plan to disk in the **same turn** as receiving the Plan agent's output:
 
-1. `mkdir -p .groundwork-plans && grep -qxF '.groundwork-plans/' .gitignore 2>/dev/null || printf '.groundwork-plans/\n' >> .gitignore`, then set `plan_file_path=.groundwork-plans/TASK-NNN-plan.md` (substitute the actual task ID). Re-running on the same task overwrites — intentional.
+1. `mkdir -p {{plans_dir}} && grep -qxF '.groundwork-plans/' .gitignore 2>/dev/null || printf '.groundwork-plans/\n' >> .gitignore`, then set `plan_file_path={{plans_dir}}/TASK-NNN-plan.md` (substitute the actual task ID; `{{plans_dir}}` is project-scoped, mirroring `{{specs_dir}}`). Re-running on the same task overwrites — intentional.
 2. Use the `Write` tool to save the Plan agent's full output to `plan_file_path`, formatted as:
    ```markdown
    # Implementation Plan: TASK-NNN [Title]

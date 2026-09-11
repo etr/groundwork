@@ -90,6 +90,7 @@ describe('project context CLI', () => {
         assert.strictEqual(selected.project_name, 'web');
         assert.strictEqual(selected.project_root, 'apps/web');
         assert.strictEqual(selected.specs_dir, 'apps/web/specs');
+        assert.strictEqual(selected.plans_dir, 'apps/web/.groundwork-plans');
         assert.ok(selected.state_file.startsWith(path.join(override, 'groundwork-state')));
         assert.ok(fs.existsSync(selected.state_file));
 
@@ -98,6 +99,7 @@ describe('project context CLI', () => {
         assert.strictEqual(resolved.project_name, 'web');
         assert.strictEqual(resolved.project_root, 'apps/web');
         assert.strictEqual(resolved.specs_dir, 'apps/web/specs');
+        assert.strictEqual(resolved.plans_dir, 'apps/web/.groundwork-plans');
       } finally {
         fs.rmSync(repo, { recursive: true, force: true });
       }
@@ -223,12 +225,14 @@ describe('project context CLI', () => {
         project_name: resolved.project_name,
         project_root: resolved.project_root,
         specs_dir: resolved.specs_dir,
+        plans_dir: resolved.plans_dir,
         selection_required: resolved.selection_required,
       }, {
         harness: 'codex',
         project_name: '',
         project_root: '.',
         specs_dir: 'specs',
+        plans_dir: '.groundwork-plans',
         selection_required: true,
       });
       assert.ok(resolved.state_file.startsWith(path.join(home, '.codex', 'groundwork-state')));

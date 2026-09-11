@@ -874,7 +874,7 @@ describe('exported project context runtime', () => {
       assert.ok(fs.existsSync(path.join(skillDir, 'scripts', 'project-context-cli.js')));
       assert.ok(fs.existsSync(path.join(skillDir, 'scripts', 'project-context.js')));
       assert.ok(skill.includes('project-context-cli.js resolve --harness codex'));
-      assert.ok(skill.includes('exact bindings for `{{project_name}}`, `{{project_root}}`, and `{{specs_dir}}`'));
+      assert.ok(skill.includes('exact bindings for `{{project_name}}`, `{{project_root}}`, `{{specs_dir}}`, and `{{plans_dir}}`'));
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

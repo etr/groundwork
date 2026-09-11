@@ -192,13 +192,14 @@ template_vars=""
 template_vars=$(GROUNDWORK_PROJECT="$project_name" GROUNDWORK_SESSION_ID="$SESSION_ID" timeout 2 node -e "
   const path = require('path');
   const {getEffortLevel} = require('${PLUGIN_ROOT}/lib/skills-core');
-  const {getSpecsDir, getProjectRoot, getProjectName, getRepoRoot} = require('${PLUGIN_ROOT}/lib/project-context');
+  const {getSpecsDir, getPlansDir, getProjectRoot, getProjectName, getRepoRoot} = require('${PLUGIN_ROOT}/lib/project-context');
   const rl = getRepoRoot() || process.cwd();
   const pr = getProjectRoot();
   const rpr = pr === rl ? '.' : path.relative(rl, pr);
   console.log([
     '- {{effort_level}} = ' + getEffortLevel(),
     '- {{specs_dir}} = ' + getSpecsDir(),
+    '- {{plans_dir}} = ' + getPlansDir(),
     '- {{project_root}} = ' + rpr,
     '- {{project_name}} = ' + getProjectName()
   ].join('\n'));

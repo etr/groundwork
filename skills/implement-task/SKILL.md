@@ -76,7 +76,7 @@ If the user selects "Cancel — I'll switch first": output the switching command
 Parse input from the caller's conversation context. Three modes:
 
 - **plan_file_path provided** → Read the plan file header to extract `Identifier`, `Mode`, `Branch prefix`, `Tasks path`.
-- **task_id only** (no plan_file_path) → Derive path `.groundwork-plans/TASK-NNN-plan.md`. If file does not exist, output `RESULT: FAILURE | No plan found for TASK-NNN. Run plan-task first.` and stop.
+- **task_id only** (no plan_file_path) → Derive path `{{plans_dir}}/TASK-NNN-plan.md` (project-scoped, mirroring `{{specs_dir}}`). If it does not exist and the project root differs from the repository root, also check the legacy unscoped location `.groundwork-plans/TASK-NNN-plan.md` at the repository root. If neither exists, output `RESULT: FAILURE | No plan found for TASK-NNN. Run plan-task first.` and stop.
 - **task_id + plan_file_path** → Use the provided plan file path. Verify it exists.
 - **Neither** → Output `RESULT: FAILURE | No plan_file_path or task_id provided. Run plan-task first.` and stop.
 

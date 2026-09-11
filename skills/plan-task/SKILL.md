@@ -1,13 +1,13 @@
 ---
 name: plan-task
-description: Plans a task or feature - loads context, optionally clarifies requirements, spawns Plan agent, persists plan to .groundwork-plans/
+description: Plans a task or feature - loads context, optionally clarifies requirements, spawns Plan agent, persists plan to the project-scoped .groundwork-plans/
 requires: understanding-feature-requests
 argument-hint: "[task-number-or-description] [--project name]"
 ---
 
 # Task Planning Skill
 
-Plans a task or feature by loading context, optionally clarifying requirements, spawning a Plan agent, and persisting the validated plan to `.groundwork-plans/`.
+Plans a task or feature by loading context, optionally clarifying requirements, spawning a Plan agent, and persisting the validated plan to the project-scoped `.groundwork-plans/` directory.
 
 ## Explicit Project Input
 
@@ -225,10 +225,11 @@ After the plan is validated, persist it to disk in the **same turn** as receivin
 
 1. Create the plans directory and ensure it's gitignored:
    ```bash
-   mkdir -p .groundwork-plans
+   mkdir -p {{plans_dir}}
    grep -qxF '.groundwork-plans/' .gitignore 2>/dev/null || printf '.groundwork-plans/\n' >> .gitignore
    ```
-   Set `plan_file_path=.groundwork-plans/{identifier}-plan.md` (substitute the actual identifier). One plan per identifier — re-running planning on the same identifier overwrites the previous plan, which is intentional. The `.gitignore` append is idempotent so it is safe to run on every invocation.
+   `{{plans_dir}}` resolves inside the selected project's root (mirroring `{{specs_dir}}`), so overlapping identifiers across monorepo projects cannot collide. The `.gitignore` pattern is unanchored, so it covers plan directories at any project depth.
+   Set `plan_file_path={{plans_dir}}/{identifier}-plan.md` (substitute the actual identifier). One plan per identifier — re-running planning on the same identifier overwrites the previous plan, which is intentional. The `.gitignore` append is idempotent so it is safe to run on every invocation.
 
 2. Use the `Write` tool to save the plan. Format the file as:
 

@@ -2970,6 +2970,7 @@ function phasePrompt(phase, input) {
   }
 
   if (phase === 'plan') {
+    header.push(`Plans directory: ${path.join(input.projectRoot, '.groundwork-plans')}`);
     header.push(`Skill arguments: ${input.taskId}${projectArg}`);
   } else if (phase === 'implement') {
     header.push(`Skill arguments: ${input.planFile}${projectArg}`);

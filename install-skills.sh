@@ -582,7 +582,7 @@ Before interpreting project-context placeholders in this workflow:
 
 1. Resolve the directory containing this \`SKILL.md\`.
 2. Run \`node <skill-directory>/scripts/project-context-cli.js resolve --harness ${target}\` from the repository working directory.
-3. Use the returned JSON values as the exact bindings for \`{{project_name}}\`, \`{{project_root}}\`, and \`{{specs_dir}}\` everywhere below.
+3. Use the returned JSON values as the exact bindings for \`{{project_name}}\`, \`{{project_root}}\`, \`{{specs_dir}}\`, and \`{{plans_dir}}\` everywhere below.
 4. If \`selection_required\` is true, follow the \`groundwork-select-project\` workflow, then resolve again.
 
 EOF
@@ -901,7 +901,7 @@ $new_body"
             new_body=$(printf '%s' "$new_body" | sed \
                 's|node the plugin directory/lib/validation-session.js|node <skill-directory>/scripts/validation-session.js|g')
         fi
-        if [[ "$raw_body" == *'{{project_name}}'* || "$raw_body" == *'{{project_root}}'* || "$raw_body" == *'{{specs_dir}}'* ]]; then
+        if [[ "$raw_body" == *'{{project_name}}'* || "$raw_body" == *'{{project_root}}'* || "$raw_body" == *'{{specs_dir}}'* || "$raw_body" == *'{{plans_dir}}'* ]]; then
             needs_project_runtime=true
             new_body="$(portable_project_context_preamble "$(harness_name "$target")")
 
