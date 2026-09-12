@@ -39,6 +39,8 @@ Or use the installer provided with the codebase.
 
 Groundwork supports Claude Code, Codex, and ZCode (both the installer export and the managed marketplace). Exports for OpenCode, Kiro, and Pi are experimental: the installer transforms Claude Code-specific constructs for those harnesses, but hooks, invocation, and skill chaining may not behave identically.
 
+Two boundaries apply to the experimental exports. First, **source/install parity**: the installer ships every runtime helper the exported skills reference (enforced by tests), so helper behavior matches the source tree — but features that depend on Claude Code hooks (session-start bindings, template-variable resolution, commit-alignment checks) run only where the target supports an equivalent (ZCode's filtered hook events; the Pi extension's own event handlers). Second, **hookless selection limitation**: on harnesses without hooks, monorepo project selection is not pinned per chat — re-select the active project in each session before running project-scoped skills.
+
 The included installer adapts Groundwork skills and agents to each target's native format. Claude Code users should normally use the marketplace; Codex users should use the installer.
 
 #### Supported Targets

@@ -1388,6 +1388,76 @@ describe('module and CLI contract', () => {
     }
   });
 
+  test('delegates scoped and legacy peer identities to the shared worktree identity factory', () => {
+    const { activeProjectOwners, processStartIdentity } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-owner-identity-'));
+    try {
+      initRepo(root);
+      const commonDir = path.join(root, '.git');
+      const projectDirectory = path.join(commonDir, 'groundwork', 'projects');
+      const scenarios = [
+        // Scoped monorepo identity and legacy root identity must both be
+        // produced by taskWorkspaceIdentity, never reconstructed locally.
+        { project: 'api', projectPath: 'apps/api', taskId: 'TASK-004',
+          branch: 'task/api/TASK-004', worktreeName: 'api-TASK-004' },
+        { project: '.', projectPath: '.', taskId: 'TASK-007',
+          branch: 'task/TASK-007', worktreeName: 'TASK-007' },
+      ];
+      const records = scenarios.map((scenario) => {
+        const worktreePath = path.join(root, '.worktrees', scenario.worktreeName);
+        fs.mkdirSync(worktreePath, { recursive: true });
+        const projectKey = crypto.createHash('sha256').update(scenario.project).digest('hex').slice(0, 32);
+        const checkpointKey = crypto.createHash('sha256').update(scenario.projectPath).digest('hex').slice(0, 16);
+        write(path.join(projectDirectory, `${projectKey}.lock`), `${JSON.stringify({
+          version: 1,
+          pid: process.pid,
+          processStart: processStartIdentity(process.pid),
+          token: crypto.randomBytes(24).toString('hex'),
+          project: scenario.project,
+          projectPath: scenario.projectPath,
+          taskId: scenario.taskId,
+          startedAt: Date.now(),
+        })}\n`);
+        write(path.join(commonDir, 'groundwork', 'runner', checkpointKey, `${scenario.taskId}.json`), `${JSON.stringify({
+          taskId: scenario.taskId,
+          project: scenario.projectPath,
+          workspace: { branch: scenario.branch, worktreePath },
+        })}\n`);
+        return { path: fs.realpathSync(worktreePath), branch: `refs/heads/${scenario.branch}` };
+      });
+      const calls = [];
+      const owners = activeProjectOwners(commonDir, root, {
+        registeredWorktrees: () => records,
+        taskWorkspaceIdentity(repoRoot, commonDirArg, projectRoot, projectName, taskId, checkpoint) {
+          calls.push({ repoRoot, projectRoot, projectName, taskId, checkpoint });
+          if (projectName === 'api') {
+            return { branch: 'task/api/TASK-004', worktreePath: path.join(root, '.worktrees', 'api-TASK-004') };
+          }
+          return { branch: 'task/TASK-007', worktreePath: path.join(root, '.worktrees', 'TASK-007') };
+        },
+      });
+      assert.strictEqual(calls.length, 2, 'every live owner must resolve identity through the factory');
+      const apiCall = calls.find((call) => call.taskId === 'TASK-004');
+      assert.strictEqual(apiCall.projectName, 'api');
+      assert.strictEqual(apiCall.projectRoot, path.join(root, 'apps/api'));
+      const legacyCall = calls.find((call) => call.taskId === 'TASK-007');
+      assert.strictEqual(legacyCall.projectName, '');
+      assert.strictEqual(legacyCall.projectRoot, root);
+      assert.deepStrictEqual(owners.map((owner) => owner.taskId).sort(), ['TASK-004', 'TASK-007']);
+
+      // No manually reconstructed branch/path candidates remain in the runner.
+      const runnerSource = fs.readFileSync(RUNNER, 'utf8');
+      const ownersBody = runnerSource.slice(
+        runnerSource.indexOf('function activeProjectOwners'),
+        runnerSource.indexOf('function acquireRepositoryGate')
+      );
+      assert.ok(!ownersBody.includes('`task/${'), 'activeProjectOwners must not reconstruct task branches');
+      assert.ok(!ownersBody.includes(".worktrees', holder.taskId"), 'activeProjectOwners must not reconstruct worktree paths');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('serializes stale removal with successor publication at the final removal boundary', () => {
     const { acquireRepositoryGate } = require(RUNNER);
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-stale-removal-boundary-'));

@@ -170,7 +170,7 @@ Agent(
   - Tasks file: [path]
 
   CONSTRAINTS:
-  1. Work happens in an isolated git worktree (.worktrees/TASK-NNN)
+  1. Work happens in an isolated git worktree — the plan must instruct the implementer to resolve it with `node ${CLAUDE_PLUGIN_ROOT}/lib/worktree-identity.js <task-id>` and use the returned `path` and `branch` verbatim (never hand-derived `.worktrees/TASK-NNN` paths)
   2. Implementation must follow TDD — write failing tests first, then make them pass
   3. Plan covers implementation only — validation and merge are handled separately by the caller
   4. If a design system is present, the plan must reference design tokens, colors, and component patterns from it
@@ -205,7 +205,7 @@ Agent(
   - Design system: [path or 'not found']
 
   CONSTRAINTS:
-  1. Work happens in an isolated git worktree (.worktrees/FEATURE-slug)
+  1. Work happens in an isolated git worktree — the plan must instruct the implementer to resolve it with `node ${CLAUDE_PLUGIN_ROOT}/lib/worktree-identity.js <feature-id>` and use the returned `path` and `branch` verbatim (never hand-derived `.worktrees/FEATURE-slug` paths)
   2. Implementation must follow TDD — write failing tests first, then make them pass
   3. Plan covers implementation only — validation and merge are handled separately by the caller
   4. If a design system is present, the plan must reference design tokens, colors, and component patterns from it

@@ -109,6 +109,8 @@ All four resolve absolutely through `lib/project-context.js` (exposed by the Pos
 
 Worktrees and task branches must be resolved through `node ${CLAUDE_PLUGIN_ROOT}/lib/worktree-identity.js <task-id>` — never derived by hand in a skill. The helper is the same source of truth the terminal runner uses, so overlapping `TASK-NNN` identifiers across monorepo projects cannot collide in the one shared branch namespace.
 
+**Runtime export closure.** When a skill or agent references a runtime helper (`lib/*.js`, `pi-extension/lib/*.js`, shared bash helpers), that helper must be wired into `install-skills.sh`'s export lists (and the ZCode marketplace bundle). The installed runtime must behave like the source tree — `tests/install-config.test.js` and `tests/zcode-marketplace.test.js` enforce this — so a new helper that is not exported is a defect, not an optimization.
+
 ### Accepted boundaries (do not "fix" these casually)
 
 - **Single writer per project for fixed-name spec artifacts** (`architecture.md`, `glossary.md`, task status rows): two concurrent sessions in the *same* project may overwrite each other. This is the documented operating assumption; adding locks here would fight the collaborative-editing nature of spec files.

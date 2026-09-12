@@ -1306,18 +1306,19 @@ function activeProjectOwners(commonDir, repoRoot, dependencies = {}) {
     if (!checkpoint || checkpoint.taskId !== holder.taskId || checkpoint.project !== holder.projectPath
         || !checkpoint.workspace || typeof checkpoint.workspace.branch !== 'string'
         || typeof checkpoint.workspace.worktreePath !== 'string') continue;
-    const candidates = [{
-      branch: `task/${holder.taskId}`,
-      worktreePath: path.join(repoRoot, '.worktrees', holder.taskId),
-    }];
-    if (holder.project !== '.') {
-      candidates.push({
-        branch: `task/${holder.project}/${holder.taskId}`,
-        worktreePath: path.join(repoRoot, '.worktrees', `${holder.project}-${holder.taskId}`),
-      });
+    // Workspace identity comes from the shared factory (single source of
+    // truth, shared with the launcher) — never reconstructed here.
+    const resolveIdentity = dependencies.taskWorkspaceIdentity || taskWorkspaceIdentity;
+    const projectName = holder.project === '.' ? '' : holder.project;
+    const projectRoot = holder.project === '.' ? repoRoot : path.resolve(repoRoot, holder.projectPath);
+    let identity;
+    try {
+      identity = resolveIdentity(repoRoot, commonDir, projectRoot, projectName, holder.taskId, checkpoint);
+    } catch {
+      continue; // Checkpoint records an invalid workspace identity for this peer.
     }
-    if (!candidates.some((candidate) => candidate.branch === checkpoint.workspace.branch
-        && candidate.worktreePath === checkpoint.workspace.worktreePath)) continue;
+    if (identity.branch !== checkpoint.workspace.branch
+        || identity.worktreePath !== checkpoint.workspace.worktreePath) continue;
     let peerWorktree;
     try {
       peerWorktree = fs.realpathSync(checkpoint.workspace.worktreePath);
