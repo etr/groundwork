@@ -26,7 +26,7 @@
             "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/pin-session-selection.sh"
           }
         ],
-        "description": "Verify commits align with specs/tasks.md after git commit; adopt in-chat project selections into the per-chat snapshot"
+        "description": "Verify commits align with specs/tasks.md after git commit; pin verified project-selection receipts into the per-chat snapshot"
       },
       {
         "matcher": "Skill",

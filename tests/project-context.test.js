@@ -702,7 +702,7 @@ describe('selection scope capability gating (pane-less harnesses)', () => {
     }
   });
 
-  test('PostToolUse hook adopts an in-chat selection into the session snapshot', () => {
+  test('PostToolUse hook adopts an in-chat selection from its receipt', () => {
     const { root: repo, paths } = makeMultiMonorepo(['web', 'apps/web'], ['api', 'services/api']);
     const home = path.join(repo, 'home');
     fs.mkdirSync(home);
@@ -715,14 +715,15 @@ describe('selection scope capability gating (pane-less harnesses)', () => {
       execFileSync('node', ['-e', pinSnippet('chat-a', 'web', paths.web)], { cwd: repo, env });
 
       // The chat switches to api; the PostToolUse hook fires for this
-      // session's persist command and must adopt the new selection.
-      runCli(repo, env, 'select', 'api', '--harness', 'codex');
+      // session's persist command, whose response carries the new receipt.
+      const receipt = runCli(repo, env, 'select', 'api', '--harness', 'codex');
       const adopted = spawnSync('bash', [PIN_HOOK], {
         cwd: repo,
         env,
         input: JSON.stringify({
           session_id: 'chat-a',
           tool_input: { command: `node ${CLI} select api --harness codex` },
+          tool_response: { stdout: JSON.stringify(receipt) },
         }),
         encoding: 'utf8',
       });
@@ -732,14 +733,16 @@ describe('selection scope capability gating (pane-less harnesses)', () => {
       assert.strictEqual(restored.projectName, 'api');
       assert.strictEqual(restored.source, 'session');
 
-      // The command gate leaves unrelated Bash commands (and failures) alone:
-      // a foreign command must not overwrite the snapshot with stale pane data.
+      // The command gate leaves unrelated Bash commands alone: a foreign
+      // command must not touch the snapshot even if its output looks like a
+      // receipt.
       const untouched = spawnSync('bash', [PIN_HOOK], {
         cwd: repo,
         env,
         input: JSON.stringify({
           session_id: 'chat-a',
           tool_input: { command: 'git status --short' },
+          tool_response: { stdout: JSON.stringify(receipt) },
         }),
         encoding: 'utf8',
       });
@@ -760,17 +763,18 @@ describe('selection scope capability gating (pane-less harnesses)', () => {
     env.GROUNDWORK_HARNESS = 'codex';
 
     try {
-      // This chat selects web; the pane file records the shared selection.
-      runCli(repo, env, 'select', 'web', '--harness', 'codex');
+      // This chat selects web; the command response carries the receipt.
+      const receipt = runCli(repo, env, 'select', 'web', '--harness', 'codex');
 
       // ZCode delivers the session id as a hook environment variable instead
-      // of stdin JSON: the hook must still scope the adopted snapshot to the
+      // of stdin JSON: the hook must still scope the pinned snapshot to the
       // right chat through the CLAUDE_SESSION_ID fallback.
       const adopted = spawnSync('bash', [PIN_HOOK], {
         cwd: repo,
         env: { ...env, CLAUDE_SESSION_ID: 'chat-env' },
         input: JSON.stringify({
           tool_input: { command: `node ${CLI} select web --harness codex` },
+          tool_response: { stdout: JSON.stringify(receipt) },
         }),
         encoding: 'utf8',
       });
@@ -986,6 +990,321 @@ describe('library directory bindings are absolute', () => {
     } finally {
       fs.rmSync(repo, { recursive: true, force: true });
     }
+  });
+});
+
+describe('receipt-based pane-less pinning', () => {
+  const PROTOCOL = 'groundwork-project-selection-v1';
+  const PERSIST = path.join(PLUGIN_ROOT, 'lib', 'persist-project.js');
+
+  function restoreSnippet(sid) {
+    return `const pc = require(${JSON.stringify(LIB)}); console.log(JSON.stringify(pc.restoreSelection(${JSON.stringify(sid)})))`;
+  }
+
+  function panelessEnv(repo) {
+    const home = path.join(repo, 'home');
+    fs.mkdirSync(home);
+    const env = cleanEnv(home);
+    env.PATH = `${psShim(repo, '??')}${path.delimiter}${env.PATH}`;
+    env.GROUNDWORK_HARNESS = 'codex';
+    return env;
+  }
+
+  function selectBare(repo, env, project) {
+    return JSON.parse(execFileSync(
+      'node', [CLI, 'select', project, '--harness', 'codex'],
+      { cwd: repo, env, encoding: 'utf8' }
+    ));
+  }
+
+  function selectWithSession(repo, env, sid, project) {
+    return JSON.parse(execFileSync(
+      'node', [CLI, 'select', project, '--harness', 'codex'],
+      { cwd: repo, env: { ...env, GROUNDWORK_SESSION_ID: sid }, encoding: 'utf8' }
+    ));
+  }
+
+  function runPinHook(repo, env, payload) {
+    return spawnSync('bash', [PIN_HOOK], {
+      cwd: repo,
+      env,
+      input: JSON.stringify(payload),
+      encoding: 'utf8',
+    });
+  }
+
+  function receiptPayload(sessionId, receipt, responseField = 'stdout') {
+    return {
+      session_id: sessionId,
+      tool_input: { command: `node ${CLI} select ${receipt.project_name} --harness codex` },
+      tool_response: { [responseField]: typeof receipt === 'string' ? receipt : JSON.stringify(receipt) },
+    };
+  }
+
+  function makeMultiRepo() {
+    return makeMultiMonorepo(['web', 'apps/web'], ['api', 'services/api']);
+  }
+
+  test('selector emits a v1 selection receipt', () => {
+    const { root: repo, paths } = makeMultiRepo();
+    const env = panelessEnv(repo);
+    try {
+      const selected = selectBare(repo, env, 'web');
+      assert.strictEqual(selected.protocol, PROTOCOL);
+      assert.strictEqual(selected.status, 'selected');
+      assert.strictEqual(selected.project_name, 'web');
+      assert.strictEqual(selected.project_root, paths.web);
+      assert.strictEqual(selected.repo_root, repo);
+      assert.ok(selected.selection_id, 'receipt must carry a selection_id');
+      assert.strictEqual(selected.project_root, path.resolve(selected.project_root));
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  test('direct selector with a stable session id pins the session snapshot', () => {
+    const { root: repo, paths } = makeMultiRepo();
+    const env = panelessEnv(repo);
+    try {
+      selectWithSession(repo, env, 'chat-a', 'web');
+      selectWithSession(repo, env, 'chat-b', 'api');
+
+      const a = nodeJson(repo, env, restoreSnippet('chat-a'));
+      assert.strictEqual(a.projectName, 'web');
+      assert.strictEqual(a.source, 'session');
+
+      const b = nodeJson(repo, env, restoreSnippet('chat-b'));
+      assert.strictEqual(b.projectName, 'api');
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  test('hook pins from this chat receipt even after a foreign chat rewrote the pane default', () => {
+    const { root: repo } = makeMultiRepo();
+    const env = panelessEnv(repo);
+    try {
+      // Chat A's selector completes without a session id (bare Bash run):
+      // the pane default becomes web and the command prints A's receipt.
+      const receipt = selectBare(repo, env, 'web');
+
+      // Chat B's selector rewrites the shared workspace default afterwards.
+      selectBare(repo, env, 'api');
+
+      // A's PostToolUse hook fires last; it must pin A's chat from A's own
+      // receipt, never from B's newer pane state.
+      const hooked = runPinHook(repo, env, receiptPayload('chat-a', receipt));
+      assert.strictEqual(hooked.status, 0, hooked.stderr);
+
+      const a = nodeJson(repo, env, restoreSnippet('chat-a'));
+      assert.strictEqual(a.projectName, 'web');
+      assert.strictEqual(a.source, 'session');
+
+      // The workspace default remains B's api selection.
+      const shared = nodeJson(repo, env, restoreSnippet(null));
+      assert.strictEqual(shared.projectName, 'api');
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  test('same-second pane and snapshot writes never arbitrate by timestamp', () => {
+    const { root: repo } = makeMultiRepo();
+    const env = panelessEnv(repo);
+    try {
+      const receipt = selectBare(repo, env, 'web');
+      selectBare(repo, env, 'api');
+
+      const hooked = runPinHook(repo, env, receiptPayload('chat-a', receipt));
+      assert.strictEqual(hooked.status, 0, hooked.stderr);
+
+      // Force the pane write onto the exact same second as the snapshot, with
+      // the foreign project: a >= timestamp comparison would let api win.
+      const stateDir = path.join(path.join(repo, 'home'), '.codex', 'groundwork-state', 'panes');
+      const snapDir = path.join(path.join(repo, 'home'), '.codex', 'groundwork-state', 'chat-snapshots');
+      const snapFile = fs.readdirSync(snapDir).find(f => f.startsWith('chat-a'));
+      const snapshot = JSON.parse(fs.readFileSync(path.join(snapDir, snapFile), 'utf8'));
+      const paneFile = fs.readdirSync(stateDir).find(f => f.startsWith('repo-'));
+      const pane = JSON.parse(fs.readFileSync(path.join(stateDir, paneFile), 'utf8'));
+      pane.timestamp = snapshot.timestamp;
+      pane.project = 'api';
+      fs.writeFileSync(path.join(stateDir, paneFile), JSON.stringify(pane));
+
+      const a = nodeJson(repo, env, restoreSnippet('chat-a'));
+      assert.strictEqual(a.projectName, 'web', 'session snapshot must be authoritative without timestamp arbitration');
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  test('a failed selection writes neither workspace default nor snapshot', () => {
+    const { root: repo } = makeMultiRepo();
+    const env = panelessEnv(repo);
+    try {
+      selectBare(repo, env, 'web');
+      const failed = spawnSync(
+        'node', [CLI, 'select', 'unknown', '--harness', 'codex'],
+        { cwd: repo, env: { ...env, GROUNDWORK_SESSION_ID: 'chat-a' }, encoding: 'utf8' }
+      );
+      assert.notStrictEqual(failed.status, 0);
+      assert.strictEqual(failed.stdout, '', 'a failed selection must not print a receipt');
+
+      const shared = nodeJson(repo, env, restoreSnippet(null));
+      assert.strictEqual(shared.projectName, 'web', 'failed selection must not touch the workspace default');
+
+      // A later hook invocation for that chat has no receipt to trust: no-op.
+      const hooked = runPinHook(repo, env, {
+        session_id: 'chat-a',
+        tool_input: { command: `node ${CLI} select unknown --harness codex` },
+        tool_response: { stdout: failed.stdout },
+      });
+      assert.strictEqual(hooked.status, 0, hooked.stderr);
+      const snapDir = path.join(path.join(repo, 'home'), '.codex', 'groundwork-state', 'chat-snapshots');
+      if (fs.existsSync(snapDir)) {
+        assert.ok(
+          !fs.readdirSync(snapDir).some(f => f.startsWith('chat-a')),
+          'no snapshot may exist for the failed session'
+        );
+      }
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  test('hook accepts an exact receipt from supported payload forms', () => {
+    const { root: repo } = makeMultiRepo();
+    const env = panelessEnv(repo);
+    try {
+      for (const field of ['stdout', 'output']) {
+        const receipt = selectBare(repo, env, 'web');
+        selectBare(repo, env, 'api');
+        const hooked = runPinHook(repo, env, receiptPayload(`chat-${field}`, receipt, field));
+        assert.strictEqual(hooked.status, 0, hooked.stderr);
+        const restored = nodeJson(repo, env, restoreSnippet(`chat-${field}`));
+        assert.strictEqual(restored.projectName, 'web', `receipt via tool_response.${field} must pin`);
+        assert.strictEqual(restored.source, 'session');
+      }
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  test('hook ignores malformed, ambiguous, failure, mismatched, and absent responses', () => {
+    const { root: repo } = makeMultiRepo();
+    const env = panelessEnv(repo);
+    try {
+      const receipt = selectBare(repo, env, 'web');
+      const cases = [
+        ['malformed JSON', { tool_response: { stdout: 'not json {' } }],
+        ['missing tool_response', {}],
+        ['missing result field', { tool_response: {} }],
+        ['two receipt candidates', {
+          tool_response: { stdout: `${JSON.stringify(receipt)}\n${JSON.stringify({ ...receipt, project_name: 'api' })}` },
+        }],
+        ['failure receipt', {
+          tool_response: { stdout: JSON.stringify({ ...receipt, status: 'error' }) },
+        }],
+        ['session mismatch', {
+          session_id: 'chat-a',
+          tool_response: { stdout: JSON.stringify({ ...receipt, session_id: 'someone-else' }) },
+        }],
+        ['non-absolute project root', {
+          tool_response: { stdout: JSON.stringify({ ...receipt, project_root: 'apps/web' }) },
+        }],
+        ['unsafe project name', {
+          tool_response: { stdout: JSON.stringify({ ...receipt, project_name: '../escape' }) },
+        }],
+        ['foreign repo root', {
+          tool_response: { stdout: JSON.stringify({ ...receipt, repo_root: '/definitely/elsewhere' }) },
+        }],
+        ['valid command without a receipt', {
+          tool_response: { stdout: 'Switched to project web.' },
+        }],
+      ];
+      for (const [name, override] of cases) {
+        const payload = {
+          session_id: 'chat-x',
+          tool_input: { command: `node ${CLI} select web --harness codex` },
+          ...override,
+        };
+        const hooked = runPinHook(repo, env, payload);
+        assert.strictEqual(hooked.status, 0, `${name}: ${hooked.stderr}`);
+      }
+      const snapDir = path.join(path.join(repo, 'home'), '.codex', 'groundwork-state', 'chat-snapshots');
+      if (fs.existsSync(snapDir)) {
+        assert.ok(
+          !fs.readdirSync(snapDir).some(f => f.startsWith('chat-x')),
+          'no rejected payload form may pin a snapshot'
+        );
+      }
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  test('a receipt-bearing response on a non-selector command is ignored', () => {
+    const { root: repo } = makeMultiRepo();
+    const env = panelessEnv(repo);
+    try {
+      const receipt = selectBare(repo, env, 'web');
+      const hooked = runPinHook(repo, env, {
+        session_id: 'chat-x',
+        tool_input: { command: 'cat README.md' },
+        tool_response: { stdout: JSON.stringify(receipt) },
+      });
+      assert.strictEqual(hooked.status, 0, hooked.stderr);
+      const restored = nodeJson(repo, env, restoreSnippet('chat-x'));
+      assert.notStrictEqual(restored && restored.source, 'session');
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  test('real pane identity keeps the hook a no-op and ignores snapshots', () => {
+    const { root: repo } = makeMultiRepo();
+    const env = panelessEnv(repo);
+    env.TMUX = '/tmp/tmux-test/default,123,0';
+    env.TMUX_PANE = '%1';
+    try {
+      const receipt = selectBare(repo, env, 'web');
+      const hooked = runPinHook(repo, env, receiptPayload('chat-a', receipt));
+      assert.strictEqual(hooked.status, 0, hooked.stderr);
+      const snapDir = path.join(path.join(repo, 'home'), '.codex', 'groundwork-state', 'chat-snapshots');
+      if (fs.existsSync(snapDir)) {
+        assert.ok(!fs.readdirSync(snapDir).some(f => f.startsWith('chat-a')), 'pane identity must not pin snapshots');
+      }
+      const restored = nodeJson(repo, env, restoreSnippet('chat-a'));
+      assert.strictEqual(restored.source, 'pane');
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  test('persist-project.js emits the receipt and pins with a stable session id', () => {
+    const { root: repo } = makeMultiRepo();
+    const env = panelessEnv(repo);
+    try {
+      const output = JSON.parse(execFileSync(
+        'node', [PERSIST, 'web'],
+        { cwd: repo, env: { ...env, GROUNDWORK_SESSION_ID: 'chat-a' }, encoding: 'utf8' }
+      ));
+      assert.strictEqual(output.protocol, PROTOCOL);
+      assert.strictEqual(output.status, 'selected');
+      assert.strictEqual(output.project_name, 'web');
+      assert.ok(output.selection_id);
+
+      const restored = nodeJson(repo, env, restoreSnippet('chat-a'));
+      assert.strictEqual(restored.projectName, 'web');
+      assert.strictEqual(restored.source, 'session');
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  test('the pin hook never consults shared pane state for a pin decision', () => {
+    const hook = fs.readFileSync(PIN_HOOK, 'utf8');
+    assert.ok(!hook.includes('restorePaneSelection'), 'hook must not read pane state to decide pins');
+    assert.ok(!hook.includes('>= snap'), 'hook must not arbitrate by timestamp');
   });
 });
 
