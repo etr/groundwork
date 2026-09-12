@@ -141,6 +141,59 @@ describe('planBelongsToProject acceptance', () => {
       cleanup(repo);
     }
   });
+
+  test('accepts the current absolute header form for every recorded field', () => {
+    const repo = fixture();
+    try {
+      // Current plan writers substitute {{specs_dir}} with an absolute
+      // binding, so both the specs dir and the tasks path record absolutes.
+      const plan = writePlan(repo, 'TASK-004-plan.md', {
+        'Identifier': 'TASK-004',
+        'Specs dir': path.join(repo.webRoot, 'specs'),
+        'Tasks path': path.join(repo.webRoot, 'specs', 'tasks.md'),
+      });
+      const verdict = planBelongsToProject(plan, repo.webRoot, repo.root);
+      assert.strictEqual(verdict.ok, true);
+      assert.strictEqual(verdict.reason, '');
+    } finally {
+      cleanup(repo);
+    }
+  });
+
+  test('absolute and legacy relative recordings of the same directory agree', () => {
+    const repo = fixture();
+    try {
+      const absolute = writePlan(repo, 'absolute-plan.md', {
+        'Specs dir': path.join(repo.webRoot, 'specs'),
+      });
+      const relative = writePlan(repo, 'relative-plan.md', {
+        'Specs dir': 'apps/web/specs',
+      });
+      assert.strictEqual(
+        planBelongsToProject(absolute, repo.webRoot, repo.root).ok,
+        planBelongsToProject(relative, repo.webRoot, repo.root).ok
+      );
+    } finally {
+      cleanup(repo);
+    }
+  });
+
+  test('rejects an absolute recording that belongs to a foreign project', () => {
+    const repo = fixture();
+    try {
+      const plan = writePlan(repo, 'TASK-004-plan.md', {
+        'Specs dir': path.join(repo.apiRoot, 'specs'),
+      });
+      const verdict = planBelongsToProject(plan, repo.webRoot, repo.root);
+      assert.strictEqual(verdict.ok, false);
+      assert.ok(
+        verdict.reason.includes(path.join(repo.apiRoot, 'specs')),
+        `reason must name the absolute recording: ${verdict.reason}`
+      );
+    } finally {
+      cleanup(repo);
+    }
+  });
 });
 
 describe('planBelongsToProject rejection', () => {

@@ -815,8 +815,9 @@ describe('exported project context runtime', () => {
         assert.ok(skill.includes(`project-context-cli.js select "<selected-name>" --harness ${target}`));
         assert.ok(!skill.includes('${PLUGIN_ROOT}'));
 
-        const repo = path.join(root, `${target}-repo`);
-        fs.mkdirSync(path.join(repo, 'apps', 'web', 'specs'), { recursive: true });
+        const repoPath = path.join(root, `${target}-repo`);
+        fs.mkdirSync(path.join(repoPath, 'apps', 'web', 'specs'), { recursive: true });
+        const repo = fs.realpathSync(repoPath);
         fs.writeFileSync(path.join(repo, '.groundwork.yml'), [
           'version: 1', 'projects:', '  web:', '    path: apps/web', '',
         ].join('\n'));
@@ -828,7 +829,7 @@ describe('exported project context runtime', () => {
           { cwd: repo, env, encoding: 'utf8' }
         ));
         assert.strictEqual(selected.project_name, 'web');
-        assert.strictEqual(selected.specs_dir, 'apps/web/specs');
+        assert.strictEqual(selected.specs_dir, path.join(repo, 'apps', 'web', 'specs'));
 
         const resolved = JSON.parse(execFileSync(
           'node', [cli, 'resolve', '--harness', target],
@@ -836,11 +837,38 @@ describe('exported project context runtime', () => {
         ));
         assert.strictEqual(resolved.selection_required, false);
         assert.strictEqual(resolved.project_name, 'web');
+        assert.strictEqual(resolved.project_root, path.join(repo, 'apps', 'web'));
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }
     });
   }
+
+  test('exported resolve supports no-config single-project repositories', () => {
+    const root = runInstaller('codex');
+    if (root === null) return;
+    try {
+      const skillDir = path.join(root, '.codex', 'skills', 'groundwork-select-project');
+      const cli = path.join(skillDir, 'scripts', 'project-context-cli.js');
+      const repoPath = path.join(root, 'no-config-repo');
+      fs.mkdirSync(path.join(repoPath, 'specs'), { recursive: true });
+      const repo = fs.realpathSync(repoPath);
+      execFileSync('git', ['init', '-q'], { cwd: repo });
+
+      const resolved = JSON.parse(execFileSync(
+        'node', [cli, 'resolve', '--harness', 'codex'],
+        { cwd: repo, env: process.env, encoding: 'utf8' }
+      ));
+      assert.strictEqual(resolved.selection_required, false);
+      assert.strictEqual(resolved.project_root, repo);
+      assert.strictEqual(resolved.specs_dir, path.join(repo, 'specs'));
+      assert.strictEqual(resolved.plans_dir, path.join(repo, '.groundwork-plans'));
+      assert.strictEqual(resolved.debug_dir, path.join(repo, '.debug'));
+      assert.strictEqual(resolved.research_dir, path.join(repo, '.architecture'));
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
 
   test('codex select-project command treats a metacharacter-leading name as data', () => {
     const root = runInstaller('codex');

@@ -223,19 +223,15 @@ fi
 # ============================================
 template_vars=""
 template_vars=$(GROUNDWORK_PROJECT="$project_name" GROUNDWORK_SESSION_ID="$SESSION_ID" guarded_node 2 node -e "
-  const path = require('path');
   const {getEffortLevel} = require('${PLUGIN_ROOT}/lib/skills-core');
-  const {getSpecsDir, getPlansDir, getDebugDir, getResearchDir, getProjectRoot, getProjectName, getRepoRoot} = require('${PLUGIN_ROOT}/lib/project-context');
-  const rl = getRepoRoot() || process.cwd();
-  const pr = getProjectRoot();
-  const rpr = pr === rl ? '.' : path.relative(rl, pr);
+  const {getSpecsDir, getPlansDir, getDebugDir, getResearchDir, getProjectRoot, getProjectName} = require('${PLUGIN_ROOT}/lib/project-context');
   console.log([
     '- {{effort_level}} = ' + getEffortLevel(),
     '- {{specs_dir}} = ' + getSpecsDir(),
     '- {{plans_dir}} = ' + getPlansDir(),
     '- {{debug_dir}} = ' + getDebugDir(),
     '- {{research_dir}} = ' + getResearchDir(),
-    '- {{project_root}} = ' + rpr,
+    '- {{project_root}} = ' + getProjectRoot(),
     '- {{project_name}} = ' + getProjectName()
   ].join('\n'));
 " 2>/dev/null || echo '')

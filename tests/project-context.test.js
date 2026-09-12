@@ -36,8 +36,11 @@ function describe(name, fn) {
   fn();
 }
 
+// realpath: git resolves macOS symlinked temp dirs (/tmp → /private/tmp) and
+// reports the resolved toplevel, so absolute-binding assertions must compare
+// against the resolved repository path.
 function makeMonorepo() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-context-'));
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'gw-context-')));
   fs.mkdirSync(path.join(root, 'apps', 'web', 'specs'), { recursive: true });
   fs.writeFileSync(path.join(root, '.groundwork.yml'), [
     'version: 1',
@@ -50,9 +53,17 @@ function makeMonorepo() {
   return root;
 }
 
+// A single-project repository with no .groundwork.yml at all.
+function makeSingleProjectRepo() {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'gw-context-single-')));
+  fs.mkdirSync(path.join(root, 'specs'), { recursive: true });
+  execFileSync('git', ['init', '-q'], { cwd: root });
+  return root;
+}
+
 // Monorepo with several named projects (entries: [name, relative path]).
 function makeMultiMonorepo(...entries) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-context-'));
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'gw-context-')));
   const lines = ['version: 1', 'projects:'];
   const paths = {};
   for (const [name, rel] of entries) {
@@ -126,18 +137,21 @@ describe('project context CLI', () => {
         const selected = runCli(repo, env, 'select', 'web', '--harness', harness);
         assert.strictEqual(selected.harness, harness);
         assert.strictEqual(selected.project_name, 'web');
-        assert.strictEqual(selected.project_root, 'apps/web');
-        assert.strictEqual(selected.specs_dir, 'apps/web/specs');
-        assert.strictEqual(selected.plans_dir, 'apps/web/.groundwork-plans');
+        assert.strictEqual(selected.project_root, path.join(repo, 'apps', 'web'));
+        assert.strictEqual(selected.specs_dir, path.join(repo, 'apps', 'web', 'specs'));
+        assert.strictEqual(selected.plans_dir, path.join(repo, 'apps', 'web', '.groundwork-plans'));
+        assert.strictEqual(selected.debug_dir, path.join(repo, 'apps', 'web', '.debug'));
+        assert.strictEqual(selected.research_dir, path.join(repo, 'apps', 'web', '.architecture'));
+        assert.ok(path.isAbsolute(selected.project_root), 'project_root must be absolute');
         assert.ok(selected.state_file.startsWith(path.join(override, 'groundwork-state')));
         assert.ok(fs.existsSync(selected.state_file));
 
         const resolved = runCli(repo, env, 'resolve', '--harness', harness);
         assert.strictEqual(resolved.selection_required, false);
         assert.strictEqual(resolved.project_name, 'web');
-        assert.strictEqual(resolved.project_root, 'apps/web');
-        assert.strictEqual(resolved.specs_dir, 'apps/web/specs');
-        assert.strictEqual(resolved.plans_dir, 'apps/web/.groundwork-plans');
+        assert.strictEqual(resolved.project_root, path.join(repo, 'apps', 'web'));
+        assert.strictEqual(resolved.specs_dir, path.join(repo, 'apps', 'web', 'specs'));
+        assert.strictEqual(resolved.plans_dir, path.join(repo, 'apps', 'web', '.groundwork-plans'));
       } finally {
         fs.rmSync(repo, { recursive: true, force: true });
       }
@@ -223,8 +237,41 @@ describe('project context CLI', () => {
 
       assert.strictEqual(resolved.selection_required, false);
       assert.strictEqual(resolved.project_name, 'web');
-      assert.strictEqual(resolved.project_root, 'apps/web');
+      assert.strictEqual(resolved.project_root, path.join(repo, 'apps', 'web'));
       assert.strictEqual(resolved.state_file, selected.state_file);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  test('selected monorepo bindings are absolute and invariant to the caller cwd', () => {
+    const repo = makeMonorepo();
+    const home = path.join(repo, 'home');
+    fs.mkdirSync(home);
+    const env = cleanEnv(home);
+    env.TMUX = '/tmp/tmux-test/default,123,0';
+    env.TMUX_PANE = '%1';
+
+    try {
+      runCli(repo, env, 'select', 'web', '--harness', 'codex');
+      const expectedRoot = path.join(repo, 'apps', 'web');
+      const cwds = [
+        repo,
+        path.join(repo, 'apps', 'web'),
+        path.join(repo, 'apps', 'web', 'specs'),
+      ];
+      for (const cwd of cwds) {
+        const resolved = runCli(cwd, env, 'resolve', '--harness', 'codex');
+        assert.strictEqual(resolved.selection_required, false, `from ${cwd}`);
+        assert.strictEqual(resolved.project_root, expectedRoot, `project_root from ${cwd}`);
+        assert.strictEqual(resolved.specs_dir, path.join(expectedRoot, 'specs'), `specs_dir from ${cwd}`);
+        assert.strictEqual(resolved.plans_dir, path.join(expectedRoot, '.groundwork-plans'), `plans_dir from ${cwd}`);
+        assert.strictEqual(resolved.debug_dir, path.join(expectedRoot, '.debug'), `debug_dir from ${cwd}`);
+        assert.strictEqual(resolved.research_dir, path.join(expectedRoot, '.architecture'), `research_dir from ${cwd}`);
+        // A duplicated project segment means a relative binding was resolved
+        // against the project directory itself.
+        assert.ok(!resolved.specs_dir.includes('apps/web/apps/web'), resolved.specs_dir);
+      }
     } finally {
       fs.rmSync(repo, { recursive: true, force: true });
     }
@@ -264,16 +311,67 @@ describe('project context CLI', () => {
         project_root: resolved.project_root,
         specs_dir: resolved.specs_dir,
         plans_dir: resolved.plans_dir,
+        debug_dir: resolved.debug_dir,
+        research_dir: resolved.research_dir,
         selection_required: resolved.selection_required,
       }, {
         harness: 'codex',
         project_name: '',
-        project_root: '.',
-        specs_dir: 'specs',
-        plans_dir: '.groundwork-plans',
+        project_root: repo,
+        specs_dir: path.join(repo, 'specs'),
+        plans_dir: path.join(repo, '.groundwork-plans'),
+        debug_dir: path.join(repo, '.debug'),
+        research_dir: path.join(repo, '.architecture'),
         selection_required: true,
       });
       assert.ok(resolved.state_file.startsWith(path.join(home, '.codex', 'groundwork-state')));
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  test('resolve succeeds in a no-config single-project repository with absolute bindings', () => {
+    const repo = makeSingleProjectRepo();
+    const home = path.join(repo, 'home');
+    fs.mkdirSync(home);
+
+    try {
+      const resolved = runCli(repo, cleanEnv(home), 'resolve', '--harness', 'codex');
+      assert.deepStrictEqual({
+        harness: resolved.harness,
+        project_name: resolved.project_name,
+        project_root: resolved.project_root,
+        specs_dir: resolved.specs_dir,
+        plans_dir: resolved.plans_dir,
+        debug_dir: resolved.debug_dir,
+        research_dir: resolved.research_dir,
+        selection_required: resolved.selection_required,
+      }, {
+        harness: 'codex',
+        project_name: '',
+        project_root: repo,
+        specs_dir: path.join(repo, 'specs'),
+        plans_dir: path.join(repo, '.groundwork-plans'),
+        debug_dir: path.join(repo, '.debug'),
+        research_dir: path.join(repo, '.architecture'),
+        selection_required: false,
+      });
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  test('no-config resolve walks up from a project subdirectory to the repository root', () => {
+    const repo = makeSingleProjectRepo();
+    const home = path.join(repo, 'home');
+    fs.mkdirSync(home);
+    fs.mkdirSync(path.join(repo, 'src'));
+
+    try {
+      const resolved = runCli(path.join(repo, 'src'), cleanEnv(home), 'resolve', '--harness', 'codex');
+      assert.strictEqual(resolved.selection_required, false);
+      assert.strictEqual(resolved.project_root, repo);
+      assert.strictEqual(resolved.specs_dir, path.join(repo, 'specs'));
     } finally {
       fs.rmSync(repo, { recursive: true, force: true });
     }
@@ -377,14 +475,14 @@ describe('project context CLI', () => {
     }
   });
 
-  test('rejects a repository without .groundwork.yml', () => {
+  test('select without .groundwork.yml is rejected; only resolve supports no-config repos', () => {
     const repo = makeMonorepo();
     const home = path.join(repo, 'home');
     fs.mkdirSync(home);
     fs.unlinkSync(path.join(repo, '.groundwork.yml'));
 
     try {
-      const result = spawnSync('node', [CLI, 'resolve', '--harness', 'codex'], {
+      const result = spawnSync('node', [CLI, 'select', 'web', '--harness', 'codex'], {
         cwd: repo, env: cleanEnv(home), encoding: 'utf8',
       });
       assert.notStrictEqual(result.status, 0);
@@ -838,6 +936,53 @@ describe('selection scope capability gating (pane-less harnesses)', () => {
       const remaining = fs.readdirSync(snapshotsDir);
       assert.ok(remaining.some(f => f.startsWith('fresh-chat')), 'fresh snapshot must survive');
       assert.ok(!remaining.some(f => f.startsWith('old-chat')), 'stale snapshot must be pruned');
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('library directory bindings are absolute', () => {
+  const DIRS_SNIPPET = `const pc = require(${JSON.stringify(LIB)}); console.log(JSON.stringify({
+    projectRoot: pc.getProjectRoot(),
+    specs: pc.getSpecsDir(),
+    plans: pc.getPlansDir(),
+    debug: pc.getDebugDir(),
+    research: pc.getResearchDir()
+  }))`;
+
+  test('directory getters return absolute paths rooted at the project root', () => {
+    const { root: repo, paths } = makeMultiMonorepo(['web', 'apps/web'], ['api', 'services/api']);
+    const home = path.join(repo, 'home');
+    fs.mkdirSync(home);
+    const env = cleanEnv(home);
+    env.GROUNDWORK_PROJECT_ROOT = paths.web;
+
+    try {
+      const dirs = nodeJson(repo, env, DIRS_SNIPPET);
+      assert.strictEqual(dirs.specs, path.join(paths.web, 'specs'));
+      assert.strictEqual(dirs.plans, path.join(paths.web, '.groundwork-plans'));
+      assert.strictEqual(dirs.debug, path.join(paths.web, '.debug'));
+      assert.strictEqual(dirs.research, path.join(paths.web, '.architecture'));
+      for (const value of Object.values(dirs)) {
+        assert.ok(path.isAbsolute(value), `binding must be absolute: ${value}`);
+      }
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  test('directory getters stay absolute when invoked from inside the project', () => {
+    const { root: repo, paths } = makeMultiMonorepo(['web', 'apps/web']);
+    const home = path.join(repo, 'home');
+    fs.mkdirSync(home);
+    const env = cleanEnv(home);
+    env.GROUNDWORK_PROJECT_ROOT = paths.web;
+
+    try {
+      const dirs = nodeJson(paths.web, env, DIRS_SNIPPET);
+      assert.strictEqual(dirs.specs, path.join(paths.web, 'specs'));
+      assert.strictEqual(dirs.plans, path.join(paths.web, '.groundwork-plans'));
     } finally {
       fs.rmSync(repo, { recursive: true, force: true });
     }
