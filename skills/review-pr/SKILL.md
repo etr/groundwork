@@ -122,6 +122,8 @@ Run all of these `gh` commands **in parallel** using the Bash tool:
 - If `isCrossRepository` is true, run `gh pr checkout <pr_number>` to fetch the fork's branch.
 - Otherwise, checkout the PR branch: `gh pr checkout <pr_number>`.
 
+**Concurrent same-PR reviews in one clone:** if a local `pr-<pr_number>-review` branch already exists (a previous or concurrent review), reuse it idempotently instead of fighting over it — fetch, then reset it to the PR's current `headRefOid` (`git checkout pr-<pr_number>-review && git reset --hard <headRefOid>`), and note in your output that an existing review branch was reused.
+
 ## Step 3: Handle Existing Feedback
 
 ### 3a: Detect Previous Groundwork Reviews
@@ -390,6 +392,7 @@ REVIEW_PAYLOAD
    ```bash
    git branch -D pr-<pr_number>-review 2>/dev/null || true
    ```
+   If the branch already existed when you started (another review of the same PR in this clone), you reused it — still safe to delete it here, since a later review recreates it from the PR HEAD.
 3. Display final summary:
    ```markdown
    ## PR Review Posted

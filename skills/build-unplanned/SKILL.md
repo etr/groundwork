@@ -169,7 +169,7 @@ Use `AskUserQuestion` to ask:
 3. Merge: `git merge --no-ff <branch> -m "Merge <branch>: [Feature Title]"`
 4. If success: Remove worktree and delete branch:
    ```bash
-   git worktree remove .worktrees/<identifier>
+   git worktree remove <worktree_path>
    git branch -d <branch>
    ```
 5. If conflicts: Report conflicts and keep worktree for manual resolution
@@ -179,20 +179,20 @@ Use `AskUserQuestion` to ask:
 ```markdown
 ## Implementation Complete in Worktree
 
-**Location:** .worktrees/<identifier>
+**Location:** `<worktree_path>`
 **Branch:** feature/<identifier>
 
 When ready to merge:
 ```bash
 git checkout [base-branch]
 git merge --no-ff <branch>
-git worktree remove .worktrees/<identifier>
+git worktree remove <worktree_path>
 git branch -d <branch>
 ```
 
 To continue working:
 ```bash
-cd .worktrees/<identifier>
+cd <worktree_path>
 ```
 ```
 
@@ -208,7 +208,7 @@ Output implementation summary:
 
 **Validation:** Passed ([N] iteration(s))
 
-**Worktree status:** [Merged to <branch> | Pending at .worktrees/<identifier>]
+**Worktree status:** [Merged to <branch> | Pending at `<worktree_path>`]
 ```
 
 Output the final result line:
@@ -224,7 +224,7 @@ RESULT: SUCCESS | [one-line summary]
 ### Branch Naming
 
 This skill uses `feature/` prefix (not `task/`) to distinguish ad-hoc features from planned tasks:
-- Planned tasks: `task/TASK-NNN`
+- Planned tasks: branch convention from the worktree-identity helper (`task/TASK-NNN` single-project, `task/<project>/TASK-NNN` monorepo)
 - Ad-hoc features: `feature/FEATURE-<slug>`
 
 ### Standalone Usage

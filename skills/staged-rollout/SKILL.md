@@ -39,6 +39,7 @@ Skip only for trivially reversible, low-blast-radius changes (a copy fix, an int
 
    **Monitoring window:** between each stage, watch the RED metrics and alerts long enough to span real traffic before promoting. Do not promote on a clean dashboard you've watched for thirty seconds. If a symptom breaches, **stop and roll back** — do not push forward hoping it settles.
 4. **Written rollback plan.** Before launch, document: the exact trigger conditions (which metric/alert at which threshold), the precise rollback action (flip flag `X` to off; revert migration `Y`), who can execute it, and the expected recovery time. A rollback that requires a redeploy is too slow — prefer the flag.
+5. **Conventional artifact locations.** Write the rollback plan to `{{specs_dir}}/rollouts/<feature-slug>-rollback.md` and the pre-launch checklist to `{{specs_dir}}/rollouts/<feature-slug>-prelaunch.md` (create the directory; the feature slug is the kebab-case change name). `{{specs_dir}}` is project-scoped, so same-named changes in two monorepo projects cannot overwrite each other. Never leave these "somewhere in the conversation" — the ship gate checks the file.
 
 ## Rationalizations
 
@@ -63,5 +64,5 @@ Skip only for trivially reversible, low-blast-radius changes (a copy fix, an int
 - [ ] Pre-launch checklist complete; flag exists and defaults to off
 - [ ] The change is gated behind a runtime-flippable feature flag
 - [ ] A staged/canary ramp is defined with a monitoring window between stages
-- [ ] A written rollback plan exists naming trigger conditions, the exact rollback action, the owner, and expected recovery time
+- [ ] A written rollback plan exists at `{{specs_dir}}/rollouts/<feature-slug>-rollback.md` naming trigger conditions, the exact rollback action, the owner, and expected recovery time
 - [ ] The plan was written before launch, not after the first stage

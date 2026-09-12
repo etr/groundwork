@@ -11,7 +11,7 @@ const assert = require('assert');
 
 // Import the modules under test
 const { extractFrontmatter, stripFrontmatter, hasFrontmatter } = require('../lib/frontmatter');
-const { getTempDir, readFile, writeFile } = require('../lib/utils');
+const { readFile, writeFile } = require('../lib/utils');
 const { shouldCheck, isGitRepo } = require('../lib/check-updates');
 
 const PLUGIN_ROOT = path.resolve(__dirname, '..');
@@ -170,24 +170,6 @@ No closing`;
 // ============================================================================
 // utils.js tests
 // ============================================================================
-
-describe('utils.js - getTempDir', () => {
-  test('returns a path containing claude-groundwork', () => {
-    const tempDir = getTempDir();
-    assert.ok(tempDir.includes('claude-groundwork'));
-  });
-
-  test('creates directory if it does not exist', () => {
-    const tempDir = getTempDir();
-    assert.ok(fs.existsSync(tempDir));
-  });
-
-  test('returns consistent path on multiple calls', () => {
-    const dir1 = getTempDir();
-    const dir2 = getTempDir();
-    assert.strictEqual(dir1, dir2);
-  });
-});
 
 describe('utils.js - readFile', () => {
   test('reads existing file', () => {

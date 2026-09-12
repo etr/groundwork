@@ -72,6 +72,20 @@ while IFS= read -r script; do
     cp "$SCRIPT_DIR/$script" "$OUT_DIR/$script"
 done <<< "$hook_scripts"
 
+# Hook scripts source shared bash helpers from hooks/ (state-dir-lib.sh);
+# those references live in script bodies, not in hooks.json, so scan the
+# shipped scripts and copy every helper they source (fail-closed).
+hook_helpers=$(grep -h '^[[:space:]]*\.[[:space:]]*"\${SCRIPT_DIR}/' "$OUT_DIR"/hooks/*.sh 2>/dev/null \
+    | sed -e 's|^.*\${SCRIPT_DIR}/||' -e 's|".*||' | sort -u)
+while IFS= read -r helper; do
+    [[ -z "$helper" ]] && continue
+    if [[ ! -f "$SCRIPT_DIR/hooks/$helper" ]]; then
+        echo "Error: sourced hook helper not found: hooks/$helper" >&2
+        exit 1
+    fi
+    cp "$SCRIPT_DIR/hooks/$helper" "$OUT_DIR/hooks/$helper"
+done <<< "$hook_helpers"
+
 # lib/ is referenced both by hook commands (resolve-template-vars.js) and by
 # the hook scripts themselves (session-start.sh resolves PLUGIN_ROOT/lib/...).
 for f in "$SCRIPT_DIR"/lib/*.js; do

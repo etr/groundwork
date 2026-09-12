@@ -20,12 +20,16 @@ The plugin includes these hooks in `hooks/hooks.json`:
 
 ### PostToolUse Hook
 
-**Triggers:** After `Bash` tool use
+**Triggers:** After `Bash` and `Skill` tool use
 
-**Purpose:**
-- Verifies commits align with specs/tasks.md after `git commit`
+**Purpose (Bash):**
+- `hooks/check-commit-alignment.sh` — verifies commits align with specs/tasks.md after `git commit`
+- `hooks/pin-session-selection.sh` — when this chat's Bash command persisted a project selection, adopts that write into the per-chat snapshot so a later clear/compaction restores what this chat actually selected
 
-**File:** `hooks/check-commit-alignment.sh`
+**Purpose (Skill):**
+- `lib/resolve-template-vars.js` — injects resolved `{{template}}` variable values after a skill loads
+
+**File:** `hooks/check-commit-alignment.sh`, `hooks/pin-session-selection.sh`, `lib/resolve-template-vars.js`
 
 ### SubagentStop Hook
 
@@ -45,9 +49,8 @@ Currently empty — reserved for future use.
 **Triggers:** Before context compaction (*)
 
 **Purpose:**
-- Preserves critical skill state before compaction
-- Reports active tasks, current skill, pending observations
-- Injects state summary into compacted context
+- Preserves per-session context before compaction: active task count and the active project selection
+- Pins the session's selection snapshot so the post-compaction SessionStart restores this chat's state (no skill-state file is read — no writer exists for one)
 
 **File:** `hooks/pre-compact.sh`
 
@@ -82,6 +85,8 @@ Hooks communicate via JSON on stdout:
 
 ## Files Location
 
-All hook state files are stored in:
-- `/tmp/claude-groundwork/` - Tool counters (cleaned after 7 days)
-- `~/.claude/` - Security warning state (cleaned after 30 days)
+Hook state files live in the harness-resolved Groundwork state directory, printed by `lib/state-dir.js` (hooks source `hooks/state-dir-lib.sh` to resolve it):
+- Claude Code: `~/.claude/groundwork-state/` (or `$CLAUDE_CONFIG_DIR/groundwork-state/`)
+- ZCode / Codex: `$ZCODE_HOME/groundwork-state/` / `$CODEX_HOME/groundwork-state/`
+
+When `node` is unavailable, hooks fall back to the historical `~/.claude/groundwork-state/` location. Per-event hooks (PostToolUse Bash, SubagentStop) resolve the directory lazily — only their error-logging path needs it — so their success path spawns no node.

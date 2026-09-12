@@ -6,12 +6,18 @@
 #
 # Error Recovery: Uses defensive error handling to never break Claude Code sessions.
 
-# Error handling - log errors to debug file, never fail
-DEBUG_LOG="${HOME}/.claude/groundwork-state/hook-errors.log"
-mkdir -p "$(dirname "$DEBUG_LOG")" 2>/dev/null || true
+# Error handling - log errors to debug file, never fail. State-directory
+# resolution lives in ONE shared spelling: hooks/state-dir-lib.sh. This hook
+# runs after every PostToolUse(Bash) call, so it resolves the directory
+# LAZILY — only the rare error path needs it, and the success path must not
+# spawn node.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+. "${SCRIPT_DIR}/state-dir-lib.sh"
 
 log_error() {
-  echo "[$(date -u +"%Y-%m-%dT%H:%M:%SZ")] check-commit-alignment: $1" >> "$DEBUG_LOG" 2>/dev/null || true
+  groundwork_resolve_state_dir
+  mkdir -p "$_GW_STATE_DIR" 2>/dev/null || true
+  echo "[$(date -u +"%Y-%m-%dT%H:%M:%SZ")] check-commit-alignment: $1" >> "${_GW_STATE_DIR}/hook-errors.log" 2>/dev/null || true
 }
 
 # Wrap main logic in function for error isolation

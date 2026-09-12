@@ -27,6 +27,21 @@ const {
   showTaskStatus,
   transcriptSignalsFromEvent,
 } = runReportingModule ? require(runReportingModule) : {};
+const worktreeIdentityModule = [
+  path.join(__dirname, '..', 'lib', 'worktree-identity.js'),
+  path.join(__dirname, 'worktree-identity.js'),
+].find((candidate) => fs.existsSync(candidate));
+const {
+  legacyWorkspaceOwner,
+  taskWorkspaceIdentity,
+} = worktreeIdentityModule
+  ? require(worktreeIdentityModule).createWorktreeIdentity({ execGit: (cwd, args) => execGit(cwd, args) })
+  : {};
+const planCheckModule = [
+  path.join(__dirname, '..', 'lib', 'plan-check.js'),
+  path.join(__dirname, 'plan-check.js'),
+].find((candidate) => fs.existsSync(candidate));
+const planBelongsToProject = planCheckModule ? require(planCheckModule).planBelongsToProject : null;
 
 const TASK_ID = /^TASK-(\d{3})$/;
 const SUPPORTED_HARNESSES = ['claude', 'codex', 'zcode'];
@@ -1667,64 +1682,9 @@ function assertPlanTree(projectRoot) {
   }
 }
 
-function legacyWorkspaceOwner(commonDir, taskId, legacyBranch, legacyWorktree) {
-  const root = path.join(commonDir, 'groundwork', 'runner');
-  if (!fs.existsSync(root)) return null;
-  const owners = new Set();
-  for (const namespace of fs.readdirSync(root)) {
-    const file = path.join(root, namespace, `${taskId}.json`);
-    if (!fs.existsSync(file)) continue;
-    const stat = fs.lstatSync(file);
-    if (stat.isSymbolicLink() || !stat.isFile() || stat.size > MAX_CHECKPOINT_BYTES) {
-      throw new Error(`Unsafe runner checkpoint while resolving legacy ${taskId}: ${file}`);
-    }
-    let checkpoint;
-    try {
-      checkpoint = JSON.parse(fs.readFileSync(file, 'utf8'));
-    } catch {
-      throw new Error(`Invalid runner checkpoint while resolving legacy ${taskId}: ${file}`);
-    }
-    if (checkpoint.taskId !== taskId || typeof checkpoint.project !== 'string') continue;
-    if (!checkpoint.workspace
-        || (checkpoint.workspace.branch === legacyBranch
-          && checkpoint.workspace.worktreePath === legacyWorktree)) {
-      owners.add(checkpoint.project);
-    }
-  }
-  return owners.size === 1 ? [...owners][0] : null;
-}
-
-function taskWorkspaceIdentity(repoRoot, commonDir, projectRoot, projectName, taskId, checkpoint) {
-  const legacy = {
-    branch: `task/${taskId}`,
-    worktreePath: path.join(repoRoot, '.worktrees', taskId),
-  };
-  if (projectRoot === repoRoot) return legacy;
-  if (!projectName || !/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(projectName)) {
-    throw new Error('Monorepo task workspaces require a safe project name');
-  }
-  const scoped = {
-    branch: `task/${projectName}/${taskId}`,
-    worktreePath: path.join(repoRoot, '.worktrees', `${projectName}-${taskId}`),
-  };
-  if (checkpoint.workspace) {
-    for (const candidate of [legacy, scoped]) {
-      if (checkpoint.workspace.branch === candidate.branch
-          && checkpoint.workspace.worktreePath === candidate.worktreePath) return candidate;
-    }
-    throw new Error(`Runner checkpoint has an invalid workspace identity for ${taskId}`);
-  }
-  if (checkpoint.implementation
-      && checkpoint.implementation.branch === legacy.branch
-      && checkpoint.implementation.worktreePath === legacy.worktreePath) return legacy;
-  const projectRelative = path.relative(repoRoot, projectRoot).split(path.sep).join('/');
-  if (refExists(repoRoot, `refs/heads/${legacy.branch}`)
-      && fs.existsSync(legacy.worktreePath)
-      && legacyWorkspaceOwner(commonDir, taskId, legacy.branch, legacy.worktreePath) === projectRelative) {
-    return legacy;
-  }
-  return scoped;
-}
+// legacyWorkspaceOwner and taskWorkspaceIdentity live in
+// lib/worktree-identity.js (single source of truth, shared with the
+// interactive skills); this module binds them to its hardened execGit above.
 
 function refExists(repoRoot, refName) {
   try {
@@ -2910,7 +2870,21 @@ function assertRunnerPlanFile(taskProjectRoot, baseProjectRoot, reportedPath) {
   const taskCandidate = path.resolve(taskProjectRoot, reportedPath);
   const baseCandidate = path.resolve(baseProjectRoot, reportedPath);
   if (fs.existsSync(taskCandidate)) return assertPlanFile(taskProjectRoot, reportedPath);
-  if (fs.existsSync(baseCandidate)) return assertPlanFile(baseProjectRoot, reportedPath);
+  if (fs.existsSync(baseCandidate)) {
+    // Legacy unscoped location: task IDs are only unique per project, so a
+    // repo-root plan may belong to a different project. Verify the plan's
+    // recorded project context before adopting it.
+    if (baseProjectRoot !== taskProjectRoot && planBelongsToProject) {
+      const ownership = planBelongsToProject(baseCandidate, taskProjectRoot, baseProjectRoot);
+      if (!ownership.ok) {
+        throw new Error(
+          `Legacy repo-root plan belongs to a different project (${ownership.reason});` +
+            ' re-run the plan phase for this project'
+        );
+      }
+    }
+    return assertPlanFile(baseProjectRoot, reportedPath);
+  }
   return assertPlanFile(taskProjectRoot, reportedPath);
 }
 
@@ -4380,6 +4354,11 @@ module.exports = {
   forEachGitRecord,
   invokePhase,
   assertRegisteredWorktree,
+  taskWorkspaceIdentity,
+  legacyWorkspaceOwner,
+  assertPlanFile,
+  assertRunnerPlanFile,
+  ensureLocalPlanIgnore,
   acquireProjectLease,
   acquireRepositoryGate,
   activeProjectOwners,

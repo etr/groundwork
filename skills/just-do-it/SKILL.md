@@ -90,8 +90,8 @@ Present a summary to the user:
 ### Worktree Isolation
 
 Each task will execute in an isolated git worktree:
-- Branch: `task/TASK-NNN` created from current HEAD
-- Working directory: `.worktrees/TASK-NNN`
+- Branch and working directory: resolved per task via the worktree-identity helper (`node ${CLAUDE_PLUGIN_ROOT}/lib/worktree-identity.js TASK-NNN`) — project-qualified in monorepos (`task/<project>/TASK-NNN`, `<repo>/.worktrees/<project>-TASK-NNN`)
+- Branch created from current HEAD
 - Changes merged automatically after each task completes successfully
 - Worktrees cleaned up after successful merge
 
@@ -141,7 +141,7 @@ Relevant architecture:
 [extracted from {{specs_dir}}/architecture.md or {{specs_dir}}/architecture/]
 
 REQUIREMENTS FOR THE PLAN:
-1. All work happens in worktree .worktrees/TASK-NNN (not main workspace)
+1. All work happens in the task worktree reported by the executor (not main workspace)
 2. Must follow TDD: write test → implement → verify cycle
 3. Plan covers implementation only — validation and merge are handled separately by the caller
 "
@@ -221,7 +221,7 @@ From the project root (NOT the worktree):
 ```bash
 git checkout <base_branch>
 git merge --no-ff <branch> -m "Merge <branch>: [Task Title]"
-git worktree remove .worktrees/TASK-NNN
+git worktree remove <worktree_path>
 git branch -d <branch>
 ```
 
@@ -231,7 +231,7 @@ If merge conflicts occur, report them and preserve the worktree for investigatio
 
 5. **Log result:** "Completed TASK-NNN: [Title] — [one-line summary]"
 
-**On Failure at any phase:** Report the failed task, phase, reason, tasks completed this session, and tasks remaining. Note that the failed task's worktree is preserved at `.worktrees/TASK-NNN` for investigation.
+**On Failure at any phase:** Report the failed task, phase, reason, tasks completed this session, and tasks remaining. Note that the failed task's worktree is preserved at its recorded `<worktree_path>` for investigation.
 
 ### Step 4: Completion Report
 

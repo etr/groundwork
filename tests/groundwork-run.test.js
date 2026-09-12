@@ -4781,6 +4781,8 @@ describe('four-phase orchestration', () => {
             phases.push(input.phase);
             if (input.phase === 'implement') throw new Error('implementation must not restart');
             if (input.phase === 'validate') {
+              // Mirrors the validate skill's runner contract: when the
+              // runner supplies the durable run id, open with --resume-run.
               const resumed = validationSessions.openValidationSession({
                 repoRoot: worktree,
                 projectRoot: worktree,
@@ -4790,6 +4792,7 @@ describe('four-phase orchestration', () => {
                 baseHead: git(root, 'rev-parse', 'main'),
                 protocolVersion: 1,
                 runnerMode: true,
+                ...(input.validationRunId ? { resumeRun: input.validationRunId } : {}),
               });
               assert.strictEqual(resumed.status, 'recovered');
               return validated(input);

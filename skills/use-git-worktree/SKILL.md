@@ -62,23 +62,39 @@ echo "<worktree-dir>/" >> .gitignore
 
 ### Step 3: Create Branch and Worktree
 
-**Determine branch name from task:**
-- Input: `TASK-004` or `4`
-- Branch: `task/TASK-004`
-- Worktree path: `<dir>/TASK-004`
+**Resolve the workspace identity with the shared helper — never derive it by hand.**
+
+Task IDs are only unique per project (each project numbers its own `specs/tasks.md`), so the branch and worktree path must be project-qualified in monorepos. The helper applies the same convention the terminal runner uses, so interactive sessions and runner runs share one identity space and can never silently collide:
+
+```bash
+node ${CLAUDE_PLUGIN_ROOT}/lib/worktree-identity.js TASK-004
+```
+
+Output (single JSON line):
+```json
+{"task_id":"TASK-004","repo_root":"…","project_root":"…","project_name":"web",
+ "scope":"project","path":"<repo>/.worktrees/web-TASK-004","branch":"task/web/TASK-004",
+ "legacy":{"path":"<repo>/.worktrees/TASK-004","branch":"task/TASK-004","exists":false,"runner_owner":null}}
+```
+
+Rules:
+- Use the returned `path` and `branch` **verbatim** — including in merges, cleanup, and reports. Single-project repos get the short form (`task/TASK-004`, `<dir>/TASK-004`); monorepos get the project-qualified form.
+- If `legacy.exists` is true, a pre-scoping unqualified worktree exists at the repository root: surface it to the user ("if it belongs to another project, remove it; if it's yours, continue working in it") instead of silently adopting or ignoring it.
+- If `legacy.runner_owner` names a project, that legacy worktree is owned by a runner run's checkpoint — do not reuse it without the user's explicit confirmation.
 
 **Create from current HEAD:**
 ```bash
 # Get current branch as base
 BASE_BRANCH=$(git branch --show-current)
 
-# Create branch and worktree in one command
-git worktree add -b task/TASK-NNN <dir>/TASK-NNN
+# Create branch and worktree in one command, using the helper's values
+git worktree add -b <branch> <worktree-path>
 ```
 
-**Record context:**
+**Record context (used by every later merge/cleanup step):**
 - Base branch (for later merge)
-- Worktree path
+- Worktree path (`<worktree-path>`)
+- Branch (`<branch>`)
 - Task ID
 
 ### Step 4: Auto-Detect and Run Project Setup
@@ -133,9 +149,9 @@ Provide context for the calling skill:
 ## Worktree Created
 
 **Task:** TASK-NNN
-**Branch:** task/TASK-NNN
+**Branch:** <branch from the helper>
 **Base Branch:** main
-**Working Directory:** .worktrees/TASK-NNN
+**Working Directory:** <worktree-path from the helper>
 **Merge Mode:** [auto-merge|manual]
 
 Project setup complete. Baseline tests passing.
@@ -154,14 +170,14 @@ When task completes with auto-merge enabled:
 cd <worktree-path>
 git status --porcelain  # Should be empty
 
-# Return to main repo and merge
+# Return to main repo and merge (branch/worktree-path as recorded in Step 3)
 cd <original-repo>
 git checkout <base-branch>
-git merge --no-ff task/TASK-NNN -m "Merge task/TASK-NNN: [Task Title]"
+git merge --no-ff <task-branch> -m "Merge <task-branch>: [Task Title]"
 
 # Cleanup
 git worktree remove <worktree-path>
-git branch -d task/TASK-NNN
+git branch -d <task-branch>
 ```
 
 ### Manual Verification Flow
@@ -171,20 +187,20 @@ When user wants to review before merge:
 ```markdown
 ## Task Complete in Worktree
 
-**Location:** .worktrees/TASK-NNN
-**Branch:** task/TASK-NNN
+**Location:** <worktree-path>
+**Branch:** <task-branch>
 
 All changes committed. To merge manually:
 ```bash
 git checkout <base-branch>
-git merge --no-ff task/TASK-NNN
-git worktree remove .worktrees/TASK-NNN
-git branch -d task/TASK-NNN
+git merge --no-ff <task-branch>
+git worktree remove <worktree-path>
+git branch -d <task-branch>
 ```
 
 Or to continue working:
 ```bash
-cd .worktrees/TASK-NNN
+cd <worktree-path>
 ```
 ```
 
@@ -195,7 +211,7 @@ If merge conflicts occur:
 ```markdown
 ## Merge Conflict
 
-The merge of task/TASK-NNN into <base-branch> has conflicts.
+The merge of <task-branch> into <base-branch> has conflicts.
 
 **Conflicting files:**
 - path/to/file1.ts
@@ -214,14 +230,14 @@ git add <resolved-files>
 git commit                    # Complete merge
 
 # Then cleanup
-git worktree remove .worktrees/TASK-NNN
-git branch -d task/TASK-NNN
+git worktree remove <worktree-path>
+git branch -d <task-branch>
 ```
 
 **To abort:**
 ```bash
 git merge --abort
-# Worktree preserved at .worktrees/TASK-NNN
+# Worktree preserved at <worktree-path>
 ```
 ```
 
@@ -229,7 +245,7 @@ git merge --abort
 
 | Error | Recovery |
 |-------|----------|
-| Branch already exists | Offer to reuse existing branch or create new name |
+| Branch already exists | Another session (or a runner run) may hold this task — run `git worktree list`, offer to reuse the existing worktree, wait, or clean it up |
 | Worktree path exists | Check if it's valid, offer cleanup or different path |
 | Not a git repository | Cannot use worktrees, fall back to current directory |
 | Uncommitted changes | Prompt to commit or stash before creating worktree |

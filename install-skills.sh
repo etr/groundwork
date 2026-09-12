@@ -583,7 +583,7 @@ Before interpreting project-context placeholders in this workflow:
 
 1. Resolve the directory containing this \`SKILL.md\`.
 2. Run \`node <skill-directory>/scripts/project-context-cli.js resolve --harness ${target}\` from the repository working directory.
-3. Use the returned JSON values as the exact bindings for \`{{project_name}}\`, \`{{project_root}}\`, \`{{specs_dir}}\`, and \`{{plans_dir}}\` everywhere below.
+3. Use the returned JSON values as the exact bindings for \`{{project_name}}\`, \`{{project_root}}\`, \`{{specs_dir}}\`, \`{{plans_dir}}\`, \`{{debug_dir}}\`, and \`{{research_dir}}\` everywhere below.
 4. If \`selection_required\` is true, follow the \`groundwork-select-project\` workflow, then resolve again.
 
 EOF
@@ -878,13 +878,16 @@ $inlined_deps"
         local needs_project_runtime=false
         local needs_runtime_context=false
         local needs_validate_scripts=false
+        local needs_worktree_identity=false
         if [[ "$target" == "codex" && ( "$raw_body" == *'{{effort_level}}'* || "$skill_name" == "validate" ) ]]; then
             needs_runtime_context=true
             new_body="$(portable_runtime_context_preamble)
 
 $new_body"
         fi
-        if [[ "$skill_name" == "select-project" ]]; then
+        # Content-gated, not name-gated: setup-repo and select-project (and
+        # any future skill) persist selections through the same command.
+        if [[ "$new_body" == *"node the plugin directory/lib/persist-project.js"* ]]; then
             needs_project_runtime=true
             new_body=$(printf '%s' "$new_body" | sed \
                 "s|node the plugin directory/lib/persist-project.js \"<selected-name>\"|node <skill-directory>/scripts/project-context-cli.js select \"<selected-name>\" --harness $(harness_name "$target")|")
@@ -902,7 +905,12 @@ $new_body"
             new_body=$(printf '%s' "$new_body" | sed \
                 's|node the plugin directory/lib/validation-session.js|node <skill-directory>/scripts/validation-session.js|g')
         fi
-        if [[ "$raw_body" == *'{{project_name}}'* || "$raw_body" == *'{{project_root}}'* || "$raw_body" == *'{{specs_dir}}'* || "$raw_body" == *'{{plans_dir}}'* ]]; then
+        if [[ "$new_body" == *"node the plugin directory/lib/worktree-identity.js"* ]]; then
+            needs_worktree_identity=true
+            new_body=$(printf '%s' "$new_body" | sed \
+                's|node the plugin directory/lib/worktree-identity.js|node <skill-directory>/scripts/worktree-identity.js|g')
+        fi
+        if [[ "$raw_body" == *'{{project_name}}'* || "$raw_body" == *'{{project_root}}'* || "$raw_body" == *'{{specs_dir}}'* || "$raw_body" == *'{{plans_dir}}'* || "$raw_body" == *'{{debug_dir}}'* || "$raw_body" == *'{{research_dir}}'* ]]; then
             needs_project_runtime=true
             new_body="$(portable_project_context_preamble "$(harness_name "$target")")
 
@@ -934,9 +942,11 @@ $new_body"
             if [[ "$target" == "codex" ]]; then
                 write_codex_agent "$runtime_dir/project-context-cli.js" "$(<"$SOURCE_DIR/lib/project-context-cli.js")" "project context runtime" "$dest_base"
                 write_codex_agent "$runtime_dir/project-context.js" "$(<"$SOURCE_DIR/lib/project-context.js")" "project context runtime" "$dest_base"
+                write_codex_agent "$runtime_dir/atomic-write.js" "$(<"$SOURCE_DIR/lib/atomic-write.js")" "project context runtime" "$dest_base"
             else
                 write_file "$runtime_dir/project-context-cli.js" "$(<"$SOURCE_DIR/lib/project-context-cli.js")" "project context runtime"
                 write_file "$runtime_dir/project-context.js" "$(<"$SOURCE_DIR/lib/project-context.js")" "project context runtime"
+                write_file "$runtime_dir/atomic-write.js" "$(<"$SOURCE_DIR/lib/atomic-write.js")" "project context runtime"
             fi
         fi
         if [[ "$needs_runtime_context" == true ]]; then
@@ -957,9 +967,24 @@ $new_body"
             if [[ "$target" == "codex" ]]; then
                 write_codex_agent "$session_dir/persist-unworked-findings.js" "$(<"$SOURCE_DIR/lib/persist-unworked-findings.js")" "unworked findings persistence helper" "$dest_base"
                 write_codex_agent "$session_dir/validation-session.js" "$(<"$SOURCE_DIR/lib/validation-session.js")" "validation session helper" "$dest_base"
+                write_codex_agent "$session_dir/atomic-write.js" "$(<"$SOURCE_DIR/lib/atomic-write.js")" "validation session helper" "$dest_base"
             else
                 write_file "$session_dir/persist-unworked-findings.js" "$(<"$SOURCE_DIR/lib/persist-unworked-findings.js")" "unworked findings persistence helper"
                 write_file "$session_dir/validation-session.js" "$(<"$SOURCE_DIR/lib/validation-session.js")" "validation session helper"
+                write_file "$session_dir/atomic-write.js" "$(<"$SOURCE_DIR/lib/atomic-write.js")" "validation session helper"
+            fi
+        fi
+        if [[ "$needs_worktree_identity" == true ]]; then
+            local identity_dir
+            identity_dir="$(dirname "$dest")/scripts"
+            if [[ "$target" == "codex" ]]; then
+                write_codex_agent "$identity_dir/worktree-identity.js" "$(<"$SOURCE_DIR/lib/worktree-identity.js")" "worktree identity helper" "$dest_base"
+                write_codex_agent "$identity_dir/project-context.js" "$(<"$SOURCE_DIR/lib/project-context.js")" "worktree identity helper" "$dest_base"
+                write_codex_agent "$identity_dir/atomic-write.js" "$(<"$SOURCE_DIR/lib/atomic-write.js")" "worktree identity helper" "$dest_base"
+            else
+                write_file "$identity_dir/worktree-identity.js" "$(<"$SOURCE_DIR/lib/worktree-identity.js")" "worktree identity helper"
+                write_file "$identity_dir/project-context.js" "$(<"$SOURCE_DIR/lib/project-context.js")" "worktree identity helper"
+                write_file "$identity_dir/atomic-write.js" "$(<"$SOURCE_DIR/lib/atomic-write.js")" "worktree identity helper"
             fi
         fi
         ((SKILL_COUNT++)) || true

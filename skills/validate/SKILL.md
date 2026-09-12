@@ -123,7 +123,7 @@ The **stable global ID** of a finding is `{agent_name}-iter{N}-{id}` (e.g. `code
 
 **Compact agent response** (single JSON line returned by each agent):
 ```json
-{"verdict":"approve","score":85,"summary":"One-sentence assessment","findings_file":"/tmp/groundwork-validation-XXXXXX/findings-code-quality-reviewer-iter1.json","counts":{"critical":0,"major":1,"minor":2}}
+{"verdict":"approve","score":85,"summary":"One-sentence assessment","findings_file":"<run_dir>/findings-code-quality-reviewer-iter1.json","counts":{"critical":0,"major":1,"minor":2}}
 ```
 
 This is the only thing the orchestrator parses from conversational responses. Semantic finding data comes from the coordinator-assigned artifact, never from reviewer prose.
@@ -172,7 +172,8 @@ node ${CLAUDE_PLUGIN_ROOT}/lib/validation-session.js open \
   --branch "<branch>" \
   --base-head "<base_sha>" \
   --protocol-version 1 \
-  <optional --runner-mode>
+  <optional --runner-mode> \
+  <optional --resume-run "<run_id>" — include on every re-open within this validation when you already hold the run_id from a prior open or your tracking notes. In runner mode, the phase prompt supplies RESUME VALIDATION SESSION=<run_id> (environment GROUNDWORK_VALIDATION_RUN_ID): pass that value here verbatim>
 ```
 
 Parse only the returned one-line JSON. Save `run_id`, `run_dir`, `findings_dir`, `stage`, `iteration`, and `coordinator_file`.
@@ -181,6 +182,8 @@ Parse only the returned one-line JSON. Save `run_id`, `run_dir`, `findings_dir`,
 - `resumed`: read the recorded coordinator file and continue from its recorded stage. Do not restart the initial audit or discard carried approvals.
 - `recovered`: confirm the prior fixer is no longer running, preserve the current worktree, read the recorded repair envelope, and rerun it. A `fixer-prepared` session resumes the same fixer scope without worktree comparison or restoration.
 - `completed`: replay the stored validation metrics and exact action/commit receipt, emit the normal final result, and stop without gates, reviewers, or fixers.
+
+**Ownership refusal:** if `open` fails with "already active", another orchestration holds a fresh session for this task/branch. Do not work around it: report `RESULT: FAILURE` with the helper's message (it names the holder's heartbeat and the exact `abandon --force` command). Only run `abandon --force` when the user confirms the other session is dead.
 
 An incomplete reviewer batch has no checkpoint. Rerun only the pending batch for the recorded stage and iteration, using the same assigned artifact names. You will pass `{findings_dir}/findings-{agent}-iter{N}.json` to every agent invocation and reference these files in step 4.2 and step 5.5. Retain the directory after completion.
 
@@ -198,8 +201,8 @@ validation_baseline: <frozen baseline summary>
 iterations:
   1:
     agent_files:
-      code-quality-reviewer: /tmp/groundwork-validation-XXXXXX/findings-code-quality-reviewer-iter1.json
-      security-reviewer:     /tmp/groundwork-validation-XXXXXX/findings-security-reviewer-iter1.json
+      code-quality-reviewer: <run_dir>/findings-code-quality-reviewer-iter1.json
+      security-reviewer:     <run_dir>/findings-security-reviewer-iter1.json
       ...
     findings_fixed: []     # populated after the fix-agent runs in this iteration
     findings_skipped: []
@@ -284,7 +287,7 @@ Also include the frozen `validation_baseline` and: "Read and follow the shared v
 **Each agent's compact response is a single JSON line** in this exact shape:
 
 ```json
-{"verdict":"approve","score":85,"summary":"One-sentence assessment","findings_file":"/tmp/groundwork-validation-XXXXXX/findings-code-quality-reviewer-iter1.json","counts":{"critical":0,"major":1,"minor":2}}
+{"verdict":"approve","score":85,"summary":"One-sentence assessment","findings_file":"<run_dir>/findings-code-quality-reviewer-iter1.json","counts":{"critical":0,"major":1,"minor":2}}
 ```
 
 The full review (including the `findings[]` array) lives only in the file at `findings_file`. Do not parse or expect the array in the agent's response.

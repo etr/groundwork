@@ -260,6 +260,27 @@ describe('ZCode marketplace bundle', () => {
     );
   });
 
+  test('ships the shared bash helpers the hook scripts source', () => {
+    if (bundle === null) return;
+    const hooksDir = path.join(bundle, 'hooks');
+    const hookScripts = fs.readdirSync(hooksDir).filter((name) => name.endsWith('.sh'));
+    assert.ok(hookScripts.length > 0, 'bundle shipped no hook scripts');
+    for (const name of hookScripts) {
+      const body = fs.readFileSync(path.join(hooksDir, name), 'utf8');
+      // Sourced helpers are referenced from script bodies, not hooks.json,
+      // so the copy logic must scan the scripts themselves.
+      const sourced = [...body.matchAll(/\.\s+"\$\{SCRIPT_DIR\}\/([A-Za-z0-9._-]+)"/g)].map(
+        (m) => m[1]
+      );
+      for (const helper of sourced) {
+        assert.ok(
+          fs.existsSync(path.join(hooksDir, helper)),
+          `hooks/${name} sources hooks/${helper} which is not in the bundle`
+        );
+      }
+    }
+  });
+
   test('carries the GLM wording and no Claude-Code-only artifacts', () => {
     if (bundle === null) return;
     const offenders = allFiles(bundle).filter((file) =>

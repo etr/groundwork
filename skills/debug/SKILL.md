@@ -82,7 +82,7 @@ digraph debugging {
     fix [label="FIX\nMinimal change\n+ failing test", shape=box, style=filled, fillcolor="#ccffcc"];
     verify [label="VERIFY\nProve it's fixed", shape=box, style=filled, fillcolor="#ccccff"];
     escalate [label="ESCALATE\nReport to human", shape=box, style=filled, fillcolor="#ffccee"];
-    journal [label="DEBUG JOURNAL\n.debug/{slug}.md", shape=note, style=filled, fillcolor="#f0f0f0"];
+    journal [label="DEBUG JOURNAL\n{{debug_dir}}/{slug}.md", shape=note, style=filled, fillcolor="#f0f0f0"];
 
     understand -> reproduce;
     reproduce -> isolate;
@@ -227,9 +227,9 @@ Form hypotheses. Make them falsifiable. Test them. Eliminate possibilities syste
 
 When dispatching subagents for parallel investigation:
 1. **Pass context forward** — Include files already read and findings so far in the subagent prompt, not just "investigate X"
-2. **Specify concrete actions** — "Run `pip install --target /tmp/test` and return the error output" not "explore the dependency setup"
+2. **Specify concrete actions** — "Run `pip install --target $(mktemp -d)` and return the error output" not "explore the dependency setup"
 3. **Require reproduction** — Subagents must execute the failing operation, not just read code
-4. **Reference the debug journal** — Tell the subagent to read `.debug/{slug}.md` first so it doesn't repeat prior work
+4. **Reference the debug journal** — Pass the **literal resolved journal path** (not the `{slug}` pattern) and tell the subagent to read it first so it doesn't repeat prior work
 5. **Validate findings** — If a subagent returns without direct evidence (only file reads, no command output), run the reproduction yourself before accepting its conclusions
 
 **One thing at a time:**
@@ -350,9 +350,20 @@ Revert all failed fix attempts. Leave the codebase clean.
 
 ## Debug Journal
 
-Maintain a persistent debug file at `.debug/{slug}.md`. This survives context compaction and provides continuity across sessions.
+Maintain a persistent debug file at `{{debug_dir}}/{slug}.md`. This survives context compaction and provides continuity across sessions.
 
-**Create the `.debug/` directory and file at the start of Phase 1.**
+`{{debug_dir}}` resolves inside the selected project's root (mirroring `{{plans_dir}}`), so the same bug slug in two monorepo projects produces two distinct journals instead of silently overwriting each other at the repository root.
+
+**Derive the slug once, at the start of Phase 1:** kebab-case of the bug's one-line description, truncated to 40 characters (e.g. "login timeout on token refresh" → `login-timeout-on-token-refresh`). Compute the resolved journal path from it, then use that **literal path** everywhere for the rest of the session — including in subagent prompts — so the path can never drift between derivations.
+
+**Create the directory, journal, and gitignore entry at the start of Phase 1:**
+```bash
+mkdir -p {{debug_dir}}
+grep -qxF '.debug/' .gitignore 2>/dev/null || printf '.debug/\n' >> .gitignore
+```
+The `.gitignore` pattern is unanchored, so it covers debug directories at any project depth; the append is idempotent.
+
+**One-time migration:** if a legacy journal for this slug exists at the unscoped repository-root location `.debug/{slug}.md` while `{{debug_dir}}` points elsewhere, move it into place with a single visible `mv .debug/{slug}.md {{debug_dir}}/{slug}.md` and say so — do not keep reading the legacy location.
 
 ```markdown
 # Debug: {slug}

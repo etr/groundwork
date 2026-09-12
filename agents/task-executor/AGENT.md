@@ -40,7 +40,7 @@ Follow the `use-git-worktree` skill instructions to create an isolated worktree:
 
 1. Determine the worktree directory (prefer `.worktrees/`)
 2. Ensure it is gitignored
-3. Create branch and worktree: `git worktree add -b task/TASK-NNN .worktrees/TASK-NNN`
+3. Create the branch and worktree exactly as that skill's Step 3 resolves them (it runs the shared worktree-identity helper): use the returned `path` and `branch` **verbatim** — they are project-qualified in monorepos (`task/<project>/TASK-NNN`, `<repo>/.worktrees/<project>-TASK-NNN`). Never derive `task/<identifier>` shapes by hand; a handcrafted unqualified branch can collide with another project's task.
 4. Run project setup (npm install, etc.)
 5. Verify baseline tests pass
 

@@ -127,19 +127,11 @@ describe('lib/utils.js', () => {
   test('exports required functions', () => {
     const utils = require('../lib/utils');
 
-    assert.ok(typeof utils.getTempDir === 'function', 'Should export getTempDir');
     assert.ok(typeof utils.readFile === 'function', 'Should export readFile');
     assert.ok(typeof utils.writeFile === 'function', 'Should export writeFile');
     assert.ok(typeof utils.log === 'function', 'Should export log');
   });
 
-  test('getTempDir returns valid path', () => {
-    const utils = require('../lib/utils');
-    const tempDir = utils.getTempDir();
-
-    assert.ok(typeof tempDir === 'string', 'Should return string');
-    assert.ok(tempDir.includes('claude-groundwork'), 'Should include plugin name');
-  });
 });
 
 describe('session-start selection scope', () => {
@@ -214,6 +206,126 @@ describe('session-start selection scope', () => {
       assert.ok(!envSecond.includes('assumed from the last selection'), envSecond);
     } finally {
       fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('shared state-dir resolution (hooks/state-dir-lib.sh)', () => {
+  const STATE_DIR_LIB = path.join(HOOKS_DIR, 'state-dir-lib.sh');
+
+  test('resolves through the node lib once and caches per process', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-statedir-'));
+    try {
+      const bin = path.join(tmp, 'bin');
+      fs.mkdirSync(bin);
+      const marker = path.join(tmp, 'node-spawned');
+      fs.writeFileSync(path.join(bin, 'node'), [
+        '#!/bin/sh',
+        `echo spawned >> ${JSON.stringify(marker)}`,
+        'echo /resolved/by-node',
+        '',
+      ].join('\n'));
+      fs.chmodSync(path.join(bin, 'node'), 0o755);
+      const result = spawnSync('bash', ['-c',
+        `. ${JSON.stringify(STATE_DIR_LIB)}; groundwork_resolve_state_dir; a="$_GW_STATE_DIR"; groundwork_resolve_state_dir; b="$_GW_STATE_DIR"; printf '%s\\n%s' "$a" "$b"`,
+      ], {
+        env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}` },
+        encoding: 'utf8',
+      });
+      assert.strictEqual(result.status, 0, result.stderr);
+      assert.strictEqual(result.stdout, '/resolved/by-node\n/resolved/by-node');
+      assert.strictEqual(fs.readFileSync(marker, 'utf8').trim().split('\n').length, 1,
+        'the resolver spawned node more than once — per-process caching is broken');
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test('falls back to the historical Claude Code location when node is unavailable', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-statedir-'));
+    try {
+      const bin = path.join(tmp, 'bin');
+      fs.mkdirSync(bin);
+      // A failing node models an unavailable one: empty output → fallback.
+      fs.writeFileSync(path.join(bin, 'node'), '#!/bin/sh\nexit 1\n');
+      fs.chmodSync(path.join(bin, 'node'), 0o755);
+      const home = path.join(tmp, 'home');
+      fs.mkdirSync(home);
+      const result = spawnSync('bash', ['-c',
+        `. ${JSON.stringify(STATE_DIR_LIB)}; groundwork_resolve_state_dir; printf '%s' "$_GW_STATE_DIR"`,
+      ], {
+        env: { ...process.env, HOME: home, PATH: `${bin}${path.delimiter}${process.env.PATH}` },
+        encoding: 'utf8',
+      });
+      assert.strictEqual(result.status, 0, result.stderr);
+      assert.strictEqual(result.stdout.trim(), path.join(home, '.claude', 'groundwork-state'));
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test('all four state-dir consumers source the shared helper, not a private copy', () => {
+    for (const hook of ['session-start.sh', 'pre-compact.sh', 'check-commit-alignment.sh', 'validate-agent-output.sh']) {
+      const body = fs.readFileSync(path.join(HOOKS_DIR, hook), 'utf8');
+      assert.ok(
+        body.includes('state-dir-lib.sh'),
+        `${hook} must source hooks/state-dir-lib.sh — a private resolution copy can drift`
+      );
+      assert.ok(
+        !body.includes('lib/state-dir.js'),
+        `${hook} must not resolve state-dir.js inline — resolution belongs to the shared helper`
+      );
+    }
+  });
+});
+
+describe('per-event hooks resolve the state dir lazily', () => {
+  // PostToolUse(Bash) and SubagentStop fire per tool call / per subagent; a
+  // node spawn there costs ~31ms on the hot path for a value only the rare
+  // error-logging branch consumes. The success path must be spawn-free.
+  function nodeShim(tmp) {
+    const bin = path.join(tmp, 'bin');
+    fs.mkdirSync(bin);
+    const marker = path.join(tmp, 'node-spawned');
+    fs.writeFileSync(path.join(bin, 'node'), [
+      '#!/bin/sh',
+      `echo spawned >> ${JSON.stringify(marker)}`,
+      'exit 1',
+      '',
+    ].join('\n'));
+    fs.chmodSync(path.join(bin, 'node'), 0o755);
+    return { bin, marker };
+  }
+
+  test('check-commit-alignment.sh early-exits on non-commit input without spawning node', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-lazy-'));
+    try {
+      const { bin, marker } = nodeShim(tmp);
+      const result = spawnSync('bash', [path.join(HOOKS_DIR, 'check-commit-alignment.sh')], {
+        env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}` },
+        input: JSON.stringify({ tool_input: { command: 'ls -la' }, tool_output: '' }),
+        encoding: 'utf8',
+      });
+      assert.strictEqual(result.status, 0, result.stderr);
+      assert.ok(!fs.existsSync(marker), 'node was spawned on the success path');
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test('validate-agent-output.sh early-exits on empty input without spawning node', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-lazy-'));
+    try {
+      const { bin, marker } = nodeShim(tmp);
+      const result = spawnSync('bash', [path.join(HOOKS_DIR, 'validate-agent-output.sh')], {
+        env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}` },
+        input: '',
+        encoding: 'utf8',
+      });
+      assert.strictEqual(result.status, 0, result.stderr);
+      assert.ok(!fs.existsSync(marker), 'node was spawned on the success path');
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
 });

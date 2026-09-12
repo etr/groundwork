@@ -70,6 +70,12 @@ function identity(repo) {
   };
 }
 
+// Sequential re-opens within one orchestration prove continuation by naming
+// the run they previously opened (see openValidationSession resumeRun).
+function resume(repo, session, extra = {}) {
+  return { ...identity(repo), resumeRun: session.state.runId, ...extra };
+}
+
 function coordinatorState(iteration = 1, reviewMode = 'initial-audit') {
   return {
     iteration,
@@ -108,7 +114,7 @@ test('creates and resumes one durable session for the same validation identity',
     assert.strictEqual(created.state.stage, 'initial-audit-pending');
     assert.ok(created.runDir.startsWith(repo.commonDir + path.sep));
 
-    const resumed = openValidationSession(identity(repo));
+    const resumed = openValidationSession(resume(repo, created));
     assert.strictEqual(resumed.status, 'resumed');
     assert.strictEqual(resumed.runDir, created.runDir);
     assert.strictEqual(resumed.state.runId, created.state.runId);
@@ -152,12 +158,12 @@ test('persists a completed review boundary without policing worktree changes', (
     assert.strictEqual(checkpoint.stage, 'review-batch-complete');
     assert.strictEqual(checkpoint.coordinatorFile, 'coordinator-iter1.json');
 
-    const resumed = openValidationSession(identity(repo));
+    const resumed = openValidationSession(resume(repo, created));
     assert.strictEqual(resumed.state.stage, 'review-batch-complete');
     assert.strictEqual(resumed.state.iteration, 1);
 
     write(path.join(repo.root, 'src.txt'), 'continued work\n');
-    const continued = openValidationSession(identity(repo));
+    const continued = openValidationSession(resume(repo, created));
     assert.strictEqual(continued.status, 'resumed');
     assert.strictEqual(continued.state.stage, 'review-batch-complete');
     assert.ok(!Object.hasOwn(continued.state, 'expectedTree'));
@@ -246,7 +252,7 @@ test('resumes an interrupted runner-owned fixer without snapshot or rollback', (
     write(path.join(repo.root, 'src.txt'), 'half fixed\n');
     write(path.join(repo.root, 'partial.txt'), 'unfinished\n');
 
-    const resumed = helper.openValidationSession({ ...identity(repo), runnerMode: true });
+    const resumed = helper.openValidationSession(resume(repo, session, { runnerMode: true }));
     assert.strictEqual(resumed.status, 'recovered');
     assert.strictEqual(resumed.state.stage, 'fixer-prepared');
     assert.strictEqual(resumed.recovery.action, 'rerun-fixer');
@@ -273,7 +279,7 @@ test('resumes an interrupted manual fixer without rollback authorization', () =>
     helper.beginFixerTransaction(session.runDir, { iteration: 1, envelopeFile });
     write(path.join(repo.root, 'src.txt'), 'half fixed\n');
 
-    const resumed = helper.openValidationSession(identity(repo));
+    const resumed = helper.openValidationSession(resume(repo, session));
     assert.strictEqual(resumed.status, 'recovered');
     assert.strictEqual(resumed.state.stage, 'fixer-prepared');
     assert.strictEqual(resumed.recovery.action, 'rerun-fixer');
@@ -371,7 +377,7 @@ test('records a completed fixer result without snapshotting the worktree', () =>
       []
     );
 
-    const resumed = helper.openValidationSession(identity(repo));
+    const resumed = helper.openValidationSession(resume(repo, session));
     assert.strictEqual(resumed.status, 'resumed');
     assert.strictEqual(resumed.state.stage, 'fixer-result-ready');
     assert.strictEqual(fs.readFileSync(path.join(repo.root, 'src.txt'), 'utf8'), 'fixed\n');
@@ -415,7 +421,7 @@ test('accepts one idempotent unworked-findings report after a completion-boundar
       `task-075_validation_${session.state.runId}.md`
     );
 
-    const resumed = helper.openValidationSession(identity(repo));
+    const resumed = helper.openValidationSession(resume(repo, session));
     assert.strictEqual(resumed.status, 'resumed');
     assert.strictEqual(resumed.state.stage, 'review-batch-complete');
   } finally {

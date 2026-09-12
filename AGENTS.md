@@ -116,11 +116,19 @@ Hooks are defined in `hooks/hooks.json` and use `${CLAUDE_PLUGIN_ROOT}` for port
 | `lib/detect-project-state.js` | Detects specs/monorepo structure at SessionStart |
 | `lib/spec-router.js`, `lib/specs-io.js` | Locate and read spec/architecture/task files |
 | `lib/inject-specs.js` | Extracts features/NFRs/decisions from specs into context |
-| `lib/resolve-template-vars.js` | Resolves `{{specs_dir}}` etc. in skill bodies (PostToolUse) |
+| `lib/resolve-template-vars.js` | Resolves `{{specs_dir}}`, `{{plans_dir}}`, `{{debug_dir}}`, `{{research_dir}}` etc. in skill bodies (PostToolUse) |
 | `lib/persist-project.js`, `lib/persist-unworked-findings.js` | Persist project + validation state (per terminal pane where pane identity exists; per-chat snapshots + labeled workspace default in pane-less UIs like ZCode) |
+| `lib/atomic-write.js` | Shared tmp+fsync+rename writes for anything a concurrent reader can observe |
+| `lib/state-dir.js` | Prints the harness-resolved state directory so bash hooks/statusline cannot diverge from Node writers |
+| `lib/worktree-identity.js` | Single source of truth for task worktree paths and branch names (project-qualified in monorepos); CLI for skills, factory for the runner |
+| `lib/plan-check.js` | Verifies a legacy repo-root plan's recorded project before adoption |
 | `lib/transform-agents.js` | Rewrites `Agent()` calls when exporting skills to other harnesses |
 | `lib/filter-zcode-hooks.js` | Filters hooks.json to the hook events ZCode supports (marketplace bundle) |
 | `lib/utils.js` | Shared helpers |
+
+### Path safety
+
+Files produced by skills follow three invariants, enforced repo-wide by `tests/path-safety.test.js` (see `docs/developing-skills.md` → "Path Safety" for the full rules and the reserved-dirs table): artifacts keyed on per-project identifiers are project-scoped via template variables; run-keyed artifacts carry uniqueness suffixes; and shared "active" pointers use O_EXCL locks with staleness recovery (as in `lib/validation-session.js`).
 
 ## Multi-target installation
 

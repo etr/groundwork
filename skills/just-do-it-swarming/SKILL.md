@@ -107,8 +107,8 @@ Each task runs in a **separate teammate session** with its own context window:
 ### Worktree Isolation
 
 Each task also executes in an isolated git worktree:
-- Branch: `task/TASK-NNN` created from current HEAD
-- Working directory: `.worktrees/TASK-NNN`
+- Branch and working directory: resolved per task via the worktree-identity helper (`node ${CLAUDE_PLUGIN_ROOT}/lib/worktree-identity.js TASK-NNN`) — project-qualified in monorepos (`task/<project>/TASK-NNN`, `<repo>/.worktrees/<project>-TASK-NNN`)
+- Branch created from current HEAD
 - Changes merged automatically after each task completes successfully
 - Worktrees cleaned up after successful merge
 
@@ -227,7 +227,7 @@ Create an agent team. Then for each remaining task in dependency order:
 
 10. **Log result:** "Completed TASK-NNN: [Title] — [one-line summary]"
 
-**On Failure:** Report the failed task, reason, tasks completed this session, and tasks remaining. Note that the failed task's worktree is preserved at `.worktrees/TASK-NNN` for investigation. Clean up the team.
+**On Failure:** Report the failed task, reason, tasks completed this session, and tasks remaining. Note that the failed task's worktree is preserved at its reported `<worktree_path>` for investigation. Clean up the team.
 
 #### Parallel Mode (`--parallel`)
 

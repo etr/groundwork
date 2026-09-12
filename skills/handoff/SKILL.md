@@ -38,11 +38,11 @@ Note paths to PRDs, plans (`.groundwork-plans/`), ADRs, specs, and any issue/PR 
 
 ### 2. Compose the document
 
-Write to a temp path **outside the repo**, slug derived from the focus:
+Write to a temp path **outside the repo**, slug derived from the focus plus a per-invocation uniqueness suffix (timestamp + PID) so two concurrent handoffs — including two default-argument invocations from different chats — can never overwrite each other:
 
 ```bash
 SLUG=$(echo "${ARGUMENTS:-session}" | tr '[:upper:] ' '[:lower:]-' | tr -cd 'a-z0-9-' | cut -c1-40)
-OUT="${TMPDIR:-/tmp}/groundwork-handoff-${SLUG}.md"
+OUT="${TMPDIR:-/tmp}/groundwork-handoff-${SLUG}-$(date +%Y%m%d%H%M%S)-$$.md"
 ```
 
 The document has exactly these sections:

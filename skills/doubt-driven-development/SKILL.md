@@ -44,7 +44,7 @@ A skeptic who lists zero failure modes is not trying. Push until you have real o
 
 ### 3. Demand evidence per doubt
 
-Each doubt is cleared only by concrete evidence — a **test**, a **doc/spec**, or a **spike** (throwaway experiment against real-ish data). "I'm pretty sure" does not clear a doubt. If clearing a doubt requires a behavior, write the failing test first ([[test-driven-development]]) so the evidence is durable.
+Each doubt is cleared only by concrete evidence — a **test**, a **doc/spec**, or a **spike** (throwaway experiment against real-ish data). "I'm pretty sure" does not clear a doubt. If clearing a doubt requires a behavior, write the failing test first ([[test-driven-development]]) so the evidence is durable. Spike code lives in the task worktree (or a scratch worktree via [[use-git-worktree]]) and is never committed — never in the shared workspace, where it pollutes other work.
 
 ### 4. Resolve: clear, refute, or escalate
 

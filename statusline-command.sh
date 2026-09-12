@@ -185,21 +185,30 @@ if [ -f "${gw_root}/.groundwork.yml" ]; then
         # repo-hash key (the current format, written when the selecting
         # process had no pane identity, e.g. sandboxed Bash) and the legacy
         # cwd-hash key (state written by older versions); pick the newest.
-        gw_repo_slug=$(echo "$gw_main_root" | sed 's|/|_|g')
-        gw_primary_file="$HOME/.claude/groundwork-state/panes/${gw_pane_key}__${gw_repo_slug}.json"
-        gw_repo_file="$HOME/.claude/groundwork-state/panes/${gw_repo_hash_key}__${gw_repo_slug}.json"
-        gw_fallback_file="$HOME/.claude/groundwork-state/panes/${gw_cwd_hash_key}__${gw_repo_slug}.json"
+        # The base honors CLAUDE_CONFIG_DIR so the reader can never diverge
+        # from the Node writer (lib/state-dir.js's claude branch). Both slug
+        # encodings are checked: the current percent-encoded form and the
+        # legacy '/':'_' form written by older versions.
+        gw_state_base="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/groundwork-state"
+        gw_repo_slug=$(echo "$gw_main_root" | sed 's|%|%25|g; s|/|%2F|g')
+        gw_repo_slug_legacy=$(echo "$gw_main_root" | sed 's|/|_|g')
 
+        # Candidate set: 2 slug encodings x 3 pane keys, slug-major and
+        # key-minor, newest timestamp wins (last wins on ties). Only existing
+        # candidates cost a jq read.
         gw_chosen_file=""
         gw_chosen_ts=0
-        for gw_candidate in "$gw_primary_file" "$gw_repo_file" "$gw_fallback_file"; do
-            [ -f "$gw_candidate" ] || continue
-            gw_ts=$(jq -r '.timestamp // 0' "$gw_candidate" 2>/dev/null)
-            [ -z "$gw_ts" ] && gw_ts=0
-            if [ "$gw_ts" -ge "$gw_chosen_ts" ]; then
-                gw_chosen_file="$gw_candidate"
-                gw_chosen_ts="$gw_ts"
-            fi
+        for gw_slug in "$gw_repo_slug" "$gw_repo_slug_legacy"; do
+            for gw_key in "$gw_pane_key" "$gw_repo_hash_key" "$gw_cwd_hash_key"; do
+                gw_candidate="${gw_state_base}/panes/${gw_key}__${gw_slug}.json"
+                [ -f "$gw_candidate" ] || continue
+                gw_ts=$(jq -r '.timestamp // 0' "$gw_candidate" 2>/dev/null)
+                [ -z "$gw_ts" ] && gw_ts=0
+                if [ "$gw_ts" -ge "$gw_chosen_ts" ]; then
+                    gw_chosen_file="$gw_candidate"
+                    gw_chosen_ts="$gw_ts"
+                fi
+            done
         done
 
         if [ -n "$gw_chosen_file" ]; then
@@ -372,10 +381,16 @@ run_usage_refresh() {
     [ -z "$session_resets_at" ] && session_resets_at="$prev_session_reset"
     [ -z "$weekly_resets_at"  ] && weekly_resets_at="$prev_weekly_reset"
     if [ -n "$session_resets_at" ] || [ -n "$weekly_resets_at" ]; then
-        jq -n \
+        # Write through a temporary + rename so two concurrent statusline
+        # renders (one per terminal) can never interleave a torn file —
+        # mirrors the usage-cache write pattern above.
+        reset_tmp="${RESET_CACHE}.$$"
+        if jq -n \
             --arg session "$session_resets_at" \
             --arg weekly "$weekly_resets_at" \
-            '{session: $session, weekly: $weekly}' > "$RESET_CACHE" 2>/dev/null
+            '{session: $session, weekly: $weekly}' > "$reset_tmp" 2>/dev/null; then
+            mv "$reset_tmp" "$RESET_CACHE" 2>/dev/null || rm -f "$reset_tmp" 2>/dev/null
+        fi
     fi
 } 2>/dev/null
 

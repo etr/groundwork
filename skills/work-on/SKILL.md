@@ -53,8 +53,8 @@ If the user selects "Cancel — I'll switch first": output the switching command
    ## Task: [TASK-NNN] [Title]
 
    ### Execution Context
-   **Working Directory:** .worktrees/TASK-NNN
-   **Branch:** task/TASK-NNN
+   **Working Directory:** [run `node ${CLAUDE_PLUGIN_ROOT}/lib/worktree-identity.js <TASK-NNN>` and use its `path` value — project-qualified in monorepos]
+   **Branch:** [use the same helper output's `branch` value]
    **Base Branch:** [current branch]
 
    ## Implementation Plan
@@ -221,7 +221,7 @@ Use `AskUserQuestion` to ask:
 3. Merge: `git merge --no-ff <branch> -m "Merge <branch>: [Task Title]"`
 4. If success: Remove worktree and delete branch:
    ```bash
-   git worktree remove .worktrees/TASK-NNN
+   git worktree remove <worktree-path from the execution context>
    git branch -d <branch>
    ```
 5. If conflicts: Report conflicts and keep worktree for manual resolution
@@ -233,20 +233,20 @@ Report worktree location and manual merge instructions:
 ```markdown
 ## Implementation Complete in Worktree
 
-**Location:** .worktrees/TASK-NNN
-**Branch:** task/TASK-NNN
+**Location:** [worktree path from the execution context]
+**Branch:** [branch from the execution context]
 
 When ready to merge:
 ```bash
 git checkout [base-branch]
 git merge --no-ff <branch>
-git worktree remove .worktrees/TASK-NNN
+git worktree remove <worktree-path>
 git branch -d <branch>
 ```
 
 To continue working:
 ```bash
-cd .worktrees/TASK-NNN
+cd <worktree-path>
 ```
 ```
 
@@ -290,7 +290,7 @@ Task is blocked if `Blocked by:` lists any task not Complete.
 
 ### Final Checklist
 Before marking complete, verify ALL:
-- [ ] Working in worktree (`.worktrees/TASK-NNN`)
+- [ ] Working in the task worktree (path recorded from the worktree-identity helper)
 - [ ] Plan agent was used (not your own plan)
 - [ ] TDD was followed
 - [ ] All acceptance criteria verified

@@ -11,8 +11,14 @@
 #
 # Error Recovery: Uses defensive error handling to never break Claude Code sessions.
 
-# Error handling - log errors to debug file, never fail
-DEBUG_LOG="${HOME}/.claude/groundwork-state/hook-errors.log"
+# Error handling - log errors to debug file, never fail. State-directory
+# resolution lives in ONE shared spelling: hooks/state-dir-lib.sh. This hook
+# runs once per compaction event, so it resolves the directory eagerly.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+. "${SCRIPT_DIR}/state-dir-lib.sh"
+groundwork_resolve_state_dir
+STATE_DIR="$_GW_STATE_DIR"
+DEBUG_LOG="${STATE_DIR}/hook-errors.log"
 mkdir -p "$(dirname "$DEBUG_LOG")" 2>/dev/null || true
 
 log_error() {
@@ -21,11 +27,6 @@ log_error() {
 
 # Wrap main logic in function for error isolation
 main() {
-  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  PLUGIN_ROOT="$(dirname "$SCRIPT_DIR")"
-  STATE_DIR="${HOME}/.claude/groundwork-state"
-
-  mkdir -p "$STATE_DIR"
 
 # Read hook input from stdin and extract session_id
 INPUT_JSON=$(cat 2>/dev/null || echo '{}')
@@ -63,13 +64,7 @@ if [ -f "${POTENTIAL_TODO_FILE}" ]; then
 fi
 
 # Check for skill context file
-SKILL_CONTEXT_FILE="${STATE_DIR}/current-skill.txt"
-if [ -f "$SKILL_CONTEXT_FILE" ]; then
-  CURRENT_SKILL=$(cat "$SKILL_CONTEXT_FILE" 2>/dev/null || echo "")
-  if [ -n "$CURRENT_SKILL" ]; then
-    CONTEXT_ITEMS+=("Active skill: $CURRENT_SKILL")
-  fi
-fi
+# (No writer exists for current-skill.txt; the historical read was removed.)
 
 # Check for active project context from session file
 if [ -n "$SESSION_ID" ] && [ -f "${PLUGIN_ROOT}/lib/project-context.js" ]; then
@@ -110,13 +105,16 @@ if [ ${#CONTEXT_ITEMS[@]} -gt 0 ]; then
   CONTEXT_STR=$(printf "%s\n" "${CONTEXT_ITEMS[@]}" | tr '\n' '; ')
   CONTEXT_STR="${CONTEXT_STR%%; }"
 
-  # Persist state to file for session-start restoration (session-specific)
+  # Persist state to file for session-start restoration (session-specific).
+  # Without a session id there is no key the post-compaction reader could
+  # match; a shared fallback file would let concurrent sessions clobber each
+  # other's preserved context, so skip and warn instead.
   if [ -n "$SESSION_ID" ]; then
     PRESERVED_STATE_FILE="${STATE_DIR}/preserved-context-${SESSION_ID}.txt"
+    echo "$CONTEXT_STR" > "$PRESERVED_STATE_FILE" 2>/dev/null || true
   else
-    PRESERVED_STATE_FILE="${STATE_DIR}/preserved-context.txt"
+    log_error "No session id available; skipping preserved-context persistence"
   fi
-  echo "$CONTEXT_STR" > "$PRESERVED_STATE_FILE" 2>/dev/null || true
 
   cat << EOF
 {

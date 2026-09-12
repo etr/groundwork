@@ -76,7 +76,7 @@ If the user selects "Cancel — I'll switch first": output the switching command
 Parse input from the caller's conversation context. Three modes:
 
 - **plan_file_path provided** → Read the plan file header to extract `Identifier`, `Mode`, `Branch prefix`, `Tasks path`.
-- **task_id only** (no plan_file_path) → Derive path `{{plans_dir}}/TASK-NNN-plan.md` (project-scoped, mirroring `{{specs_dir}}`). If it does not exist and the project root differs from the repository root, also check the legacy unscoped location `.groundwork-plans/TASK-NNN-plan.md` at the repository root. If neither exists, output `RESULT: FAILURE | No plan found for TASK-NNN. Run plan-task first.` and stop.
+- **task_id only** (no plan_file_path) → Derive path `{{plans_dir}}/TASK-NNN-plan.md` (project-scoped, mirroring `{{specs_dir}}`). If it does not exist and the project root differs from the repository root, also check the legacy unscoped location `.groundwork-plans/TASK-NNN-plan.md` at the repository root — but before adopting it, verify its `## Context` header: the recorded `Specs dir:`/`Tasks path:` must point inside the selected project's tree (a legacy repo-root plan can belong to a different project, since task IDs are only unique per project). If the header names another project, output `RESULT: FAILURE | Legacy plan at the repository root belongs to a different project. Re-run plan-task for this project.` and stop. If neither location exists, output `RESULT: FAILURE | No plan found for TASK-NNN. Run plan-task first.` and stop.
 - **task_id + plan_file_path** → Use the provided plan file path. Verify it exists.
 - **Neither** → Output `RESULT: FAILURE | No plan_file_path or task_id provided. Run plan-task first.` and stop.
 

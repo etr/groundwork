@@ -73,7 +73,7 @@ UNDERSTAND → REPRODUCE → ISOLATE (SWARM) → FIX → VERIFY
      └────────────┴────────────┴───────────────┴───────┘
                          │
                    DEBUG JOURNAL
-                .debug/{slug}.md
+              {{debug_dir}}/{slug}.md
 ```
 
 ## Phase 1: UNDERSTAND
@@ -82,7 +82,7 @@ Follow the `groundwork:debug` skill's Phase 1 exactly.
 
 Read the system. Check your assumptions. Don't touch anything yet. Trace the code path from input to failure. For multi-component systems, instrument at each boundary before forming hypotheses.
 
-Create the debug journal at `.debug/{slug}.md` during this phase.
+Create the debug journal at `{{debug_dir}}/{slug}.md` during this phase, following the `groundwork:debug` skill's journal discipline: derive the slug once (kebab-case of the bug's one-line description, max 40 chars), create the directory with the idempotent `.debug/` gitignore append, migrate any legacy repository-root journal into place with one visible `mv`, and pass the literal resolved journal path to every hypothesis agent.
 
 ## Phase 2: REPRODUCE
 
@@ -229,7 +229,7 @@ When escalating after swarm debugging, include **all teammate findings** in the 
 
 ## Debug Journal — Swarm Extension
 
-Use the same `.debug/{slug}.md` format as the debug skill, with an additional `## Swarm Evidence` section:
+Use the same `{{debug_dir}}/{slug}.md` format as the debug skill, with an additional `## Swarm Evidence` section:
 
 ```markdown
 # Debug: {slug}

@@ -4,8 +4,15 @@
 # Error Recovery: This hook uses defensive error handling to ensure it never
 # breaks Claude Code sessions. All errors are logged rather than causing exit.
 
-# Error handling - log errors to debug file, never fail
-DEBUG_LOG="${HOME}/.claude/groundwork-state/hook-errors.log"
+# Error handling - log errors to debug file, never fail. State-directory
+# resolution lives in ONE shared spelling: hooks/state-dir-lib.sh. This hook
+# runs once per session event and already spawns node, so it resolves the
+# directory eagerly.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+. "${SCRIPT_DIR}/state-dir-lib.sh"
+groundwork_resolve_state_dir
+STATE_DIR="$_GW_STATE_DIR"
+DEBUG_LOG="${STATE_DIR}/hook-errors.log"
 mkdir -p "$(dirname "$DEBUG_LOG")" 2>/dev/null || true
 
 log_error() {
@@ -14,9 +21,6 @@ log_error() {
 
 # Wrap main logic in function for error isolation
 main() {
-  # Determine plugin root directory
-  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-  PLUGIN_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 # GNU timeout is not stock on macOS (gtimeout only exists with coreutils).
 # Degrade to an unguarded invocation rather than skipping the call: a missing
@@ -38,10 +42,6 @@ guarded_node() {
     "$@"
   fi
 }
-
-# State directory for session restoration
-STATE_DIR="${HOME}/.claude/groundwork-state"
-mkdir -p "$STATE_DIR" 2>/dev/null || true
 
 # Read session_id from hook stdin JSON (Claude Code provides this)
 HOOK_INPUT=$(cat)
@@ -114,11 +114,12 @@ fi
 # ============================================
 restored_state=""
 
-# Try session-specific preserved context first, then fall back to legacy
+# Preserved context is per-session; without a session id there is no key to
+# look up (and pre-compact no longer writes a shared fallback file).
 if [ -n "$SESSION_ID" ]; then
   PRESERVED_STATE_FILE="${STATE_DIR}/preserved-context-${SESSION_ID}.txt"
 else
-  PRESERVED_STATE_FILE="${STATE_DIR}/preserved-context.txt"
+  PRESERVED_STATE_FILE=""
 fi
 
 if [ -f "$PRESERVED_STATE_FILE" ]; then
@@ -224,7 +225,7 @@ template_vars=""
 template_vars=$(GROUNDWORK_PROJECT="$project_name" GROUNDWORK_SESSION_ID="$SESSION_ID" guarded_node 2 node -e "
   const path = require('path');
   const {getEffortLevel} = require('${PLUGIN_ROOT}/lib/skills-core');
-  const {getSpecsDir, getPlansDir, getProjectRoot, getProjectName, getRepoRoot} = require('${PLUGIN_ROOT}/lib/project-context');
+  const {getSpecsDir, getPlansDir, getDebugDir, getResearchDir, getProjectRoot, getProjectName, getRepoRoot} = require('${PLUGIN_ROOT}/lib/project-context');
   const rl = getRepoRoot() || process.cwd();
   const pr = getProjectRoot();
   const rpr = pr === rl ? '.' : path.relative(rl, pr);
@@ -232,6 +233,8 @@ template_vars=$(GROUNDWORK_PROJECT="$project_name" GROUNDWORK_SESSION_ID="$SESSI
     '- {{effort_level}} = ' + getEffortLevel(),
     '- {{specs_dir}} = ' + getSpecsDir(),
     '- {{plans_dir}} = ' + getPlansDir(),
+    '- {{debug_dir}} = ' + getDebugDir(),
+    '- {{research_dir}} = ' + getResearchDir(),
     '- {{project_root}} = ' + rpr,
     '- {{project_name}} = ' + getProjectName()
   ].join('\n'));

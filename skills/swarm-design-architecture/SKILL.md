@@ -63,7 +63,7 @@ LOAD CONTEXT → IDENTIFY DECISIONS → RESEARCH SWARM → ITERATE DECISIONS →
       └────────────────┴───────────────────┴──────────────────┴──────────────┴───────────┘
                                            │
                                    RESEARCH JOURNAL
-                              .architecture/{slug}-research.md
+                              {{research_dir}}/{slug}-research.md
 ```
 
 ## Step 0: Resolve Project Context
@@ -308,7 +308,20 @@ Aggregate all advocate findings into a comparison table per decision area:
 
 ### 3.7 — Persist Research Journal
 
-Write findings to `.architecture/{slug}-research.md`. This survives context compaction and documents the research for future reference.
+Write findings to `{{research_dir}}/{slug}-research.md`. This survives context compaction and documents the research for future reference.
+
+`{{research_dir}}` resolves inside the selected project's root (mirroring `{{plans_dir}}`), so the same feature slug in two monorepo projects produces two distinct research journals instead of silently overwriting each other at the repository root.
+
+**Derive the slug once:** kebab-case of the feature name, truncated to 40 characters. Compute the resolved journal path from it and use that **literal path** everywhere for the rest of the session — including in advocate-agent prompts and the Decision Record links in Step 5 — so the path can never drift between derivations.
+
+**Create the directory and gitignore entry before writing:**
+```bash
+mkdir -p {{research_dir}}
+grep -qxF '.architecture/' .gitignore 2>/dev/null || printf '.architecture/\n' >> .gitignore
+```
+The `.gitignore` pattern is unanchored, so it covers research directories at any project depth; the append is idempotent.
+
+Unlike debug journals, research journals get **no legacy fallback**: they are inputs to the current design session, not long-lived state. If a journal is missing, the advocates re-research that area.
 
 ```markdown
 # Architecture Research: {Project/Feature Name}
@@ -368,7 +381,7 @@ Write the architecture document using the template in `${CLAUDE_PLUGIN_ROOT}/ref
 
 **Additional:** In each Decision Record, add a "Research" section linking to the research journal entry for that decision area:
 ```markdown
-**Research:** See `.architecture/{slug}-research.md` — {N} advocates evaluated {options list}
+**Research:** See `{{research_dir}}/{slug}-research.md` — {N} advocates evaluated {options list}
 ```
 
 ## Step 6: Suggest Next Step

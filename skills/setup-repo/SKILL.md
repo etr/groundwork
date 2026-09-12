@@ -32,7 +32,7 @@ If monorepo indicators were found, mention them:
 
 **If single project:**
 - No config file needed
-- Ensure `.groundwork-plans/` is in `.gitignore` (add it if missing) — plan-task writes per-task plan files there.
+- Ensure `.groundwork-plans/`, `.debug/`, and `.architecture/` are in `.gitignore` (add any missing entries) — plan-task, debug, and swarm-design-architecture write per-task working files there. All three patterns are unanchored, so they cover any depth.
 - Confirm: "Single-project mode. Specs will be stored in `specs/` at the repo root, plans in `.groundwork-plans/`."
 - Proceed — no `.groundwork.yml` created.
 
@@ -50,13 +50,19 @@ projects:
     path: <relative/path>
 ```
 
-4. Ensure `.groundwork.local` and `.groundwork-plans/` are in `.gitignore` (add any missing entries). Each project's plans live in `<project-path>/.groundwork-plans/`; the unanchored `.groundwork-plans/` entry covers every project, so no per-project entries are needed.
+4. Ensure `.groundwork.local`, `.groundwork-plans/`, `.debug/`, and `.architecture/` are in `.gitignore` (add any missing entries). Each project's plans live in `<project-path>/.groundwork-plans/` and its journals in `<project-path>/.debug/` and `<project-path>/.architecture/`; the unanchored entries cover every project, so no per-project entries are needed.
 5. Ask which project to start with using `AskUserQuestion`.
 6. Set project context: `GROUNDWORK_PROJECT=<name>` and `GROUNDWORK_PROJECT_ROOT=<path>`
 
 ### Step 4: Persist Selection
 
-For monorepo mode, persist the selection to `.groundwork.local` at the repo root (gitignored) so it survives session restarts.
+For monorepo mode, persist the selection through the same mechanism `/groundwork:select-project` uses:
+
+```bash
+node ${CLAUDE_PLUGIN_ROOT}/lib/persist-project.js "<selected-name>"
+```
+
+This keys state per terminal pane (and pins a per-chat snapshot where hooks observe the selection), so concurrent sessions do not clobber each other. Do not write `.groundwork.local` by hand — it is a legacy format read only for one-time migration.
 
 Confirm: "Project **<name>** selected. Specs will be stored in `<path>/specs/`."
 

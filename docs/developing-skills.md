@@ -86,6 +86,33 @@ Show what good output looks like. Claude learns from examples.
 See the example at: references/example.md
 ```
 
+## Path Safety
+
+Skills produce files. Three invariants prevent the collision bug class where two projects (or two concurrent sessions) silently overwrite each other's artifacts — `tests/path-safety.test.js` enforces them repo-wide, so a violating skill fails CI:
+
+1. **Scope by the key that makes a name unique.** Task IDs, feature slugs, and bug slugs are only unique *per project*, so any artifact named after one must live under the project root — use the template variables, never a bare CWD-relative path. Run-keyed artifacts (handoffs, per-invocation outputs) must carry a uniqueness suffix (timestamp + PID, or the run id).
+2. **No fixed shared temp paths.** Run-scoped data never goes to a fixed `/tmp/groundwork-*` path; use `mktemp`/`mkdtemp` or the run-scoped directories the helpers provide.
+3. **Shared pointers are locked, not conventional.** Anything acting as an "active/current" pointer across processes needs an O_EXCL lock with staleness recovery (see `lib/validation-session.js`), not just a conventional filename.
+
+### Reserved directories (project-scoped template variables)
+
+| Variable | Directory | Written by |
+|----------|-----------|------------|
+| `{{specs_dir}}` | `<project>/specs` | design-product, design-architecture, ux-design, create-tasks, … |
+| `{{plans_dir}}` | `<project>/.groundwork-plans` | plan-task, just-do-it (read by implement-task) |
+| `{{debug_dir}}` | `<project>/.debug` | debug, swarm-debug (bug-slug journals; gitignored) |
+| `{{research_dir}}` | `<project>/.architecture` | swarm-design-architecture (feature-slug research; gitignored) |
+
+All four resolve through `lib/project-context.js` (exposed by the PostToolUse resolver, session-start bindings, and the portable `project-context-cli.js`) and are exported through `install-skills.sh`'s content gate — a new variable must be wired into all of those plus `tests/path-safety.test.js`, and a new reserved directory must be added to the gitignore entries `setup-repo` maintains.
+
+Worktrees and task branches must be resolved through `node ${CLAUDE_PLUGIN_ROOT}/lib/worktree-identity.js <task-id>` — never derived by hand in a skill. The helper is the same source of truth the terminal runner uses, so overlapping `TASK-NNN` identifiers across monorepo projects cannot collide in the one shared branch namespace.
+
+### Accepted boundaries (do not "fix" these casually)
+
+- **Single writer per project for fixed-name spec artifacts** (`architecture.md`, `glossary.md`, task status rows): two concurrent sessions in the *same* project may overwrite each other. This is the documented operating assumption; adding locks here would fight the collaborative-editing nature of spec files.
+- **Task claiming is the loud branch collision, not a marker.** We deliberately do not write claim markers into `specs/tasks.md` before dispatch: that file lives in the base checkout, and dirtying the base breaks the runner's clean-tree contracts. Two sessions picking the same task fail loudly at `git worktree add` (branch exists) and route into use-git-worktree's existing recovery.
+- **`split-specs`/`split-architecture` preflight races**: their "target directory must not exist" check is TOCTOU-unsafe in theory; they are interactive single-user conversions and the window is accepted.
+
 ## Skill Types
 
 ### Rigid Skills
