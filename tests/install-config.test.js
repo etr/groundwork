@@ -865,6 +865,44 @@ describe('exported project context runtime', () => {
     }
   });
 
+  test('rewrites the select-project selection scope for ZCode only', () => {
+    const zcodeRoot = runInstaller('zcode');
+    const codexRoot = runInstaller('codex');
+    if (zcodeRoot === null || codexRoot === null) return;
+    try {
+      // ZCode: every chat runs against one shared workspace selection, so the
+      // pane-scoped guidance must be rewritten to the conversation-scoped
+      // default (with the groundwork- prefixed skill names).
+      const zcodeSkill = fs.readFileSync(
+        path.join(zcodeRoot, '.zcode', 'skills', 'groundwork-select-project', 'SKILL.md'),
+        'utf8'
+      );
+      assert.ok(
+        zcodeSkill.includes('one shared workspace selection'),
+        'ZCode export missed the Selection scope rewrite'
+      );
+      assert.ok(zcodeSkill.includes('workspace-level default, not a per-chat fact'));
+      assert.ok(zcodeSkill.includes('Treat the selection as conversation-scoped'));
+      assert.ok(!zcodeSkill.includes('pane-scoped'), 'ZCode export kept pane-scoped guidance');
+      assert.ok(!zcodeSkill.includes('survives `/clear`'), 'ZCode export kept the /clear claim');
+
+      // Other flavors keep the source pane-scoped guidance untouched.
+      const codexSkill = fs.readFileSync(
+        path.join(codexRoot, '.codex', 'skills', 'groundwork-select-project', 'SKILL.md'),
+        'utf8'
+      );
+      assert.ok(codexSkill.includes('the selection is pane-scoped'));
+      assert.ok(codexSkill.includes('survives `/clear`'));
+      assert.ok(
+        !codexSkill.includes('one shared workspace selection'),
+        'Codex export picked up the ZCode-only rewrite'
+      );
+    } finally {
+      if (zcodeRoot !== null) fs.rmSync(zcodeRoot, { recursive: true, force: true });
+      if (codexRoot !== null) fs.rmSync(codexRoot, { recursive: true, force: true });
+    }
+  });
+
   test('codex context-aware skills bundle a resolver and explain placeholder binding', () => {
     const root = runInstaller('codex');
     if (root === null) return;

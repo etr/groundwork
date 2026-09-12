@@ -18,6 +18,27 @@ main() {
   SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
   PLUGIN_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
+# GNU timeout is not stock on macOS (gtimeout only exists with coreutils).
+# Degrade to an unguarded invocation rather than skipping the call: a missing
+# detector is worse than an unbounded one. The `|| fallback` error handling
+# elsewhere in this hook covers a genuinely hung invocation's empty output.
+TIMEOUT_BIN=""
+if command -v timeout &> /dev/null; then
+  TIMEOUT_BIN="timeout"
+elif command -v gtimeout &> /dev/null; then
+  TIMEOUT_BIN="gtimeout"
+fi
+
+# guarded_node <seconds> <node args...>
+guarded_node() {
+  local secs="$1"; shift
+  if [ -n "$TIMEOUT_BIN" ]; then
+    "$TIMEOUT_BIN" "$secs" "$@"
+  else
+    "$@"
+  fi
+}
+
 # State directory for session restoration
 STATE_DIR="${HOME}/.claude/groundwork-state"
 mkdir -p "$STATE_DIR" 2>/dev/null || true
@@ -28,6 +49,10 @@ SESSION_ID=$(echo "$HOOK_INPUT" | jq -r '.session_id // empty' 2>/dev/null)
 if [ -z "$SESSION_ID" ]; then
   # sed fallback if jq is not available
   SESSION_ID=$(echo "$HOOK_INPUT" | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
+fi
+if [ -z "$SESSION_ID" ]; then
+  # ZCode injects the session id as a hook environment variable
+  SESSION_ID="${CLAUDE_SESSION_ID}"
 fi
 
 # Legacy cleanup: the global session-id file and per-session state dir caused
@@ -111,11 +136,12 @@ specs_notice=""
 project_context=""
 
 if [ -f "${PLUGIN_ROOT}/lib/detect-project-state.js" ]; then
-  project_state=$(GROUNDWORK_SESSION_ID="$SESSION_ID" timeout 3 node "${PLUGIN_ROOT}/lib/detect-project-state.js" 2>/dev/null || echo '{}')
+  project_state=$(GROUNDWORK_SESSION_ID="$SESSION_ID" guarded_node 3 node "${PLUGIN_ROOT}/lib/detect-project-state.js" 2>/dev/null || echo '{}')
 
   # Parse project state JSON
   is_monorepo=$(echo "$project_state" | grep -o '"isMonorepo":true' | head -1)
   project_name=$(echo "$project_state" | sed -n 's/.*"projectName":"\([^"]*\)".*/\1/p')
+  selection_source=$(echo "$project_state" | sed -n 's/.*"selectionSource":"\([^"]*\)".*/\1/p')
   has_prd=$(echo "$project_state" | grep -o '"hasPRD":true' | head -1)
   has_arch=$(echo "$project_state" | grep -o '"hasArchitecture":true' | head -1)
   has_tasks=$(echo "$project_state" | grep -o '"hasTasks":true' | head -1)
@@ -146,8 +172,14 @@ fi
 
 # Generate suggestion message based on state
 if [ -n "$is_monorepo" ] && [ -n "$project_name" ]; then
-  # Monorepo with project selected
-  project_context="Project: ${project_name}. "
+  # Monorepo with project selected. A workspace-default restore comes from a
+  # selection scope shared across concurrent chats (no pane identity), so it
+  # must be surfaced as an assumption rather than a fact.
+  if [ "$selection_source" = "workspace-default" ]; then
+    project_context="Project: ${project_name} (assumed from the last selection in this workspace — concurrent chats share it and may have changed it; use /groundwork:select-project to switch). "
+  else
+    project_context="Project: ${project_name}. "
+  fi
   if $has_prd && $has_arch && $has_tasks; then
     specs_notice="\n\n**${project_context}PRD, Architecture, Tasks available.** Use /groundwork:work-on-next-task to work on the next task."
   elif $has_prd && $has_arch; then
@@ -181,7 +213,7 @@ specs_notice="${specs_notice}${gh_warning}${update_notice}${restored_state}"
 specs_content=""
 if $has_prd || $has_arch; then
   if [ -f "${PLUGIN_ROOT}/lib/inject-specs.js" ]; then
-    specs_content=$(GROUNDWORK_SESSION_ID="$SESSION_ID" timeout 3 node "${PLUGIN_ROOT}/lib/inject-specs.js" 2>/dev/null || echo '')
+    specs_content=$(GROUNDWORK_SESSION_ID="$SESSION_ID" guarded_node 3 node "${PLUGIN_ROOT}/lib/inject-specs.js" 2>/dev/null || echo '')
   fi
 fi
 
@@ -189,7 +221,7 @@ fi
 # Template Variable Resolution
 # ============================================
 template_vars=""
-template_vars=$(GROUNDWORK_PROJECT="$project_name" GROUNDWORK_SESSION_ID="$SESSION_ID" timeout 2 node -e "
+template_vars=$(GROUNDWORK_PROJECT="$project_name" GROUNDWORK_SESSION_ID="$SESSION_ID" guarded_node 2 node -e "
   const path = require('path');
   const {getEffortLevel} = require('${PLUGIN_ROOT}/lib/skills-core');
   const {getSpecsDir, getPlansDir, getProjectRoot, getProjectName, getRepoRoot} = require('${PLUGIN_ROOT}/lib/project-context');

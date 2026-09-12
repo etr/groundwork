@@ -136,7 +136,22 @@ if [ -f "${gw_root}/.groundwork.yml" ]; then
         gw_cwd_hash=$(printf '%s' "$cwd" | sha1_digest)
         gw_cwd_hash_key="cwd-${gw_cwd_hash:0:12}"
 
-        # 1. Resolve pane key
+        # 1. Resolve main repo root — the degraded pane state written by
+        # project-context.js is scoped by the main repository root (shared
+        # across worktrees), not the current directory.
+        gw_main_root="$gw_root"
+        gw_common_dir=$(git -C "$cwd" rev-parse --git-common-dir 2>/dev/null)
+        if [ -n "$gw_common_dir" ]; then
+            case "$gw_common_dir" in
+                /*) gw_abs_common="$gw_common_dir" ;;
+                *)  gw_abs_common=$(cd "$cwd" 2>/dev/null && cd "$gw_common_dir" 2>/dev/null && pwd) ;;
+            esac
+            [ -n "$gw_abs_common" ] && gw_main_root=$(dirname "$gw_abs_common")
+        fi
+        gw_repo_hash=$(printf '%s' "$gw_main_root" | sha1_digest)
+        gw_repo_hash_key="repo-${gw_repo_hash:0:12}"
+
+        # 2. Resolve pane key
         gw_pane_tty=""
         if [ -n "$TMUX_PANE" ]; then
             gw_pane_tty=$(tmux display-message -t "$TMUX_PANE" -p '#{pane_tty}' 2>/dev/null)
@@ -161,44 +176,31 @@ if [ -f "${gw_root}/.groundwork.yml" ]; then
         if [ -n "$gw_pane_tty" ] && [ "$gw_pane_tty" != "?" ]; then
             gw_pane_key=$(echo "$gw_pane_tty" | sed 's|^/dev/||; s|/|_|g')
         else
-            gw_pane_key="$gw_cwd_hash_key"
+            # Match project-context.js: without pane identity all processes of
+            # the harness share one repo-scoped degraded key.
+            gw_pane_key="$gw_repo_hash_key"
         fi
 
-        # 2. Resolve main repo root
-        gw_main_root="$gw_root"
-        gw_common_dir=$(git -C "$cwd" rev-parse --git-common-dir 2>/dev/null)
-        if [ -n "$gw_common_dir" ]; then
-            case "$gw_common_dir" in
-                /*) gw_abs_common="$gw_common_dir" ;;
-                *)  gw_abs_common=$(cd "$cwd" 2>/dev/null && cd "$gw_common_dir" 2>/dev/null && pwd) ;;
-            esac
-            [ -n "$gw_abs_common" ] && gw_main_root=$(dirname "$gw_abs_common")
-        fi
-
-        # 3. Look up pane state — check both tty-derived and cwd-hash files,
-        # pick the newer of the two. Handles the case where project-context.js
-        # (sandboxed) wrote cwd-<hash> while the statusline would otherwise
-        # resolve to pts_NN (or vice versa).
+        # 3. Look up pane state — check the tty-derived key plus the degraded
+        # repo-hash key (the current format, written when the selecting
+        # process had no pane identity, e.g. sandboxed Bash) and the legacy
+        # cwd-hash key (state written by older versions); pick the newest.
         gw_repo_slug=$(echo "$gw_main_root" | sed 's|/|_|g')
         gw_primary_file="$HOME/.claude/groundwork-state/panes/${gw_pane_key}__${gw_repo_slug}.json"
+        gw_repo_file="$HOME/.claude/groundwork-state/panes/${gw_repo_hash_key}__${gw_repo_slug}.json"
         gw_fallback_file="$HOME/.claude/groundwork-state/panes/${gw_cwd_hash_key}__${gw_repo_slug}.json"
 
         gw_chosen_file=""
-        if [ "$gw_pane_key" = "$gw_cwd_hash_key" ]; then
-            [ -f "$gw_primary_file" ] && gw_chosen_file="$gw_primary_file"
-        elif [ -f "$gw_primary_file" ] && [ -f "$gw_fallback_file" ]; then
-            ts_primary=$(jq -r '.timestamp // 0' "$gw_primary_file" 2>/dev/null)
-            ts_fallback=$(jq -r '.timestamp // 0' "$gw_fallback_file" 2>/dev/null)
-            if [ "${ts_fallback:-0}" -gt "${ts_primary:-0}" ]; then
-                gw_chosen_file="$gw_fallback_file"
-            else
-                gw_chosen_file="$gw_primary_file"
+        gw_chosen_ts=0
+        for gw_candidate in "$gw_primary_file" "$gw_repo_file" "$gw_fallback_file"; do
+            [ -f "$gw_candidate" ] || continue
+            gw_ts=$(jq -r '.timestamp // 0' "$gw_candidate" 2>/dev/null)
+            [ -z "$gw_ts" ] && gw_ts=0
+            if [ "$gw_ts" -ge "$gw_chosen_ts" ]; then
+                gw_chosen_file="$gw_candidate"
+                gw_chosen_ts="$gw_ts"
             fi
-        elif [ -f "$gw_primary_file" ]; then
-            gw_chosen_file="$gw_primary_file"
-        elif [ -f "$gw_fallback_file" ]; then
-            gw_chosen_file="$gw_fallback_file"
-        fi
+        done
 
         if [ -n "$gw_chosen_file" ]; then
             gw_project=$(jq -r '.project // empty' "$gw_chosen_file" 2>/dev/null)

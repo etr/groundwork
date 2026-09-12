@@ -482,6 +482,7 @@ transform_body() {
             -e 's|All required skills (\(.*\)) are preloaded into your context — you do NOT need to call `Skill()` to load them. Follow the skill instructions directly.|Required skills are not preloaded in this harness: load each via the Skill tool before starting (each is installed with the groundwork- prefix: \1), then follow the skill instructions directly.|' \
             -e 's|The `\([a-z-]*\)` skill is preloaded into your context — you do NOT need to call `Skill()` to load it. Follow the skill instructions directly.|The \1 skill is not preloaded in this harness: load it via the Skill tool before starting (installed as groundwork-\1), then follow the skill instructions directly.|' \
             -e 's|— you have all skills preloaded|— load any skills you need via the Skill tool|g' \
+            -e 's|^Selection scope: .*|Selection scope: this harness runs every chat against one shared workspace selection — the persisted selection is a workspace-level default, not a per-chat fact. Treat the selection as conversation-scoped: state the active project in your reply, and pass it explicitly on later invocations (`--project <name>` where groundwork-plan-task, groundwork-implement-task, and groundwork-validate support it, or `GROUNDWORK_PROJECT=<name>` for lib scripts).|' \
             -e 's| AND you are Sonnet or Opus\.|.|' \
             -e 's| AND you are Opus (1M context)\.|.|' \
             -e '/^If you are not Sonnet or Opus, you MUST show the recommendation prompt/d' \

@@ -12,6 +12,9 @@ const { execFileSync, spawnSync } = require('child_process');
 
 const PLUGIN_ROOT = path.resolve(__dirname, '..');
 const CLI = path.join(PLUGIN_ROOT, 'lib', 'project-context-cli.js');
+const LIB = path.join(PLUGIN_ROOT, 'lib', 'project-context.js');
+const DETECT = path.join(PLUGIN_ROOT, 'lib', 'detect-project-state.js');
+const PIN_HOOK = path.join(PLUGIN_ROOT, 'hooks', 'pin-session-selection.sh');
 
 let passed = 0;
 let failed = 0;
@@ -47,12 +50,47 @@ function makeMonorepo() {
   return root;
 }
 
+// Monorepo with several named projects (entries: [name, relative path]).
+function makeMultiMonorepo(...entries) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-context-'));
+  const lines = ['version: 1', 'projects:'];
+  const paths = {};
+  for (const [name, rel] of entries) {
+    fs.mkdirSync(path.join(root, rel, 'specs'), { recursive: true });
+    lines.push(`  ${name}:`, `    path: ${rel}`);
+    paths[name] = path.join(root, rel);
+  }
+  lines.push('');
+  fs.writeFileSync(path.join(root, '.groundwork.yml'), lines.join('\n'));
+  execFileSync('git', ['init', '-q'], { cwd: root });
+  return { root, paths };
+}
+
+// Shim `ps` so getPaneKey()'s TTY walk is deterministic: the shim answers
+// every query with the given TTY string ('??' = macOS no-terminal marker).
+function psShim(dir, ttyOutput) {
+  const bin = path.join(dir, 'shim-bin');
+  fs.mkdirSync(bin, { recursive: true });
+  const shim = path.join(bin, 'ps');
+  fs.writeFileSync(shim, `#!/bin/sh\necho '${ttyOutput}'\n`);
+  fs.chmodSync(shim, 0o755);
+  return bin;
+}
+
+// Run a node -e snippet against the lib and parse its JSON output.
+function nodeJson(cwd, env, code, args = []) {
+  return JSON.parse(execFileSync('node', ['-e', code, ...args], {
+    cwd, env, encoding: 'utf8',
+  }));
+}
+
 function cleanEnv(home) {
   const env = { ...process.env, HOME: home };
   for (const name of [
     'CODEX_HOME', 'CLAUDE_CONFIG_DIR', 'OPENCODE_CONFIG_DIR',
     'XDG_CONFIG_HOME', 'KIRO_HOME', 'PI_HOME', 'TMUX', 'TMUX_PANE',
-    'TERM_SESSION_ID', 'CODEX_THREAD_ID'
+    'TERM_SESSION_ID', 'CODEX_THREAD_ID', 'GROUNDWORK_SESSION_ID',
+    'CLAUDE_SESSION_ID', 'GROUNDWORK_HARNESS'
   ]) delete env[name];
   return env;
 }
@@ -426,6 +464,380 @@ describe('project context CLI', () => {
         cwd: repo, env, encoding: 'utf8',
       });
       assert.strictEqual(fs.existsSync(marker), false);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('selection scope capability gating (pane-less harnesses)', () => {
+  const IDENTITY = `const pc = require(${JSON.stringify(LIB)}); console.log(JSON.stringify({ key: pc.getPaneKey(), pane: pc.hasPaneIdentity() }))`;
+
+  function restoreSnippet(sid) {
+    return `const pc = require(${JSON.stringify(LIB)}); console.log(JSON.stringify(pc.restoreSelection(${JSON.stringify(sid)})))`;
+  }
+
+  function pinSnippet(sid, name, projectPath) {
+    return `const pc = require(${JSON.stringify(LIB)}); pc.persistSessionSelection(${JSON.stringify(sid)}, ${JSON.stringify(name)}, ${JSON.stringify(projectPath)})`;
+  }
+
+  test('BSD ?? marker is rejected and degrades to a repo-scoped key without pane identity', () => {
+    const repo = makeMonorepo();
+    const home = path.join(repo, 'home');
+    fs.mkdirSync(home);
+    const env = cleanEnv(home);
+    env.PATH = `${psShim(repo, '??')}${path.delimiter}${env.PATH}`;
+
+    try {
+      const identity = nodeJson(repo, env, IDENTITY);
+      assert.strictEqual(identity.pane, false);
+      assert.ok(identity.key.startsWith('repo-'), `unexpected key ${identity.key}`);
+      assert.ok(!identity.key.startsWith('??'), 'literal ?? must never be a pane key');
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  test('degraded pane key is invariant across cwds inside the repository', () => {
+    const repo = makeMonorepo();
+    const home = path.join(repo, 'home');
+    fs.mkdirSync(home);
+    const env = cleanEnv(home);
+    env.PATH = `${psShim(repo, '??')}${path.delimiter}${env.PATH}`;
+
+    try {
+      // The degraded key must hash the repository root, not process.cwd():
+      // a selection made at the repo root and a skill invocation from a
+      // project subdirectory have to land on the same workspace-default key.
+      const fromRoot = nodeJson(repo, env, IDENTITY);
+      const fromProject = nodeJson(path.join(repo, 'apps', 'web'), env, IDENTITY);
+      assert.strictEqual(fromRoot.pane, false);
+      assert.strictEqual(fromProject.pane, false);
+      assert.ok(fromRoot.key.startsWith('repo-'), `unexpected key ${fromRoot.key}`);
+      assert.strictEqual(
+        fromRoot.key,
+        fromProject.key,
+        `degraded key must hash the repo root, not the cwd (${fromRoot.key} vs ${fromProject.key})`
+      );
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  test('a real TTY still provides pane identity', () => {
+    const repo = makeMonorepo();
+    const home = path.join(repo, 'home');
+    fs.mkdirSync(home);
+    const env = cleanEnv(home);
+    env.PATH = `${psShim(repo, 'ttys005')}${path.delimiter}${env.PATH}`;
+
+    try {
+      const identity = nodeJson(repo, env, IDENTITY);
+      assert.strictEqual(identity.pane, true);
+      assert.strictEqual(identity.key, 'ttys005');
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  test('tmux identity provides pane identity', () => {
+    const repo = makeMonorepo();
+    const home = path.join(repo, 'home');
+    fs.mkdirSync(home);
+    const env = cleanEnv(home);
+    env.TMUX = '/tmp/tmux-test/default,123,0';
+    env.TMUX_PANE = '%1';
+
+    try {
+      const identity = nodeJson(repo, env, IDENTITY);
+      assert.strictEqual(identity.pane, true);
+      assert.ok(identity.key.startsWith('tmux-'));
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  test('degraded restore labels the shared pane state as a workspace default', () => {
+    const repo = makeMonorepo();
+    const home = path.join(repo, 'home');
+    fs.mkdirSync(home);
+    const env = cleanEnv(home);
+    env.PATH = `${psShim(repo, '??')}${path.delimiter}${env.PATH}`;
+    env.GROUNDWORK_HARNESS = 'codex';
+
+    try {
+      runCli(repo, env, 'select', 'web', '--harness', 'codex');
+      const restored = nodeJson(repo, env, restoreSnippet(null));
+      assert.strictEqual(restored.projectName, 'web');
+      assert.strictEqual(restored.source, 'workspace-default');
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  test('per-chat snapshot survives newer foreign pane writes (two-chat isolation)', () => {
+    const { root: repo, paths } = makeMultiMonorepo(['web', 'apps/web'], ['api', 'services/api']);
+    const home = path.join(repo, 'home');
+    fs.mkdirSync(home);
+    const env = cleanEnv(home);
+    env.PATH = `${psShim(repo, '??')}${path.delimiter}${env.PATH}`;
+    env.GROUNDWORK_HARNESS = 'codex';
+
+    try {
+      // Chat A selects web and its hook pins the per-chat snapshot.
+      runCli(repo, env, 'select', 'web', '--harness', 'codex');
+      execFileSync('node', ['-e', pinSnippet('chat-a', 'web', paths.web)], { cwd: repo, env });
+
+      // Chat B rewrites the shared pane state to api afterwards.
+      runCli(repo, env, 'select', 'api', '--harness', 'codex');
+
+      // Chat A keeps its own selection; chat B falls through to the default.
+      const chatA = nodeJson(repo, env, restoreSnippet('chat-a'));
+      assert.strictEqual(chatA.projectName, 'web');
+      assert.strictEqual(chatA.source, 'session');
+
+      const chatB = nodeJson(repo, env, restoreSnippet('chat-b'));
+      assert.strictEqual(chatB.projectName, 'api');
+      assert.strictEqual(chatB.source, 'workspace-default');
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  test('PostToolUse hook adopts an in-chat selection into the session snapshot', () => {
+    const { root: repo, paths } = makeMultiMonorepo(['web', 'apps/web'], ['api', 'services/api']);
+    const home = path.join(repo, 'home');
+    fs.mkdirSync(home);
+    const env = cleanEnv(home);
+    env.PATH = `${psShim(repo, '??')}${path.delimiter}${env.PATH}`;
+    env.GROUNDWORK_HARNESS = 'codex';
+
+    try {
+      runCli(repo, env, 'select', 'web', '--harness', 'codex');
+      execFileSync('node', ['-e', pinSnippet('chat-a', 'web', paths.web)], { cwd: repo, env });
+
+      // The chat switches to api; the PostToolUse hook fires for this
+      // session's persist command and must adopt the new selection.
+      runCli(repo, env, 'select', 'api', '--harness', 'codex');
+      const adopted = spawnSync('bash', [PIN_HOOK], {
+        cwd: repo,
+        env,
+        input: JSON.stringify({
+          session_id: 'chat-a',
+          tool_input: { command: `node ${CLI} select api --harness codex` },
+        }),
+        encoding: 'utf8',
+      });
+      assert.strictEqual(adopted.status, 0, adopted.stderr);
+
+      const restored = nodeJson(repo, env, restoreSnippet('chat-a'));
+      assert.strictEqual(restored.projectName, 'api');
+      assert.strictEqual(restored.source, 'session');
+
+      // The command gate leaves unrelated Bash commands (and failures) alone:
+      // a foreign command must not overwrite the snapshot with stale pane data.
+      const untouched = spawnSync('bash', [PIN_HOOK], {
+        cwd: repo,
+        env,
+        input: JSON.stringify({
+          session_id: 'chat-a',
+          tool_input: { command: 'git status --short' },
+        }),
+        encoding: 'utf8',
+      });
+      assert.strictEqual(untouched.status, 0, untouched.stderr);
+      const after = nodeJson(repo, env, restoreSnippet('chat-a'));
+      assert.strictEqual(after.projectName, 'api');
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  test('PostToolUse hook adopts the selection when the session id arrives via CLAUDE_SESSION_ID', () => {
+    const { root: repo, paths } = makeMultiMonorepo(['web', 'apps/web'], ['api', 'services/api']);
+    const home = path.join(repo, 'home');
+    fs.mkdirSync(home);
+    const env = cleanEnv(home);
+    env.PATH = `${psShim(repo, '??')}${path.delimiter}${env.PATH}`;
+    env.GROUNDWORK_HARNESS = 'codex';
+
+    try {
+      // This chat selects web; the pane file records the shared selection.
+      runCli(repo, env, 'select', 'web', '--harness', 'codex');
+
+      // ZCode delivers the session id as a hook environment variable instead
+      // of stdin JSON: the hook must still scope the adopted snapshot to the
+      // right chat through the CLAUDE_SESSION_ID fallback.
+      const adopted = spawnSync('bash', [PIN_HOOK], {
+        cwd: repo,
+        env: { ...env, CLAUDE_SESSION_ID: 'chat-env' },
+        input: JSON.stringify({
+          tool_input: { command: `node ${CLI} select web --harness codex` },
+        }),
+        encoding: 'utf8',
+      });
+      assert.strictEqual(adopted.status, 0, adopted.stderr);
+
+      const restored = nodeJson(repo, env, restoreSnippet('chat-env'));
+      assert.strictEqual(restored.projectName, 'web');
+      assert.strictEqual(restored.source, 'session');
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  test('real pane identity ignores session snapshots', () => {
+    const { root: repo, paths } = makeMultiMonorepo(['web', 'apps/web'], ['api', 'services/api']);
+    const home = path.join(repo, 'home');
+    fs.mkdirSync(home);
+    const env = cleanEnv(home);
+    env.TMUX = '/tmp/tmux-test/default,123,0';
+    env.TMUX_PANE = '%1';
+    env.GROUNDWORK_HARNESS = 'codex';
+
+    try {
+      runCli(repo, env, 'select', 'web', '--harness', 'codex');
+      execFileSync('node', ['-e', pinSnippet('s1', 'api', paths.api)], { cwd: repo, env });
+
+      const restored = nodeJson(repo, env, restoreSnippet('s1'));
+      assert.strictEqual(restored.projectName, 'web');
+      assert.strictEqual(restored.source, 'pane');
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  test('legacy ?? pane state migrates under the degraded repo key', () => {
+    const repo = makeMonorepo();
+    const home = path.join(repo, 'home');
+    fs.mkdirSync(home);
+    const codexHome = path.join(repo, 'codex-home');
+    fs.mkdirSync(codexHome);
+    const env = cleanEnv(home);
+    env.CODEX_HOME = codexHome;
+    env.PATH = `${psShim(repo, '??')}${path.delimiter}${env.PATH}`;
+
+    try {
+      // Simulate the pre-fix state: a pane file under the literal ?? key.
+      const panesDir = path.join(codexHome, 'groundwork-state', 'panes');
+      fs.mkdirSync(panesDir, { recursive: true });
+      // git resolves macOS symlinked temp dirs (/tmp → /private/tmp), so the
+      // repo slug the lib computes is based on the resolved path.
+      const repoSlug = fs.realpathSync(repo).replace(/\//g, '_');
+      fs.writeFileSync(
+        path.join(panesDir, `??__${repoSlug}.json`),
+        JSON.stringify({
+          project: 'web',
+          root: path.join(repo, 'apps', 'web'),
+          repoRoot: repo,
+          paneKey: '??',
+          timestamp: Math.floor(Date.now() / 1000) - 60,
+          sessionId: null,
+        })
+      );
+
+      const restored = nodeJson(repo, env, restoreSnippet(null));
+      assert.strictEqual(restored.projectName, 'web');
+      assert.strictEqual(restored.source, 'workspace-default');
+
+      // The migration re-pins the selection under the new degraded key.
+      const files = fs.readdirSync(panesDir);
+      assert.ok(files.some(f => f.startsWith('repo-')), `expected migrated pane file, got ${files}`);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  test('.groundwork.local selection migrates under the degraded repo key', () => {
+    const repo = makeMonorepo();
+    const home = path.join(repo, 'home');
+    fs.mkdirSync(home);
+    const codexHome = path.join(repo, 'codex-home');
+    fs.mkdirSync(codexHome);
+    const env = cleanEnv(home);
+    env.CODEX_HOME = codexHome;
+    env.PATH = `${psShim(repo, '??')}${path.delimiter}${env.PATH}`;
+
+    try {
+      // Pre-pane-era state: only the legacy .groundwork.local marker at the
+      // repo root records the selection — no pane or snapshot state exists.
+      fs.writeFileSync(path.join(repo, '.groundwork.local'), 'web');
+
+      const restored = nodeJson(repo, env, restoreSnippet(null));
+      assert.strictEqual(restored.projectName, 'web');
+      // git resolves macOS symlinked temp dirs (/tmp → /private/tmp), so the
+      // lib resolves the configured project path from the resolved repo root.
+      assert.strictEqual(restored.projectPath, path.join(fs.realpathSync(repo), 'apps', 'web'));
+      assert.strictEqual(restored.source, 'migration');
+
+      // The migration seeds the pane state file under the degraded repo key.
+      const panesDir = path.join(codexHome, 'groundwork-state', 'panes');
+      const files = fs.readdirSync(panesDir);
+      const seeded = files.find(f => f.startsWith('repo-'));
+      assert.ok(seeded, `expected seeded pane file, got ${files}`);
+      const data = JSON.parse(fs.readFileSync(path.join(panesDir, seeded), 'utf8'));
+      assert.strictEqual(data.project, 'web');
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  test('detect-project-state reports the selection source and pins the snapshot', () => {
+    const repo = makeMonorepo();
+    const home = path.join(repo, 'home');
+    fs.mkdirSync(home);
+    const env = cleanEnv(home);
+    env.PATH = `${psShim(repo, '??')}${path.delimiter}${env.PATH}`;
+    env.GROUNDWORK_HARNESS = 'codex';
+
+    try {
+      runCli(repo, env, 'select', 'web', '--harness', 'codex');
+
+      const first = JSON.parse(execFileSync('node', [DETECT], {
+        cwd: repo,
+        env: { ...env, GROUNDWORK_SESSION_ID: 'chat-a' },
+        encoding: 'utf8',
+      }));
+      assert.strictEqual(first.projectName, 'web');
+      assert.strictEqual(first.selectionSource, 'workspace-default');
+
+      // The first observation pinned the per-chat snapshot: a later restore
+      // in the same session is per-chat, not a shared assumption.
+      const second = JSON.parse(execFileSync('node', [DETECT], {
+        cwd: repo,
+        env: { ...env, GROUNDWORK_SESSION_ID: 'chat-a' },
+        encoding: 'utf8',
+      }));
+      assert.strictEqual(second.projectName, 'web');
+      assert.strictEqual(second.selectionSource, 'session');
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  test('cleanupStalePanes prunes stale chat snapshots alongside pane files', () => {
+    const { root: repo, paths } = makeMultiMonorepo(['web', 'apps/web'], ['api', 'services/api']);
+    const home = path.join(repo, 'home');
+    fs.mkdirSync(home);
+    const env = cleanEnv(home);
+    env.PATH = `${psShim(repo, '??')}${path.delimiter}${env.PATH}`;
+    env.GROUNDWORK_HARNESS = 'codex';
+
+    try {
+      execFileSync('node', ['-e', pinSnippet('old-chat', 'web', paths.web)], { cwd: repo, env });
+      execFileSync('node', ['-e', pinSnippet('fresh-chat', 'api', paths.api)], { cwd: repo, env });
+
+      const snapshotsDir = path.join(home, '.codex', 'groundwork-state', 'chat-snapshots');
+      const oldFile = path.join(snapshotsDir, fs.readdirSync(snapshotsDir).find(f => f.startsWith('old-chat')));
+      const stale = JSON.parse(fs.readFileSync(oldFile, 'utf8'));
+      stale.timestamp = Math.floor(Date.now() / 1000) - 31 * 86400;
+      fs.writeFileSync(oldFile, JSON.stringify(stale));
+
+      nodeJson(repo, env, `const pc = require(${JSON.stringify(LIB)}); pc.cleanupStalePanes(); console.log('{}')`);
+
+      const remaining = fs.readdirSync(snapshotsDir);
+      assert.ok(remaining.some(f => f.startsWith('fresh-chat')), 'fresh snapshot must survive');
+      assert.ok(!remaining.some(f => f.startsWith('old-chat')), 'stale snapshot must be pruned');
     } finally {
       fs.rmSync(repo, { recursive: true, force: true });
     }

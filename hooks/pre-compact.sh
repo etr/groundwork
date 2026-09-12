@@ -27,12 +27,16 @@ main() {
 
   mkdir -p "$STATE_DIR"
 
-  # Read hook input from stdin and extract session_id
-  INPUT_JSON=$(cat 2>/dev/null || echo '{}')
-  SESSION_ID=$(echo "$INPUT_JSON" | jq -r '.session_id // empty' 2>/dev/null)
-  if [ -z "$SESSION_ID" ]; then
-    SESSION_ID=$(echo "$INPUT_JSON" | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
-  fi
+# Read hook input from stdin and extract session_id
+INPUT_JSON=$(cat 2>/dev/null || echo '{}')
+SESSION_ID=$(echo "$INPUT_JSON" | jq -r '.session_id // empty' 2>/dev/null)
+if [ -z "$SESSION_ID" ]; then
+  SESSION_ID=$(echo "$INPUT_JSON" | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
+fi
+if [ -z "$SESSION_ID" ]; then
+  # ZCode injects the session id as a hook environment variable
+  SESSION_ID="${CLAUDE_SESSION_ID}"
+fi
 
 # Extract any context we should preserve
 # The hook output will be included in the compacted context
@@ -84,6 +88,19 @@ if [ -n "$SESSION_ID" ] && [ -f "${PLUGIN_ROOT}/lib/project-context.js" ]; then
     fi
     if [ -n "$ACTIVE_ROOT" ]; then
       CONTEXT_ITEMS+=("Project root: $ACTIVE_ROOT")
+    fi
+    # Pin the restored selection as this session's snapshot so the
+    # post-compaction SessionStart restores per-chat state even where pane
+    # identity is unavailable (chat-window harnesses share one pane key
+    # across all chats). Freshest write wins, so a newer explicit selection
+    # still overrides the pin.
+    if [ -n "$ACTIVE_PROJECT" ] && [ -n "$ACTIVE_ROOT" ]; then
+      GROUNDWORK_SESSION_ID="$SESSION_ID" node -e "
+        try {
+          const pc = require('${PLUGIN_ROOT}/lib/project-context');
+          pc.persistSessionSelection(pc.getSessionId(), process.argv[1], process.argv[2]);
+        } catch(e) {}
+      " "$ACTIVE_PROJECT" "$ACTIVE_ROOT" 2>/dev/null || true
     fi
   fi
 fi

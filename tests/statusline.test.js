@@ -679,6 +679,60 @@ test('resolves PR and project cache keys without sha1sum', () => {
   }
 });
 
+test('resolves the degraded repo-hash pane key alongside the legacy cwd-hash fallback', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-statusline-repo-key-'));
+  try {
+    execFileSync('git', ['init', '-q', '-b', 'repo-key'], { cwd: tmp });
+    fs.writeFileSync(path.join(tmp, '.groundwork.yml'), 'version: 1\nprojects: {}\n');
+    writeUsageCache(tmp, { five_hour: { utilization: 10 } });
+
+    // The lib's degraded key hashes the main repo root (repo-<sha1>), while
+    // older versions hashed the cwd (cwd-<sha1>). Compute both exactly as
+    // lib/project-context.js would from the physical repository root.
+    const physicalRoot = fs.realpathSync(tmp);
+    const hash = createHash('sha1').update(physicalRoot).digest('hex').slice(0, 12);
+    const repoKey = `repo-${hash}`;
+    const cwdKey = `cwd-${hash}`;
+    const repoSlug = physicalRoot.replaceAll('/', '_');
+    const stateDir = path.join(tmp, '.claude', 'groundwork-state', 'panes');
+    fs.mkdirSync(stateDir, { recursive: true });
+
+    const writePaneState = (key, project, timestamp) => {
+      fs.writeFileSync(path.join(stateDir, `${key}__${repoSlug}.json`), JSON.stringify({
+        project,
+        timestamp,
+      }));
+    };
+    const render = () => stripAnsi(runRenderer({
+      cwd: tmp,
+      home: tmp,
+      input: basicInput(physicalRoot),
+      fakeCommands: { gh: 'exit 127', tmux: 'printf \'/dev/pts/42\\n\'' },
+      env: { TMUX_PANE: '%1' },
+    }));
+
+    // Current format newer than a legacy cwd- write: the tty-primary lookup
+    // misses (the writer had no pane identity), so the repo- candidate must
+    // win the newer-of comparison.
+    writePaneState(repoKey, 'repo-scoped-project', Date.now());
+    writePaneState(cwdKey, 'legacy-cwd-project', Date.now() - 100);
+    assert.ok(
+      render().includes('Project: repo-scoped-project'),
+      `repo-hash pane state not resolved; files=${fs.readdirSync(stateDir)}`
+    );
+
+    // Pre-upgrade state written under the legacy cwd- key still resolves when
+    // it is the newer write.
+    writePaneState(cwdKey, 'legacy-cwd-project', Date.now() + 100);
+    assert.ok(
+      render().includes('Project: legacy-cwd-project'),
+      `legacy cwd-hash pane state not resolved; files=${fs.readdirSync(stateDir)}`
+    );
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
 test('starts only one PR refresh while an earlier refresh is in flight', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-statusline-pr-single-flight-'));
   const refreshRelease = path.join(tmp, 'refresh-release');

@@ -117,7 +117,7 @@ Hooks are defined in `hooks/hooks.json` and use `${CLAUDE_PLUGIN_ROOT}` for port
 | `lib/spec-router.js`, `lib/specs-io.js` | Locate and read spec/architecture/task files |
 | `lib/inject-specs.js` | Extracts features/NFRs/decisions from specs into context |
 | `lib/resolve-template-vars.js` | Resolves `{{specs_dir}}` etc. in skill bodies (PostToolUse) |
-| `lib/persist-project.js`, `lib/persist-unworked-findings.js` | Persist per-pane project + validation state |
+| `lib/persist-project.js`, `lib/persist-unworked-findings.js` | Persist project + validation state (per terminal pane where pane identity exists; per-chat snapshots + labeled workspace default in pane-less UIs like ZCode) |
 | `lib/transform-agents.js` | Rewrites `Agent()` calls when exporting skills to other harnesses |
 | `lib/filter-zcode-hooks.js` | Filters hooks.json to the hook events ZCode supports (marketplace bundle) |
 | `lib/utils.js` | Shared helpers |

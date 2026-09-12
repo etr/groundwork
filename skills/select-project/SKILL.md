@@ -44,6 +44,8 @@ The script resolves its own harness-specific selection scope internally — no e
 
 Confirm: "Switched to project **<name>**. Specs at `<path>/specs/`."
 
+Selection scope: in a terminal pane, the selection is pane-scoped, survives `/clear`, and other panes are unaffected. Where the harness has no pane identity (chat-window UIs), the persisted selection is only a workspace-level default shared across chats — treat the selection as conversation-scoped: state the active project in your reply, and pass it explicitly on later invocations (`--project <name>` where plan-task, implement-task, and validate support it, or `GROUNDWORK_PROJECT=<name>` for lib scripts).
+
 ### Step 4: Show Status
 
 After switching, show the project's spec status:
