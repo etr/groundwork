@@ -115,8 +115,28 @@ function checkpointInitialReview(repo) {
     nextStage: 'review-batch-complete',
     iteration: 1,
     coordinatorFile,
+    ownerToken: created.ownerToken,
   });
   return created;
+}
+
+// Continue a live session: name the run and present its bearer capability.
+function continueRun(repo, session, extra = {}) {
+  return identity(repo, {
+    resumeRun: session.state.runId,
+    ownerToken: session.ownerToken,
+    ...extra,
+  });
+}
+
+// Force a v2 session's owner liveness to 'stale' (startup grace expired, no
+// registered heartbeat) so takeover/abandon paths become reachable.
+function makeOwnerStale(session) {
+  const stateFile = path.join(session.runDir, '.validation-session.json');
+  const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+  state.owner.heartbeat.graceUntil = new Date(Date.now() - 60_000).toISOString();
+  state.owner.heartbeat.lastBeat = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
+  write(stateFile, JSON.stringify(state));
 }
 
 describe('open lockfile serialization', () => {
@@ -169,7 +189,7 @@ describe('open lockfile serialization', () => {
         host: 'definitely-not-this-host',
         acquiredAt: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
       }));
-      const resumed = openValidationSession(identity(repo, { resumeRun: created.state.runId }));
+      const resumed = openValidationSession(continueRun(repo, created));
       assert.strictEqual(resumed.status, 'resumed');
     } finally {
       fs.rmSync(repo.root, { recursive: true, force: true });
@@ -208,7 +228,7 @@ describe('unreadable-lock grace window', () => {
       write(lock, '');
       const aged = new Date(Date.now() - 10 * 60 * 1000);
       fs.utimesSync(lock, aged, aged);
-      const resumed = openValidationSession(identity(repo, { resumeRun: created.state.runId }));
+      const resumed = openValidationSession(continueRun(repo, created));
       assert.strictEqual(resumed.status, 'resumed');
       assert.strictEqual(fs.existsSync(lock), false, 'the aged unreadable lock survived');
     } finally {
@@ -241,30 +261,64 @@ describe('fresh-session ownership guard', () => {
     }
   });
 
-  test('the continuation token resumes the same run', () => {
+  test('the continuation run plus capability resumes the same run', () => {
     const repo = fixture();
     try {
       const { openValidationSession } = require(HELPER);
       const created = openValidationSession(identity(repo));
-      const resumed = openValidationSession(identity(repo, { resumeRun: created.state.runId }));
+      const resumed = openValidationSession(continueRun(repo, created));
       assert.strictEqual(resumed.status, 'resumed');
       assert.strictEqual(resumed.runDir, created.runDir);
+      assert.strictEqual(resumed.ownerToken, created.ownerToken);
     } finally {
       fs.rmSync(repo.root, { recursive: true, force: true });
     }
   });
 
-  test('a stale heartbeat is resumable without the token (crash recovery)', () => {
+  test('a run id alone no longer proves ownership of a live session', () => {
     const repo = fixture();
     try {
       const { openValidationSession } = require(HELPER);
       const created = openValidationSession(identity(repo));
-      const stateFile = path.join(created.runDir, '.validation-session.json');
-      const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
-      state.updatedAt = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
-      write(stateFile, JSON.stringify(state));
-      const resumed = openValidationSession(identity(repo));
-      assert.strictEqual(resumed.status, 'resumed');
+      assert.throws(
+        () => openValidationSession(identity(repo, { resumeRun: created.state.runId })),
+        /already active|owner-token/
+      );
+    } finally {
+      fs.rmSync(repo.root, { recursive: true, force: true });
+    }
+  });
+
+  test('a wrong capability cannot resume a live session', () => {
+    const repo = fixture();
+    try {
+      const { openValidationSession } = require(HELPER);
+      const created = openValidationSession(identity(repo));
+      const forged = created.ownerToken.slice(0, -1) + (created.ownerToken.endsWith('0') ? '1' : '0');
+      assert.throws(
+        () => openValidationSession(identity(repo, {
+          resumeRun: created.state.runId,
+          ownerToken: forged,
+        })),
+        /capability does not match/
+      );
+    } finally {
+      fs.rmSync(repo.root, { recursive: true, force: true });
+    }
+  });
+
+  test('a stale owner is reclaimed with a fresh capability (crash recovery)', () => {
+    const repo = fixture();
+    try {
+      const { openValidationSession } = require(HELPER);
+      const created = openValidationSession(identity(repo));
+      makeOwnerStale(created);
+      const reclaimed = openValidationSession(identity(repo));
+      assert.strictEqual(reclaimed.status, 'reclaimed');
+      assert.strictEqual(reclaimed.runDir, created.runDir);
+      assert.strictEqual(reclaimed.state.owner.epoch, created.state.owner.epoch + 1);
+      assert.ok(reclaimed.ownerToken);
+      assert.notStrictEqual(reclaimed.ownerToken, created.ownerToken);
     } finally {
       fs.rmSync(repo.root, { recursive: true, force: true });
     }
@@ -272,25 +326,31 @@ describe('fresh-session ownership guard', () => {
 });
 
 describe('abandon', () => {
-  test('refuses to abandon a fresh session without --force', () => {
+  test('refuses to abandon a live owner even with --force', () => {
     const repo = fixture();
     try {
       const { openValidationSession, abandonValidationSession } = require(HELPER);
       openValidationSession(identity(repo));
+      // Startup grace counts as live: a just-opened session is never removable.
       assert.throws(
         () => abandonValidationSession(identity(repo), false),
-        /already active|wait out the staleness window/
+        /cannot abandon a live validation owner/
+      );
+      assert.throws(
+        () => abandonValidationSession(identity(repo), true),
+        /cannot abandon a live validation owner/
       );
     } finally {
       fs.rmSync(repo.root, { recursive: true, force: true });
     }
   });
 
-  test('--force removes the pointer so the next open starts fresh', () => {
+  test('--force removes the pointer of a provably stale session', () => {
     const repo = fixture();
     try {
       const { openValidationSession, abandonValidationSession } = require(HELPER);
       const created = openValidationSession(identity(repo));
+      makeOwnerStale(created);
       abandonValidationSession(identity(repo), true);
       const next = openValidationSession(identity(repo));
       assert.strictEqual(next.status, 'created');
@@ -327,7 +387,7 @@ describe('abandon', () => {
         /identity does not match/
       );
       // The refusal left the pointer intact: the original owner still resumes.
-      const resumed = openValidationSession(identity(repo, { resumeRun: created.state.runId }));
+      const resumed = openValidationSession(continueRun(repo, created));
       assert.strictEqual(resumed.runDir, created.runDir);
     } finally {
       fs.rmSync(repo.root, { recursive: true, force: true });
@@ -474,7 +534,7 @@ describe('lock liveness edges (injected probe)', () => {
       // process.pid is alive under the default probe; the shim says ESRCH.
       write(lock, liveLock(process.pid));
       const resumed = openValidationSession(
-        identity(repo, { resumeRun: created.state.runId }),
+        continueRun(repo, created),
         probeThrowing('ESRCH')
       );
       assert.strictEqual(resumed.status, 'resumed');

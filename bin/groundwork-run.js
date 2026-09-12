@@ -633,31 +633,12 @@ function waitForLeaseMutation(dependencies, milliseconds = 10) {
   wait(milliseconds);
 }
 
+// Single process-identity authority shared with the validation-session
+// ownership model (lib/process-identity.js) — the runner keeps only the
+// dependency-injection seam it uses for deterministic tests.
 function processStartIdentity(pid, dependencies = {}) {
   if (dependencies.processStartIdentity) return dependencies.processStartIdentity(pid);
-  const procStat = `/proc/${pid}/stat`;
-  try {
-    const fields = fs.readFileSync(procStat, 'utf8').trim().split(/\s+/);
-    if (fields.length > 21 && /^\d+$/.test(fields[21])) return `proc:${fields[21]}`;
-  } catch (error) {
-    if (!['ENOENT', 'EACCES', 'EPERM'].includes(error.code)) throw error;
-  }
-  try {
-    const value = execFileSync('ps', ['-o', 'lstart=', '-p', String(pid)], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim();
-    return value || null;
-  } catch {
-    try {
-      process.kill(pid, 0);
-      return `pid:${pid}`;
-    } catch (error) {
-      if (error.code === 'EPERM') return `pid:${pid}`;
-      if (error.code === 'ESRCH') return null;
-      throw error;
-    }
-  }
+  return requireRuntimeHelper('process-identity.js').processStartIdentity(pid);
 }
 
 function validLeaseText(value, maximum = 128) {

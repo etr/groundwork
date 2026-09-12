@@ -28,6 +28,11 @@ function test(name, fn) {
   }
 }
 
+function describe(name, fn) {
+  console.log(`\n${name}`);
+  fn();
+}
+
 function git(cwd, ...args) {
   return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
 }
@@ -71,9 +76,14 @@ function identity(repo) {
 }
 
 // Sequential re-opens within one orchestration prove continuation by naming
-// the run they previously opened (see openValidationSession resumeRun).
+// the run they previously opened AND presenting its bearer capability.
 function resume(repo, session, extra = {}) {
-  return { ...identity(repo), resumeRun: session.state.runId, ...extra };
+  return {
+    ...identity(repo),
+    resumeRun: session.state.runId,
+    ownerToken: session.ownerToken,
+    ...extra,
+  };
 }
 
 function coordinatorState(iteration = 1, reviewMode = 'initial-audit') {
@@ -100,6 +110,7 @@ function checkpointInitialReview(helper, repo) {
     nextStage: 'review-batch-complete',
     iteration: 1,
     coordinatorFile,
+    ownerToken: created.ownerToken,
   });
   return created;
 }
@@ -113,11 +124,13 @@ test('creates and resumes one durable session for the same validation identity',
     assert.strictEqual(created.status, 'created');
     assert.strictEqual(created.state.stage, 'initial-audit-pending');
     assert.ok(created.runDir.startsWith(repo.commonDir + path.sep));
+    assert.ok(created.ownerToken, 'open must return the owner capability');
 
     const resumed = openValidationSession(resume(repo, created));
     assert.strictEqual(resumed.status, 'resumed');
     assert.strictEqual(resumed.runDir, created.runDir);
     assert.strictEqual(resumed.state.runId, created.state.runId);
+    assert.strictEqual(resumed.ownerToken, created.ownerToken);
   } finally {
     fs.rmSync(repo.root, { recursive: true, force: true });
   }
@@ -154,6 +167,7 @@ test('persists a completed review boundary without policing worktree changes', (
       nextStage: 'review-batch-complete',
       iteration: 1,
       coordinatorFile,
+      ownerToken: created.ownerToken,
     });
     assert.strictEqual(checkpoint.stage, 'review-batch-complete');
     assert.strictEqual(checkpoint.coordinatorFile, 'coordinator-iter1.json');
@@ -206,6 +220,7 @@ test('projects the durable validation round stage and per-reviewer verdicts', ()
       nextStage: 'review-batch-complete',
       iteration: 1,
       coordinatorFile,
+      ownerToken: created.ownerToken,
     });
 
     const snapshot = helper.validationStatusSnapshot(created.runDir);
@@ -247,7 +262,7 @@ test('resumes an interrupted runner-owned fixer without snapshot or rollback', (
     const session = checkpointInitialReview(helper, repo);
     const envelopeFile = path.join(session.runDir, 'repair-envelope-iter1.json');
     write(envelopeFile, JSON.stringify({ iteration: 1, findings: ['security-reviewer-iter1-1'] }));
-    helper.beginFixerTransaction(session.runDir, { iteration: 1, envelopeFile });
+    helper.beginFixerTransaction(session.runDir, { iteration: 1, envelopeFile, ownerToken: session.ownerToken });
 
     write(path.join(repo.root, 'src.txt'), 'half fixed\n');
     write(path.join(repo.root, 'partial.txt'), 'unfinished\n');
@@ -276,7 +291,7 @@ test('resumes an interrupted manual fixer without rollback authorization', () =>
     const session = checkpointInitialReview(helper, repo);
     const envelopeFile = path.join(session.runDir, 'repair-envelope-iter1.json');
     write(envelopeFile, JSON.stringify({ iteration: 1, findings: ['security-reviewer-iter1-1'] }));
-    helper.beginFixerTransaction(session.runDir, { iteration: 1, envelopeFile });
+    helper.beginFixerTransaction(session.runDir, { iteration: 1, envelopeFile, ownerToken: session.ownerToken });
     write(path.join(repo.root, 'src.txt'), 'half fixed\n');
 
     const resumed = helper.openValidationSession(resume(repo, session));
@@ -301,6 +316,7 @@ test('rejects incomplete coordinator state and illegal stage transitions', () =>
         fixed: 0,
         unworked: 0,
         action: 'none',
+        ownerToken: created.ownerToken,
       }),
       /cannot complete validation/
     );
@@ -312,6 +328,7 @@ test('rejects incomplete coordinator state and illegal stage transitions', () =>
         nextStage: 'review-batch-complete',
         iteration: 1,
         coordinatorFile: incomplete,
+        ownerToken: created.ownerToken,
       }),
       /validation_baseline/
     );
@@ -324,6 +341,7 @@ test('rejects incomplete coordinator state and illegal stage transitions', () =>
         nextStage: 'gates-complete',
         iteration: 1,
         coordinatorFile: complete,
+        ownerToken: created.ownerToken,
       }),
       /invalid validation stage transition/
     );
@@ -333,6 +351,7 @@ test('rejects incomplete coordinator state and illegal stage transitions', () =>
         nextStage: 'review-batch-complete',
         iteration: 2,
         coordinatorFile: complete,
+        ownerToken: created.ownerToken,
       }),
       /iteration/
     );
@@ -348,7 +367,7 @@ test('records a completed fixer result without snapshotting the worktree', () =>
     const session = checkpointInitialReview(helper, repo);
     const envelopeFile = path.join(session.runDir, 'repair-envelope-iter1.json');
     write(envelopeFile, JSON.stringify({ iteration: 1, findings: ['security-reviewer-iter1-1'] }));
-    helper.beginFixerTransaction(session.runDir, { iteration: 1, envelopeFile });
+    helper.beginFixerTransaction(session.runDir, { iteration: 1, envelopeFile, ownerToken: session.ownerToken });
     write(path.join(repo.root, 'src.txt'), 'fixed\n');
     const resultFile = path.join(session.runDir, 'fixer-result-iter1.json');
     write(resultFile, JSON.stringify({
@@ -367,6 +386,7 @@ test('records a completed fixer result without snapshotting the worktree', () =>
     const completed = helper.completeFixerTransaction(session.runDir, {
       iteration: 1,
       resultFile,
+      ownerToken: session.ownerToken,
     });
     assert.strictEqual(completed.stage, 'fixer-result-ready');
     assert.ok(!Object.hasOwn(completed, 'expectedTree'));
@@ -440,6 +460,7 @@ test('replays a completed validation summary without restarting the audit', () =
       fixed: 0,
       unworked: 0,
       action: 'none',
+      ownerToken: session.ownerToken,
     });
     assert.strictEqual(completed.stage, 'validated');
 
@@ -468,6 +489,7 @@ test('starts a new validation session after a completed task tree advances', () 
       fixed: 0,
       unworked: 0,
       action: 'none',
+      ownerToken: session.ownerToken,
     });
     write(path.join(repo.root, 'later.txt'), 'later change\n');
     git(repo.root, 'add', '.');
@@ -502,9 +524,568 @@ test('exposes the durable session operations through a JSON CLI', () => {
     assert.strictEqual(parsed.status, 'created');
     assert.strictEqual(parsed.stage, 'initial-audit-pending');
     assert.ok(parsed.run_dir.endsWith(parsed.findings_dir.split(path.sep).pop()));
+    assert.ok(parsed.owner_token, 'open must return the owner capability to its caller');
+    // The capability is never durable public state: the session file records
+    // only its digest.
+    const stateFile = path.join(parsed.run_dir, '.validation-session.json');
+    const state = fs.readFileSync(stateFile, 'utf8');
+    assert.ok(!state.includes(parsed.owner_token), 'raw capability leaked into session state');
+    assert.ok(state.includes('tokenDigest'), 'session state must record the token digest');
   } finally {
     fs.rmSync(repo.root, { recursive: true, force: true });
   }
+});
+
+// ---------------------------------------------------------------------------
+// Capability ownership lifecycle — genuinely multi-process, deterministic
+// file-marker barriers (see tests/helpers/validation-worker.js). No sleep is
+// used as a correctness barrier: workers are released only after every
+// participant signaled readiness, and time-based cases wait on their actual
+// time condition (heartbeat freshness thresholds).
+// ---------------------------------------------------------------------------
+
+const WORKER = path.resolve(__dirname, 'helpers', 'validation-worker.js');
+const { spawn } = require('child_process');
+const { processAlive } = require(path.resolve(__dirname, '..', 'lib', 'process-identity.js'));
+
+function sleepMs(milliseconds) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
+}
+
+function waitFor(predicate, timeoutMs, description) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const value = predicate();
+    if (value) return value;
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${description}`);
+    sleepMs(10);
+  }
+}
+
+function spawnBarrierWorker(barrierDir, name, operation, env = {}) {
+  const markers = {
+    ready: path.join(barrierDir, `${name}.ready`),
+    release: path.join(barrierDir, `${name}.release`),
+    result: path.join(barrierDir, `${name}.result`),
+  };
+  const child = spawn(process.execPath, [WORKER], {
+    env: {
+      ...process.env,
+      ...env,
+      WORKER_OPERATION: JSON.stringify(operation),
+      WORKER_READY: markers.ready,
+      WORKER_RELEASE: markers.release,
+      WORKER_RESULT: markers.result,
+    },
+    stdio: ['ignore', 'inherit', 'inherit'],
+  });
+  return { child, ...markers };
+}
+
+function releaseAndAwait(workers, timeoutMs = 20000) {
+  for (const worker of workers) fs.writeFileSync(worker.release, 'go\n');
+  return workers.map((worker) => {
+    waitFor(() => fs.existsSync(worker.result), timeoutMs, `${worker.release} result`);
+    return JSON.parse(fs.readFileSync(worker.result, 'utf8'));
+  });
+}
+
+function openOperation(repo, extra = {}) {
+  return {
+    op: 'open',
+    repoRoot: repo.root,
+    projectRoot: repo.root,
+    worktreePath: repo.root,
+    taskId: 'TASK-075',
+    branch: 'task/TASK-075',
+    baseHead: repo.baseHead,
+    ...extra,
+  };
+}
+
+function spawnHeartbeatWorker(runDir, ownerToken, env = {}) {
+  const child = spawn(process.execPath, [
+    HELPER, 'heartbeat-loop', '--run-dir', runDir, '--owner-token', ownerToken,
+  ], { env: { ...process.env, ...env }, stdio: ['ignore', 'ignore', 'inherit'] });
+  return child;
+}
+
+function heartbeatState(runDir) {
+  return JSON.parse(fs.readFileSync(path.join(runDir, '.validation-session.json'), 'utf8'))
+    .owner.heartbeat;
+}
+
+function killAndWait(child) {
+  child.kill('SIGKILL');
+  // The synchronous test loop blocks the event loop, so exit events never
+  // fire — probe the pid directly instead of reading child.exitCode.
+  waitFor(() => !processAlive(child.pid), 10000, 'worker exit');
+}
+
+describe('capability ownership lifecycle (multi-process)', () => {
+  test('two processes racing open leave exactly one owner and one run pointer', () => {
+    const repo = fixture();
+    const barrier = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-validation-race-'));
+    try {
+      const first = spawnBarrierWorker(barrier, 'a', openOperation(repo));
+      const second = spawnBarrierWorker(barrier, 'b', openOperation(repo));
+      waitFor(() => fs.existsSync(first.ready), 15000, 'first ready');
+      waitFor(() => fs.existsSync(second.ready), 15000, 'second ready');
+      const [a, b] = releaseAndAwait([first, second]);
+
+      const outcomes = [a, b];
+      const created = outcomes.filter((r) => r.ok && r.result.status === 'created');
+      const refused = outcomes.filter((r) => !r.ok);
+      assert.strictEqual(created.length, 1, JSON.stringify(outcomes));
+      assert.strictEqual(refused.length, 1, JSON.stringify(outcomes));
+      assert.match(refused[0].error, /another validation open|already active/);
+
+      const parent = path.dirname(created[0].result.runDir);
+      const runs = fs.readdirSync(parent).filter((name) => name.startsWith('groundwork-validation-'));
+      assert.strictEqual(runs.length, 1, 'exactly one run directory may survive the race');
+      const pointer = JSON.parse(fs.readFileSync(path.join(parent, 'active.json'), 'utf8'));
+      assert.strictEqual(pointer.runDir, runs[0]);
+    } finally {
+      fs.rmSync(barrier, { recursive: true, force: true });
+      fs.rmSync(repo.root, { recursive: true, force: true });
+    }
+  });
+
+  test('a non-owner capability is rejected by every mutating operation', () => {
+    const helper = require(HELPER);
+    const repo = fixture();
+    try {
+      const created = helper.openValidationSession(identity(repo));
+      const forged = 'f'.repeat(48);
+      const coordinatorFile = path.join(created.runDir, 'coordinator-iter1.json');
+      write(coordinatorFile, JSON.stringify(coordinatorState()));
+      assert.throws(() => helper.checkpointValidationSession(created.runDir, {
+        expectedStage: 'initial-audit-pending',
+        nextStage: 'review-batch-complete',
+        iteration: 1,
+        coordinatorFile,
+        ownerToken: forged,
+      }), /capability does not match/);
+      assert.throws(() => helper.beginFixerTransaction(created.runDir, {
+        iteration: 1,
+        envelopeFile: coordinatorFile,
+        ownerToken: forged,
+      }), /capability does not match/);
+      assert.throws(() => helper.completeFixerTransaction(created.runDir, {
+        iteration: 1,
+        resultFile: coordinatorFile,
+        ownerToken: forged,
+      }), /capability does not match/);
+      assert.throws(() => helper.completeValidationSession(created.runDir, {
+        expectedStage: 'review-batch-complete',
+        iterations: 1,
+        fixed: 0,
+        unworked: 0,
+        action: 'none',
+        ownerToken: forged,
+      }), /capability does not match/);
+      assert.throws(() => helper.heartbeatRegister(created.runDir, forged), /capability does not match/);
+      assert.throws(() => helper.heartbeatBeat(created.runDir, forged), /capability does not match/);
+      assert.throws(() => helper.heartbeatStop(created.runDir, forged), /capability does not match/);
+      assert.throws(() => helper.openValidationSession({
+        ...identity(repo),
+        resumeRun: created.state.runId,
+        ownerToken: forged,
+      }), /capability does not match/);
+      // A live owner cannot be abandoned or taken over, token or not.
+      assert.throws(() => helper.abandonValidationSession(identity(repo), true), /cannot abandon a live/);
+      const state = JSON.parse(fs.readFileSync(
+        path.join(created.runDir, '.validation-session.json'), 'utf8'));
+      assert.strictEqual(state.revision, created.state.revision, 'a rejected mutation must not change state');
+    } finally {
+      fs.rmSync(repo.root, { recursive: true, force: true });
+    }
+  });
+
+  test('two authorized contenders serialize; the loser rereads and fails stage/revision', () => {
+    const helper = require(HELPER);
+    const repo = fixture();
+    const barrier = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-validation-contend-'));
+    try {
+      const created = helper.openValidationSession(identity(repo));
+      const coordinatorFile = path.join(created.runDir, 'coordinator-iter1.json');
+      write(coordinatorFile, JSON.stringify(coordinatorState()));
+      const operation = {
+        op: 'checkpoint',
+        runDir: created.runDir,
+        expectedStage: 'initial-audit-pending',
+        nextStage: 'review-batch-complete',
+        iteration: 1,
+        coordinatorFile,
+        ownerToken: created.ownerToken,
+      };
+      const first = spawnBarrierWorker(barrier, 'a', operation);
+      const second = spawnBarrierWorker(barrier, 'b', operation);
+      waitFor(() => fs.existsSync(first.ready), 15000, 'first ready');
+      waitFor(() => fs.existsSync(second.ready), 15000, 'second ready');
+      const [a, b] = releaseAndAwait([first, second]);
+
+      const successes = [a, b].filter((r) => r.ok);
+      const failures = [a, b].filter((r) => !r.ok);
+      assert.strictEqual(successes.length, 1, JSON.stringify([a, b]));
+      assert.strictEqual(failures.length, 1, JSON.stringify([a, b]));
+      assert.match(failures[0].error, /validation session stage is|revision/);
+
+      const state = JSON.parse(fs.readFileSync(
+        path.join(created.runDir, '.validation-session.json'), 'utf8'));
+      assert.strictEqual(state.stage, 'review-batch-complete');
+      assert.strictEqual(state.revision, created.state.revision + 1, 'exactly one transition may land');
+    } finally {
+      fs.rmSync(barrier, { recursive: true, force: true });
+      fs.rmSync(repo.root, { recursive: true, force: true });
+    }
+  });
+
+  test('a live heartbeat worker keeps the session unreclaimable while beats advance', () => {
+    const helper = require(HELPER);
+    const repo = fixture();
+    try {
+      const created = helper.openValidationSession(identity(repo));
+      const worker = spawnHeartbeatWorker(created.runDir, created.ownerToken, {
+        GROUNDWORK_VALIDATION_BEAT_MS: '100',
+      });
+      try {
+        waitFor(() => {
+          const heartbeat = heartbeatState(created.runDir);
+          return heartbeat.registered && heartbeat.pid === worker.pid;
+        }, 15000, 'heartbeat registration');
+
+        assert.throws(() => helper.openValidationSession(identity(repo)), /already active/);
+
+        const before = heartbeatState(created.runDir).lastBeat;
+        sleepMs(400);
+        const after = heartbeatState(created.runDir).lastBeat;
+        assert.notStrictEqual(after, before, 'beats must advance while the worker is live');
+        assert.throws(() => helper.openValidationSession(identity(repo)), /already active/);
+      } finally {
+        killAndWait(worker);
+      }
+    } finally {
+      fs.rmSync(repo.root, { recursive: true, force: true });
+    }
+  });
+
+  test('heartbeat startup grace prevents immediate reclamation of a just-opened session', () => {
+    const helper = require(HELPER);
+    const repo = fixture();
+    try {
+      const created = helper.openValidationSession(identity(repo));
+      assert.strictEqual(helper.sessionLiveness(created.state), 'grace');
+      assert.throws(() => helper.openValidationSession(identity(repo)), /already active/);
+      assert.throws(() => helper.abandonValidationSession(identity(repo), true), /cannot abandon a live/);
+    } finally {
+      fs.rmSync(repo.root, { recursive: true, force: true });
+    }
+  });
+
+  test('a crashed heartbeat worker becomes reclaimable after the stale threshold', () => {
+    const helper = require(HELPER);
+    const repo = fixture();
+    const previousStale = process.env.GROUNDWORK_VALIDATION_STALE_MS;
+    process.env.GROUNDWORK_VALIDATION_STALE_MS = '800';
+    try {
+      const created = helper.openValidationSession(identity(repo));
+      const worker = spawnHeartbeatWorker(created.runDir, created.ownerToken, {
+        GROUNDWORK_VALIDATION_BEAT_MS: '100',
+      });
+      waitFor(() => heartbeatState(created.runDir).registered, 15000, 'heartbeat registration');
+      killAndWait(worker);
+
+      waitFor(() => {
+        const age = Date.now() - Date.parse(heartbeatState(created.runDir).lastBeat);
+        return age >= 800;
+      }, 10000, 'staleness threshold');
+      // A stale owner must not be resumable even with the old capability:
+      // the successor invalidates it at takeover.
+      const reclaimed = helper.openValidationSession(identity(repo));
+      assert.strictEqual(reclaimed.status, 'reclaimed');
+      assert.strictEqual(reclaimed.state.owner.epoch, created.state.owner.epoch + 1);
+      assert.notStrictEqual(reclaimed.ownerToken, created.ownerToken);
+      assert.throws(() => helper.openValidationSession({
+        ...identity(repo),
+        resumeRun: created.state.runId,
+        ownerToken: created.ownerToken,
+      }), /capability does not match/);
+    } finally {
+      if (previousStale === undefined) delete process.env.GROUNDWORK_VALIDATION_STALE_MS;
+      else process.env.GROUNDWORK_VALIDATION_STALE_MS = previousStale;
+      fs.rmSync(repo.root, { recursive: true, force: true });
+    }
+  });
+
+  test('an old heartbeat worker cannot write after a successor takeover', () => {
+    const helper = require(HELPER);
+    const repo = fixture();
+    try {
+      const created = helper.openValidationSession(identity(repo));
+      // Long beat interval so the worker stays registered but silent while
+      // the takeover happens beneath it.
+      const worker = spawnHeartbeatWorker(created.runDir, created.ownerToken, {
+        GROUNDWORK_VALIDATION_BEAT_MS: '5000',
+      });
+      waitFor(() => heartbeatState(created.runDir).registered, 15000, 'heartbeat registration');
+
+      const stateFile = path.join(created.runDir, '.validation-session.json');
+      const frozen = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+      frozen.owner.heartbeat.lastBeat = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
+      frozen.owner.heartbeat.graceUntil = new Date(Date.now() - 60 * 1000).toISOString();
+      write(stateFile, JSON.stringify(frozen));
+
+      const reclaimed = helper.openValidationSession(identity(repo));
+      assert.strictEqual(reclaimed.status, 'reclaimed');
+      const digestAfterTakeover = JSON.parse(fs.readFileSync(stateFile, 'utf8')).owner.tokenDigest;
+
+      // The old worker's next beat (within ~5s) must fail authentication.
+      waitFor(() => !processAlive(worker.pid), 12000, 'old worker exit');
+      const finalState = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+      assert.strictEqual(finalState.owner.tokenDigest, digestAfterTakeover);
+      assert.strictEqual(finalState.owner.epoch, reclaimed.state.owner.epoch);
+    } finally {
+      fs.rmSync(repo.root, { recursive: true, force: true });
+    }
+  });
+
+  test('abandon never unlinks a successor pointer published mid-abandon', () => {
+    const helper = require(HELPER);
+    const repo = fixture();
+    try {
+      const created = helper.openValidationSession(identity(repo));
+      const stateFile = path.join(created.runDir, '.validation-session.json');
+      const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+      state.owner.heartbeat.graceUntil = new Date(Date.now() - 60 * 1000).toISOString();
+      state.owner.heartbeat.lastBeat = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
+      write(stateFile, JSON.stringify(state));
+
+      const parent = path.dirname(created.runDir);
+      const successorName = `groundwork-validation-${'b'.repeat(32)}`;
+      fs.mkdirSync(path.join(parent, successorName));
+      const activeFile = path.join(parent, 'active.json');
+
+      assert.throws(
+        () => helper.abandonValidationSession(identity(repo), true, undefined, {
+          beforeUnlink: () => {
+            // A successor open publishes between our stale observation and
+            // our unlink: the reclaimer must abort, not remove it.
+            write(activeFile, JSON.stringify({ version: 2, runDir: successorName }));
+          },
+        }),
+        /pointer changed during abandon/
+      );
+      const pointer = JSON.parse(fs.readFileSync(activeFile, 'utf8'));
+      assert.strictEqual(pointer.runDir, successorName, 'the successor pointer was unlinked');
+    } finally {
+      fs.rmSync(repo.root, { recursive: true, force: true });
+    }
+  });
+
+  test('fixer-inflight recovery requires the owner capability or a safe takeover', () => {
+    const helper = require(HELPER);
+    const repo = fixture();
+    try {
+      const created = helper.openValidationSession(identity(repo));
+      const coordinatorFile = path.join(created.runDir, 'coordinator-iter1.json');
+      write(coordinatorFile, JSON.stringify(coordinatorState()));
+      helper.checkpointValidationSession(created.runDir, {
+        expectedStage: 'initial-audit-pending',
+        nextStage: 'review-batch-complete',
+        iteration: 1,
+        coordinatorFile,
+        ownerToken: created.ownerToken,
+      });
+      const envelopeFile = path.join(created.runDir, 'repair-envelope-iter1.json');
+      write(envelopeFile, JSON.stringify({ iteration: 1, findings: [] }));
+      helper.beginFixerTransaction(created.runDir, {
+        iteration: 1,
+        envelopeFile,
+        ownerToken: created.ownerToken,
+      });
+
+      // Naming the run id alone is not ownership.
+      assert.throws(() => helper.openValidationSession({
+        ...identity(repo),
+        resumeRun: created.state.runId,
+      }), /already active/);
+
+      const recovered = helper.openValidationSession(resume(repo, created));
+      assert.strictEqual(recovered.status, 'recovered');
+      assert.strictEqual(recovered.state.stage, 'fixer-prepared');
+
+      // An unauthenticated takeover of a live recovered session is refused;
+      // after staleness it reclaims with a successor capability.
+      helper.beginFixerTransaction(created.runDir, {
+        iteration: 1,
+        envelopeFile,
+        ownerToken: created.ownerToken,
+      });
+      const stateFile = path.join(created.runDir, '.validation-session.json');
+      const stale = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+      stale.owner.heartbeat.graceUntil = new Date(Date.now() - 60 * 1000).toISOString();
+      stale.owner.heartbeat.lastBeat = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
+      write(stateFile, JSON.stringify(stale));
+      const reclaimed = helper.openValidationSession(identity(repo));
+      assert.strictEqual(reclaimed.status, 'reclaimed');
+      assert.strictEqual(reclaimed.state.stage, 'fixer-prepared');
+      assert.deepStrictEqual(reclaimed.recovery, { action: 'rerun-fixer' });
+      assert.notStrictEqual(reclaimed.ownerToken, created.ownerToken);
+    } finally {
+      fs.rmSync(repo.root, { recursive: true, force: true });
+    }
+  });
+
+  test('completed sessions replay read-only and reject further mutation', () => {
+    const helper = require(HELPER);
+    const repo = fixture();
+    try {
+      const session = checkpointInitialReview(helper, repo);
+      helper.completeValidationSession(session.runDir, {
+        expectedStage: 'review-batch-complete',
+        iterations: 1,
+        fixed: 0,
+        unworked: 0,
+        action: 'none',
+        ownerToken: session.ownerToken,
+      });
+      const replayed = helper.openValidationSession(identity(repo));
+      assert.strictEqual(replayed.status, 'completed');
+      assert.strictEqual(replayed.state.stage, 'validated');
+      assert.strictEqual(replayed.ownerToken, undefined);
+
+      const coordinatorFile = path.join(session.runDir, 'coordinator-iter2.json');
+      write(coordinatorFile, JSON.stringify(coordinatorState(1)));
+      assert.throws(() => helper.checkpointValidationSession(session.runDir, {
+        expectedStage: 'review-batch-complete',
+        nextStage: 'gates-complete',
+        iteration: 1,
+        coordinatorFile,
+        ownerToken: session.ownerToken,
+      }), /validation session stage is validated/);
+      assert.throws(() => helper.beginFixerTransaction(session.runDir, {
+        iteration: 1,
+        envelopeFile: coordinatorFile,
+        ownerToken: session.ownerToken,
+      }), /cannot begin fixer/);
+    } finally {
+      fs.rmSync(repo.root, { recursive: true, force: true });
+    }
+  });
+
+  test('version-1 boundary: completed v1 replays, incomplete v1 is never adopted', () => {
+    const helper = require(HELPER);
+    const repo = fixture();
+    try {
+      const created = helper.openValidationSession(identity(repo));
+      const stateFile = path.join(created.runDir, '.validation-session.json');
+      const coordinatorFile = path.join(created.runDir, 'coordinator-iter1.json');
+      write(coordinatorFile, JSON.stringify(coordinatorState()));
+      helper.checkpointValidationSession(created.runDir, {
+        expectedStage: 'initial-audit-pending',
+        nextStage: 'review-batch-complete',
+        iteration: 1,
+        coordinatorFile,
+        ownerToken: created.ownerToken,
+      });
+      helper.completeValidationSession(created.runDir, {
+        expectedStage: 'review-batch-complete',
+        iterations: 1,
+        fixed: 0,
+        unworked: 0,
+        action: 'none',
+        ownerToken: created.ownerToken,
+      });
+      // Downgrade the completed record to the version-1 shape: still safely
+      // readable, replay-only.
+      const completed = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+      const legacy = { ...completed, version: 1 };
+      delete legacy.revision;
+      delete legacy.owner;
+      write(stateFile, JSON.stringify(legacy));
+      const replayed = helper.openValidationSession(identity(repo));
+      assert.strictEqual(replayed.status, 'completed');
+      assert.strictEqual(replayed.state.completed.iterations, 1);
+
+      // An incomplete v1 session fails closed.
+      const repo2 = fixture();
+      try {
+        const fresh = helper.openValidationSession(identity(repo2));
+        const freshFile = path.join(fresh.runDir, '.validation-session.json');
+        const legacyIncomplete = JSON.parse(fs.readFileSync(freshFile, 'utf8'));
+        legacyIncomplete.version = 1;
+        delete legacyIncomplete.revision;
+        delete legacyIncomplete.owner;
+        write(freshFile, JSON.stringify(legacyIncomplete));
+        assert.throws(
+          () => helper.openValidationSession(identity(repo2)),
+          /version-1 validation session exists and is never adopted/
+        );
+        // Documented legacy recovery: force-abandon clears the wedged slot.
+        helper.abandonValidationSession(identity(repo2), true);
+        const next = helper.openValidationSession(identity(repo2));
+        assert.strictEqual(next.status, 'created');
+      } finally {
+        fs.rmSync(repo2.root, { recursive: true, force: true });
+      }
+    } finally {
+      fs.rmSync(repo.root, { recursive: true, force: true });
+    }
+  });
+
+  test('capability material never leaks into state, output, or diagnostics', () => {
+    const repo = fixture();
+    try {
+      const opened = spawnSync(process.execPath, [
+        HELPER, 'open',
+        '--repo-root', repo.root, '--project-root', repo.root, '--worktree', repo.root,
+        '--task-id', 'TASK-075', '--branch', 'task/TASK-075',
+        '--base-head', repo.baseHead, '--protocol-version', '1',
+      ], { encoding: 'utf8' });
+      assert.strictEqual(opened.status, 0, opened.stderr);
+      const token = JSON.parse(opened.stdout).owner_token;
+      assert.ok(token, 'open returns the capability to its caller');
+
+      const stateFile = path.join(JSON.parse(opened.stdout).run_dir, '.validation-session.json');
+      const stateText = fs.readFileSync(stateFile, 'utf8');
+      assert.ok(!stateText.includes(token), 'raw capability leaked into session state');
+
+      const coordinatorFile = path.join(path.dirname(stateFile), 'coordinator-iter1.json');
+      write(coordinatorFile, JSON.stringify(coordinatorState()));
+      const checkpoint = spawnSync(process.execPath, [
+        HELPER, 'checkpoint', '--run-dir', path.dirname(stateFile),
+        '--expected-stage', 'initial-audit-pending', '--next-stage', 'review-batch-complete',
+        '--iteration', '1', '--coordinator-file', coordinatorFile,
+        '--owner-token', token,
+      ], { encoding: 'utf8' });
+      assert.strictEqual(checkpoint.status, 0, checkpoint.stderr);
+      assert.ok(!checkpoint.stdout.includes(token), 'capability leaked into mutation output');
+
+      const forged = 'e'.repeat(48);
+      const failed = spawnSync(process.execPath, [
+        HELPER, 'checkpoint', '--run-dir', path.dirname(stateFile),
+        '--expected-stage', 'review-batch-complete', '--next-stage', 'gates-complete',
+        '--iteration', '1', '--coordinator-file', coordinatorFile,
+        '--owner-token', forged,
+      ], { encoding: 'utf8' });
+      assert.notStrictEqual(failed.status, 0);
+      assert.ok(!failed.stderr.includes(forged), 'capability leaked into error diagnostics');
+      assert.ok(!failed.stderr.includes(token), 'capability leaked into error diagnostics');
+
+      const stop = spawnSync(process.execPath, [
+        HELPER, 'heartbeat-stop', '--run-dir', path.dirname(stateFile), '--owner-token', token,
+      ], { encoding: 'utf8' });
+      assert.strictEqual(stop.status, 0, stop.stderr);
+      assert.ok(!stop.stdout.includes(token), 'capability leaked into heartbeat output');
+
+      const helper = require(HELPER);
+      const snapshot = JSON.stringify(helper.validationStatusSnapshot(path.dirname(stateFile)));
+      assert.ok(!snapshot.includes(token), 'capability leaked into status snapshots');
+    } finally {
+      fs.rmSync(repo.root, { recursive: true, force: true });
+    }
+  });
 });
 
 process.on('exit', () => {

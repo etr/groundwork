@@ -4734,6 +4734,7 @@ describe('four-phase orchestration', () => {
                   branch: 'task/TASK-004',
                   baseHead: git(root, 'rev-parse', 'main'),
                   protocolVersion: 1,
+                  runnerMode: true,
                 };
                 const session = validationSessions.openValidationSession(identity);
                 const coordinatorFile = path.join(session.runDir, 'coordinator-iter1.json');
@@ -4754,12 +4755,14 @@ describe('four-phase orchestration', () => {
                   nextStage: 'review-batch-complete',
                   iteration: 1,
                   coordinatorFile,
+                  ownerToken: session.ownerToken,
                 });
                 const envelopeFile = path.join(session.runDir, 'repair-envelope-iter1.json');
                 write(envelopeFile, JSON.stringify({ iteration: 1 }));
                 validationSessions.beginFixerTransaction(session.runDir, {
                   iteration: 1,
                   envelopeFile,
+                  ownerToken: session.ownerToken,
                 });
                 write(path.join(worktree, 'feature.txt'), 'partial validation fix\n');
                 throw new Error('validation harness crashed');
@@ -7066,6 +7069,153 @@ describe('installed standalone runner smoke', () => {
     } finally {
       fs.rmSync(source, { recursive: true, force: true });
       fs.rmSync(installed.root, { recursive: true, force: true });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Runner/manual validation ownership arbitration. The runner's project lease
+// never authorizes mutating a validation session: a live manual owner blocks
+// runner continuation, runner-owned continuation rides its retained private
+// capability, and a provably stale manual owner is reclaimed safely before
+// the runner starts its own heartbeat worker.
+// ---------------------------------------------------------------------------
+describe('runner and manual validation ownership arbitration', () => {
+  const SESSION_HELPER = path.join(PLUGIN_ROOT, 'lib', 'validation-session.js');
+  const helper = require(SESSION_HELPER);
+
+  function arbitrationFixture() {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-arbitration-'));
+    git(root, 'init', '-b', 'main');
+    git(root, 'config', 'user.email', 'test@example.com');
+    git(root, 'config', 'user.name', 'Test User');
+    write(path.join(root, 'specs', 'tasks.md'), '### TASK-075: Arbitration\n');
+    write(path.join(root, 'src.txt'), 'base\n');
+    git(root, 'add', '.');
+    git(root, 'commit', '-m', 'base');
+    git(root, 'switch', '-c', 'task/TASK-075');
+    write(path.join(root, 'src.txt'), 'implementation\n');
+    git(root, 'add', '.');
+    git(root, 'commit', '-m', 'implementation');
+    return {
+      root,
+      baseHead: git(root, 'rev-parse', 'main'),
+      identity: {
+        repoRoot: root,
+        projectRoot: root,
+        worktreePath: root,
+        taskId: 'TASK-075',
+        branch: 'task/TASK-075',
+        baseHead: git(root, 'rev-parse', 'main'),
+        protocolVersion: 1,
+      },
+    };
+  }
+
+  function openCli(repo, extra = []) {
+    const result = spawnSync(process.execPath, [
+      SESSION_HELPER, 'open',
+      '--repo-root', repo.root, '--project-root', repo.root, '--worktree', repo.root,
+      '--task-id', 'TASK-075', '--branch', 'task/TASK-075',
+      '--base-head', repo.baseHead, '--protocol-version', '1',
+      ...extra,
+    ], { encoding: 'utf8' });
+    return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+  }
+
+  test('a live manual session blocks runner continuation without the runner stealing it', () => {
+    const repo = arbitrationFixture();
+    try {
+      const manual = helper.openValidationSession(repo.identity);
+      assert.strictEqual(manual.status, 'created');
+
+      // The runner arrives with only its project lease (--runner-mode): no
+      // capability, no continuation proof — it must be refused, and the
+      // manual owner's epoch must be untouched.
+      const runner = openCli(repo, ['--runner-mode']);
+      assert.notStrictEqual(runner.status, 0, 'the runner stole a live manual session');
+      assert.match(runner.stderr, /already active/);
+
+      const state = JSON.parse(fs.readFileSync(
+        path.join(manual.runDir, '.validation-session.json'), 'utf8'));
+      assert.strictEqual(state.owner.epoch, manual.state.owner.epoch);
+      // No runner capability was stored for a session it does not own.
+      assert.strictEqual(
+        fs.existsSync(path.join(path.dirname(manual.runDir), 'runner-capability.json')),
+        false
+      );
+    } finally {
+      fs.rmSync(repo.root, { recursive: true, force: true });
+    }
+  });
+
+  test('runner-owned continuation resumes through its retained capability', () => {
+    const repo = arbitrationFixture();
+    try {
+      const first = openCli(repo, ['--runner-mode']);
+      assert.strictEqual(first.status, 0, first.stderr);
+      const opened = JSON.parse(first.stdout);
+      assert.strictEqual(opened.status, 'created');
+      assert.ok(opened.owner_token);
+
+      const capabilityFile = path.join(path.dirname(opened.run_dir), 'runner-capability.json');
+      assert.ok(fs.existsSync(capabilityFile), 'runner mode must retain its capability privately');
+      const mode = fs.statSync(capabilityFile).mode & 0o777;
+      assert.strictEqual(mode, 0o600, 'the retained capability must be private');
+
+      // A later runner invocation (fresh process, resume-run from its
+      // checkpoint, no explicit token) continues the same run through the
+      // retained capability.
+      const second = openCli(repo, ['--runner-mode', '--resume-run', opened.run_id]);
+      assert.strictEqual(second.status, 0, second.stderr);
+      const resumed = JSON.parse(second.stdout);
+      assert.strictEqual(resumed.status, 'resumed');
+      assert.strictEqual(resumed.run_id, opened.run_id);
+      assert.strictEqual(resumed.owner_token, opened.owner_token);
+    } finally {
+      fs.rmSync(repo.root, { recursive: true, force: true });
+    }
+  });
+
+  test('a stale manual owner is reclaimed and the runner starts a new heartbeat worker', () => {
+    const repo = arbitrationFixture();
+    try {
+      const manual = helper.openValidationSession(repo.identity);
+      const stateFile = path.join(manual.runDir, '.validation-session.json');
+      const stale = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+      stale.owner.heartbeat.graceUntil = new Date(Date.now() - 60 * 1000).toISOString();
+      stale.owner.heartbeat.lastBeat = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
+      write(stateFile, JSON.stringify(stale));
+
+      const runner = openCli(repo, ['--runner-mode']);
+      assert.strictEqual(runner.status, 0, runner.stderr);
+      const reclaimed = JSON.parse(runner.stdout);
+      assert.strictEqual(reclaimed.status, 'reclaimed');
+      assert.strictEqual(reclaimed.owner_token !== manual.ownerToken, true);
+
+      const worker = spawn(process.execPath, [
+        SESSION_HELPER, 'heartbeat-loop',
+        '--run-dir', reclaimed.run_dir, '--owner-token', reclaimed.owner_token,
+      ], { env: { ...process.env, GROUNDWORK_VALIDATION_BEAT_MS: '100' }, stdio: 'ignore' });
+      try {
+        const deadline = Date.now() + 15000;
+        for (;;) {
+          const heartbeat = JSON.parse(fs.readFileSync(
+            path.join(reclaimed.run_dir, '.validation-session.json'), 'utf8')).owner.heartbeat;
+          if (heartbeat.registered && heartbeat.pid === worker.pid) break;
+          if (Date.now() > deadline) throw new Error('runner heartbeat worker never registered');
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+        }
+        // The reclaimed session is live again and manual capability is dead.
+        assert.throws(
+          () => helper.openValidationSession({ ...repo.identity, resumeRun: reclaimed.run_id, ownerToken: manual.ownerToken }),
+          /capability does not match/
+        );
+      } finally {
+        worker.kill('SIGKILL');
+      }
+    } finally {
+      fs.rmSync(repo.root, { recursive: true, force: true });
     }
   });
 });
