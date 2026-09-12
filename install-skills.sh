@@ -1203,6 +1203,8 @@ install_pi_extension() {
         mkdir -p "$ext_dir/lib"
         cp "$SOURCE_DIR/pi-extension/"*.ts "$ext_dir/" 2>/dev/null || true
         cp "$SOURCE_DIR/pi-extension/lib/"*.ts "$ext_dir/lib/" 2>/dev/null || true
+        # Dependency-free JS runtime helpers the TypeScript sources delegate to
+        cp "$SOURCE_DIR/pi-extension/lib/"*.js "$ext_dir/lib/" 2>/dev/null || true
         echo "  [wrote] $ext_dir/ (Pi extension)"
     else
         echo "  [warn] Pi extension source not found at $SOURCE_DIR/pi-extension"

@@ -2,10 +2,24 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import * as path from "path";
 import { registerSubagentTool } from "./subagents";
 import { detectSpecs, extractSpecSummary } from "./lib/specs";
-import { resolveProjectContext, type ProjectContext } from "./lib/project-context";
+import {
+  resolveProjectContext,
+  listProjects,
+  type ProjectContext,
+} from "./lib/project-context";
+
+// Lowercase Groundwork template variables are the supported contract;
+// substitution is delegated to the shared, tested JS helper.
+const { applyTemplateVars } = require("./lib/template-vars");
 
 export default function (pi: ExtensionAPI) {
-  let projectCtx: ProjectContext = { root: "", specsDir: "", name: "" };
+  let projectCtx: ProjectContext = {
+    root: "",
+    specsDir: "",
+    name: "",
+    selectionRequired: false,
+    bindings: {},
+  };
 
   // Register groundwork_agent tool for subprocess-based agent dispatch
   const agentsDir = path.resolve(__dirname, "../skills");
@@ -28,10 +42,13 @@ export default function (pi: ExtensionAPI) {
     }
   });
 
-  // Template variable resolution in message content
+  // Template variable resolution in message content (lowercase bindings)
   pi.on("context", async (event, _ctx) => {
     return {
-      messages: resolveTemplateVars(event.messages, projectCtx),
+      messages: event.messages.map((msg) => ({
+        ...msg,
+        content: applyTemplateVars(msg.content, projectCtx.bindings),
+      })),
     };
   });
 
@@ -51,63 +68,19 @@ export default function (pi: ExtensionAPI) {
   pi.registerCommand("groundwork-select-project", {
     description: "Select active project in monorepo",
     handler: async (_args, ctx) => {
-      const configPath = path.join(projectCtx.root, ".groundwork.yml");
-      try {
-        const fs = await import("fs");
-        if (!fs.existsSync(configPath)) {
-          ctx.ui.showMessage("No .groundwork.yml found in project root.");
-          return;
-        }
-        const content = fs.readFileSync(configPath, "utf-8");
-        const projects = parseProjectList(content);
-        if (projects.length === 0) {
-          ctx.ui.showMessage("No projects defined in .groundwork.yml");
-          return;
-        }
-        const selected = await ctx.ui.select("Select project:", projects);
-        if (selected) {
-          projectCtx = resolveProjectContext(ctx.cwd, selected);
-          ctx.ui.showMessage(`Switched to project: ${selected}`);
-        }
-      } catch {
-        ctx.ui.showMessage("Failed to read .groundwork.yml");
+      const projects = listProjects(ctx.cwd);
+      if (projects.length === 0) {
+        ctx.ui.showMessage("No projects defined in .groundwork.yml");
+        return;
+      }
+      const selected = await ctx.ui.select(
+        "Select project:",
+        projects.map((p) => p.name),
+      );
+      if (selected) {
+        projectCtx = resolveProjectContext(ctx.cwd, selected);
+        ctx.ui.showMessage(`Switched to project: ${selected}`);
       }
     },
   });
-}
-
-/** Replace template variables like {{PROJECT_ROOT}} in messages */
-function resolveTemplateVars(
-  messages: Array<{ role: string; content: string }>,
-  ctx: ProjectContext,
-): Array<{ role: string; content: string }> {
-  return messages.map((msg) => ({
-    ...msg,
-    content: msg.content
-      .replace(/\{\{PROJECT_ROOT\}\}/g, ctx.root)
-      .replace(/\{\{PROJECT_NAME\}\}/g, ctx.name)
-      .replace(/\{\{SPECS_DIR\}\}/g, ctx.specsDir),
-  }));
-}
-
-/** Extract project names from .groundwork.yml content */
-function parseProjectList(content: string): string[] {
-  const projects: string[] = [];
-  const lines = content.split("\n");
-  let inProjects = false;
-  for (const line of lines) {
-    if (/^projects:/.test(line)) {
-      inProjects = true;
-      continue;
-    }
-    if (inProjects) {
-      const match = line.match(/^\s+-\s+name:\s*(.+)/);
-      if (match) {
-        projects.push(match[1].trim());
-      } else if (/^\S/.test(line)) {
-        break; // End of projects block
-      }
-    }
-  }
-  return projects;
 }
