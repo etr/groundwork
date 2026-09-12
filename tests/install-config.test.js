@@ -261,10 +261,6 @@ function createAgentFixture(agentMarkdown) {
   fs.mkdirSync(path.join(source, 'bin'));
   fs.writeFileSync(path.join(source, 'install-config.txt'), '');
   fs.writeFileSync(path.join(source, 'agents', 'fixture-agent', 'AGENT.md'), agentMarkdown);
-  fs.copyFileSync(
-    path.join(PLUGIN_ROOT, 'bin', 'groundwork-run.js'),
-    path.join(source, 'bin', 'groundwork-run.js')
-  );
   for (const file of [
     'transform-agents.js',
     'render-codex-agent.js',
@@ -273,11 +269,22 @@ function createAgentFixture(agentMarkdown) {
     'apply-codex-skill-policy.js',
     'model-override.js',
     'codex-model-policy.json',
-    'run-reporting.js',
-    'validation-session.js',
+    'external-runner-manifest.js',
   ]) {
     const original = path.join(PLUGIN_ROOT, 'lib', file);
     if (fs.existsSync(original)) fs.copyFileSync(original, path.join(source, 'lib', file));
+  }
+  // The runner runtime ships as the manifest closure, not a second
+  // hand-maintained list here.
+  const manifestEntries = JSON.parse(
+    execFileSync('node', [path.join(PLUGIN_ROOT, 'lib', 'external-runner-manifest.js'), '--json'], {
+      encoding: 'utf8',
+    })
+  );
+  for (const entry of manifestEntries) {
+    const destination = path.join(source, entry.source);
+    fs.mkdirSync(path.dirname(destination), { recursive: true });
+    fs.copyFileSync(path.join(PLUGIN_ROOT, entry.source), destination);
   }
   return source;
 }
@@ -1815,6 +1822,112 @@ describe('export degradation guard', () => {
           );
         }
       }
+    }
+  });
+});
+
+// --- External runner runtime closure ---
+// The standalone Codex runner bundle is exported from an explicit, checked
+// manifest (lib/external-runner-manifest.js). The manifest is the dependency
+// contract between three parties: the runner (which loads every startup
+// helper through a fail-closed loader), the installer (which loops over the
+// manifest instead of a hand-maintained helper list), and these tests.
+describe('external runner runtime closure', () => {
+  const MANIFEST = path.join(PLUGIN_ROOT, 'lib', 'external-runner-manifest.js');
+
+  function write(file, content) {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, content);
+  }
+
+  function manifestEntries() {
+    return JSON.parse(execFileSync('node', [MANIFEST, '--json'], { encoding: 'utf8' }));
+  }
+
+  test('manifest declares the complete standalone runner runtime', () => {
+    const entries = manifestEntries();
+    assert.ok(Array.isArray(entries) && entries.length > 0, 'manifest emitted no entries');
+    const names = entries.map((entry) => entry.installed);
+    for (const required of [
+      'groundwork-run.js',
+      'run-reporting.js',
+      'validation-session.js',
+      'atomic-write.js',
+      'worktree-identity.js',
+      'project-context.js',
+      'plan-check.js',
+    ]) {
+      assert.ok(names.includes(required), `runtime manifest does not declare ${required}`);
+    }
+  });
+
+  test('manifest entries are unique and every source is a regular local file', () => {
+    const seenInstalled = new Set();
+    const seenSource = new Set();
+    for (const entry of manifestEntries()) {
+      assert.ok(!seenInstalled.has(entry.installed), `duplicate installed name: ${entry.installed}`);
+      assert.ok(!seenSource.has(entry.source), `duplicate source: ${entry.source}`);
+      seenInstalled.add(entry.installed);
+      seenSource.add(entry.source);
+      const stat = fs.lstatSync(path.join(PLUGIN_ROOT, entry.source));
+      assert.ok(stat.isFile(), `manifest source is not a regular file: ${entry.source}`);
+    }
+  });
+
+  test('manifest validation rejects a source entry that does not exist', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-manifest-src-'));
+    try {
+      fs.mkdirSync(path.join(root, 'lib'));
+      fs.mkdirSync(path.join(root, 'bin'));
+      write(path.join(root, 'bin', 'groundwork-run.js'), '#!/usr/bin/env node\n');
+      const manifest = fs.readFileSync(MANIFEST, 'utf8');
+      // Point one declared entry at a missing source file via a fixture copy.
+      const fixtureManifest = manifest.replace(
+        /source: '([^']+)'/,
+        "source: 'lib/does-not-exist.js'"
+      );
+      assert.notStrictEqual(fixtureManifest, manifest, 'fixture did not modify the manifest source');
+      fs.writeFileSync(path.join(root, 'lib', 'external-runner-manifest.js'), fixtureManifest);
+      const result = spawnSync(
+        'node',
+        [path.join(root, 'lib', 'external-runner-manifest.js'), '--json'],
+        { encoding: 'utf8' }
+      );
+      assert.notStrictEqual(result.status, 0, 'manifest validation accepted a missing source file');
+      assert.match(result.stderr, /does-not-exist|regular local file|missing/i);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('every helper the runner loads through the fail-closed loader is declared', () => {
+    const runnerSource = fs.readFileSync(path.join(PLUGIN_ROOT, 'bin', 'groundwork-run.js'), 'utf8');
+    const loaderUses = [...runnerSource.matchAll(/requireRuntimeHelper\('([^']+)'\)/g)];
+    assert.ok(loaderUses.length >= 4, 'runner no longer loads its helpers through requireRuntimeHelper');
+    const declared = new Set(manifestEntries().map((entry) => entry.installed));
+    for (const use of loaderUses) {
+      assert.ok(
+        declared.has(use[1]),
+        `runner requires ${use[1]} but the runtime manifest does not declare it`
+      );
+    }
+  });
+
+  test('fresh --codex export installs every manifest runtime file byte-identical', () => {
+    const root = runInstaller('codex');
+    if (root === null) return; // no bash — end-to-end checks skipped
+    try {
+      for (const entry of manifestEntries()) {
+        const installed = path.join(root, '.codex', entry.installed);
+        assert.ok(fs.existsSync(installed), `--codex export is missing runtime file ${entry.installed}`);
+        assert.strictEqual(
+          fs.readFileSync(installed, 'utf8'),
+          fs.readFileSync(path.join(PLUGIN_ROOT, entry.source), 'utf8'),
+          `installed ${entry.installed} differs from ${entry.source}`
+        );
+      }
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
     }
   });
 });

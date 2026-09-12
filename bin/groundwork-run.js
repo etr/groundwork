@@ -9,15 +9,35 @@ const { execFileSync, spawnSync } = require('child_process');
 const { StringDecoder } = require('string_decoder');
 const { Worker } = require('worker_threads');
 
-const validationSessionModule = [
-  path.join(__dirname, '..', 'lib', 'validation-session.js'),
-  path.join(__dirname, 'validation-session.js'),
-].find((candidate) => fs.existsSync(candidate));
-const validationSessions = validationSessionModule ? require(validationSessionModule) : null;
-const runReportingModule = [
-  path.join(__dirname, '..', 'lib', 'run-reporting.js'),
-  path.join(__dirname, 'run-reporting.js'),
-].find((candidate) => fs.existsSync(candidate));
+// Runtime helper loader. The runner runs from two layouts: the source tree
+// (bin/ + lib/) and the standalone export where every helper is colocated
+// next to this script. Every startup helper is required — an export that
+// omits one is corrupted and must fail closed with a reinstall diagnostic,
+// never silently disable the feature that needs it.
+const runtimeHelperPaths = {};
+function requireRuntimeHelper(name) {
+  const candidateDirectories = [path.join(__dirname, '..', 'lib'), __dirname];
+  for (const directory of candidateDirectories) {
+    const candidate = path.join(directory, name);
+    if (fs.existsSync(candidate)) {
+      runtimeHelperPaths[name] = candidate;
+      return require(candidate);
+    }
+  }
+  throw new Error(
+    `Groundwork runner runtime is incomplete: required helper "${name}" is missing `
+    + `(looked in ${candidateDirectories.join(' and ')}). The standalone runtime is corrupted or `
+    + 'was exported by an older installer; reinstall Groundwork for this harness '
+    + '(./install-skills.sh) and retry.'
+  );
+}
+
+function runtimeHelperPath(name) {
+  if (!(name in runtimeHelperPaths)) requireRuntimeHelper(name);
+  return runtimeHelperPaths[name];
+}
+
+const validationSessions = requireRuntimeHelper('validation-session.js');
 const {
   createRunReporter,
   createTranscriptWriter,
@@ -26,22 +46,12 @@ const {
   showTaskLogs,
   showTaskStatus,
   transcriptSignalsFromEvent,
-} = runReportingModule ? require(runReportingModule) : {};
-const worktreeIdentityModule = [
-  path.join(__dirname, '..', 'lib', 'worktree-identity.js'),
-  path.join(__dirname, 'worktree-identity.js'),
-].find((candidate) => fs.existsSync(candidate));
+} = requireRuntimeHelper('run-reporting.js');
 const {
   legacyWorkspaceOwner,
   taskWorkspaceIdentity,
-} = worktreeIdentityModule
-  ? require(worktreeIdentityModule).createWorktreeIdentity({ execGit: (cwd, args) => execGit(cwd, args) })
-  : {};
-const planCheckModule = [
-  path.join(__dirname, '..', 'lib', 'plan-check.js'),
-  path.join(__dirname, 'plan-check.js'),
-].find((candidate) => fs.existsSync(candidate));
-const planBelongsToProject = planCheckModule ? require(planCheckModule).planBelongsToProject : null;
+} = requireRuntimeHelper('worktree-identity.js').createWorktreeIdentity({ execGit: (cwd, args) => execGit(cwd, args) });
+const { planBelongsToProject } = requireRuntimeHelper('plan-check.js');
 
 const TASK_ID = /^TASK-(\d{3})$/;
 const SUPPORTED_HARNESSES = ['claude', 'codex', 'zcode'];
@@ -1537,8 +1547,6 @@ function reportingPath(commonDir, repoRoot, projectRoot, taskId) {
 
 function validationSnapshotForStatus(input, dependencies = {}) {
   if (dependencies.validationSnapshot) return dependencies.validationSnapshot(input);
-  if (!validationSessions || !validationSessions.inspectActiveValidationSession
-      || !validationSessions.validationStatusSnapshot) return null;
   const checkpoint = loadCheckpoint(
     input.commonDir,
     input.repoRoot,
@@ -2226,7 +2234,7 @@ const interval = setInterval(() => {
       harness: input.harness,
       verbose: Boolean(input.verbose),
       harnessLabel: HARNESS_LABELS[input.harness] || input.harness,
-      runReportingModule,
+      runReportingModule: runtimeHelperPath('run-reporting.js'),
       transcript,
       agentName: input.phase === 'validate'
         ? 'validation-coordinator'
@@ -2874,7 +2882,7 @@ function assertRunnerPlanFile(taskProjectRoot, baseProjectRoot, reportedPath) {
     // Legacy unscoped location: task IDs are only unique per project, so a
     // repo-root plan may belong to a different project. Verify the plan's
     // recorded project context before adopting it.
-    if (baseProjectRoot !== taskProjectRoot && planBelongsToProject) {
+    if (baseProjectRoot !== taskProjectRoot) {
       const ownership = planBelongsToProject(baseCandidate, taskProjectRoot, baseProjectRoot);
       if (!ownership.ok) {
         throw new Error(
@@ -3807,7 +3815,7 @@ function runTasks(options, dependencies = {}) {
             const existingTaskProject = path.join(implementation.worktreePath, projectRelativePath);
             assertNoSymlinkComponents(implementation.worktreePath, existingTaskProject, 'Task project');
             const inspectValidation = dependencies.inspectActiveValidationSession
-              || (validationSessions && validationSessions.inspectActiveValidationSession);
+              || validationSessions.inspectActiveValidationSession;
             if (!acceptedIntegration && inspectValidation && checkpoint.implementation
                 && checkpoint.implementation.planSha256 === planRecord.sha256
                 && checkpoint.implementation.branch === expectedBranch

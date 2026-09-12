@@ -9,7 +9,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { execFileSync, spawn } = require('child_process');
+const { execFileSync, spawn, spawnSync } = require('child_process');
 
 const PLUGIN_ROOT = path.resolve(__dirname, '..');
 const RUNNER = path.join(PLUGIN_ROOT, 'bin', 'groundwork-run.js');
@@ -6956,6 +6956,116 @@ describe('skill and export integration', () => {
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
       fs.rmSync(path.dirname(external), { recursive: true, force: true });
+    }
+  });
+});
+
+describe('installed standalone runner smoke', () => {
+  function installCodexRunner(sourceRoot) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-smoke-'));
+    execFileSync(
+      'bash',
+      [path.join(sourceRoot, 'install-skills.sh'), '--codex', '--project', '--force', '--source', sourceRoot],
+      { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
+    );
+    return { root, runner: path.join(root, '.codex', 'groundwork-run.js') };
+  }
+
+  function minimalFixtureRepo() {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-smoke-repo-'));
+    initRepo(repo);
+    return repo;
+  }
+
+  test('installed runner prints help and exits zero', () => {
+    const { root, runner } = installCodexRunner(PLUGIN_ROOT);
+    try {
+      assert.ok(fs.existsSync(runner), 'standalone runner was not installed');
+      const result = execFileSync('node', [runner, '--help'], { encoding: 'utf8' });
+      assert.match(result, /groundwork-run all/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('installed runner previews a minimal repo through --dry-run without missing helpers', () => {
+    const { root, runner } = installCodexRunner(PLUGIN_ROOT);
+    const repo = minimalFixtureRepo();
+    try {
+      const result = execFileSync(
+        'node',
+        [runner, 'all', '--harness', 'codex', '--repo', repo, '--dry-run'],
+        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
+      );
+      assert.match(result, /TASK-004/);
+      assert.match(result, /RESULT: SUCCESS/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  test('a new required local runner dependency fails the installed smoke until the manifest covers it', () => {
+    const source = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-smoke-src-'));
+    fs.cpSync(PLUGIN_ROOT, source, {
+      recursive: true,
+      filter: (entry) => {
+        const relative = path.relative(PLUGIN_ROOT, entry);
+        return relative === '' || !/^(?:\.git|\.worktrees|dist|node_modules)(?:\/|$)/.test(relative);
+      },
+    });
+    write(
+      path.join(source, 'lib', 'fixture-runtime-helper.js'),
+      "'use strict';\nmodule.exports = { fixtureMarker: () => 'fixture-runtime' };\n"
+    );
+    const runnerPath = path.join(source, 'bin', 'groundwork-run.js');
+    const runnerSource = fs.readFileSync(runnerPath, 'utf8');
+    const anchor = "requireRuntimeHelper('validation-session.js')";
+    assert.ok(runnerSource.includes(anchor), 'runner fixture anchor is missing');
+    fs.writeFileSync(
+      runnerPath,
+      runnerSource.replace(
+        anchor,
+        `${anchor};\nrequireRuntimeHelper('fixture-runtime-helper.js')`
+      )
+    );
+
+    const installed = installCodexRunner(source);
+    try {
+      const missing = spawnSync('node', [installed.runner, '--help'], { encoding: 'utf8' });
+      assert.notStrictEqual(missing.status, 0, 'installed runner ran although a required helper was not exported');
+      assert.match(
+        missing.stderr,
+        /fixture-runtime-helper[\s\S]*reinstall/i,
+        'missing-helper diagnostic must name the helper and the reinstall remedy'
+      );
+      assert.ok(!fs.existsSync(path.join(installed.root, '.codex', 'fixture-runtime-helper.js')));
+
+      const manifestPath = path.join(source, 'lib', 'external-runner-manifest.js');
+      const manifest = fs.readFileSync(manifestPath, 'utf8');
+      const manifestAnchor = "{ source: 'lib/plan-check.js', installed: 'plan-check.js' },";
+      assert.ok(manifest.includes(manifestAnchor), 'manifest fixture anchor is missing');
+      fs.writeFileSync(
+        manifestPath,
+        manifest.replace(
+          manifestAnchor,
+          `${manifestAnchor}\n  { source: 'lib/fixture-runtime-helper.js', installed: 'fixture-runtime-helper.js' },`
+        )
+      );
+      const reinstalled = installCodexRunner(source);
+      try {
+        assert.ok(
+          fs.existsSync(path.join(reinstalled.root, '.codex', 'fixture-runtime-helper.js')),
+          'manifest-covered helper was not exported'
+        );
+        const recovered = spawnSync('node', [reinstalled.runner, '--help'], { encoding: 'utf8' });
+        assert.strictEqual(recovered.status, 0, 'installed runner still fails after the manifest covers the helper');
+      } finally {
+        fs.rmSync(reinstalled.root, { recursive: true, force: true });
+      }
+    } finally {
+      fs.rmSync(source, { recursive: true, force: true });
+      fs.rmSync(installed.root, { recursive: true, force: true });
     }
   });
 });

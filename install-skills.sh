@@ -997,10 +997,26 @@ install_external_runner() {
 
     local dest_base
     dest_base=$(get_dest_base "$target")
-    write_codex_agent "$dest_base/groundwork-run.js" "$(<"$SOURCE_DIR/bin/groundwork-run.js")" "external task runner" "$dest_base"
+
+    # The standalone runner bundle is exported from the checked runtime
+    # manifest (lib/external-runner-manifest.js) — never a hand-maintained
+    # helper list. The manifest validates its own closure and exits non-zero
+    # on any drift, which fails the install under set -e before any file is
+    # written.
+    local manifest_tsv
+    manifest_tsv=$(node "$SOURCE_DIR/lib/external-runner-manifest.js" --tsv)
+
+    local source_rel installed_name label
+    while IFS=$'\t' read -r source_rel installed_name; do
+        [[ -z "$source_rel" ]] && continue
+        if [[ "$installed_name" == "groundwork-run.js" ]]; then
+            label="external task runner"
+        else
+            label="external runner runtime helper"
+        fi
+        write_codex_agent "$dest_base/$installed_name" "$(<"$SOURCE_DIR/$source_rel")" "$label" "$dest_base"
+    done <<< "$manifest_tsv"
     remove_legacy_codex_runner_memory "$dest_base"
-    write_codex_agent "$dest_base/run-reporting.js" "$(<"$SOURCE_DIR/lib/run-reporting.js")" "external runner reporting helper" "$dest_base"
-    write_codex_agent "$dest_base/validation-session.js" "$(<"$SOURCE_DIR/lib/validation-session.js")" "external validation session helper" "$dest_base"
 }
 
 # ============================================================
