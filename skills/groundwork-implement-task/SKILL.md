@@ -1,0 +1,201 @@
+---
+name: groundwork-implement-task
+description: Dispatches a planned task/feature to the task-executor agent for worktree-isolated TDD implementation
+---
+## Portable Project Context
+
+Before interpreting project-context placeholders in this workflow:
+
+1. Resolve the directory containing this `SKILL.md`.
+2. Run `node <skill-directory>/scripts/project-context-cli.js resolve --harness zcode` from the repository working directory.
+3. Use the returned JSON values as the exact bindings for `{{project_name}}`, `{{project_root}}`, `{{specs_dir}}`, `{{plans_dir}}`, `{{debug_dir}}`, and `{{research_dir}}` everywhere below.
+4. If `selection_required` is true, follow the `groundwork-select-project` workflow, then resolve again.
+
+
+# Task Implementation Skill
+
+Dispatches a previously planned task or feature to the task-executor agent for worktree-isolated TDD implementation.
+
+## Explicit Project Input
+
+If arguments include `--project <name>`, resolve that project directly from the repository's `.groundwork.yml` for this invocation. Treat it as authoritative; do not depend on or change persisted project selection. In runner mode, `GROUNDWORK_PROJECT` and `GROUNDWORK_PROJECT_ROOT` provide the same invocation-local selection.
+
+## Runner Mode
+
+If session context contains `GROUNDWORK_RUNNER_MODE=true`:
+
+- Skip the model recommendation pre-flight and all questions.
+- In task mode, skip Step 2 entirely; the base checkout must remain clean. Tell the task-executor to record `In Progress` inside the task worktree and include it in the implementation commit.
+- Forward the runner-supplied absolute worktree path exactly; do not let the executor choose another directory.
+- Forward the runner-supplied task branch exactly; monorepos use a project-qualified branch to prevent overlapping task IDs from colliding.
+- When the runner supplies `RESUME EXISTING WORKTREE=true`, verify and reuse that exact registered worktree. Tell the executor to inspect existing commits, working state, tests, and plan progress; do not repeat completed implementation work.
+- Forward the runner receipt token exactly.
+- The runner exclusively owns task-worktree creation, reconciliation, cleanup, staging, and commits. The task-executor edits and tests the precreated worktree, then proposes an expressive commit subject and body.
+- Return the task-executor's versioned JSON `RESULT: IMPLEMENTED` receipt unchanged.
+
+## Token Discipline
+
+This skill orchestrates implementation dispatch. Every turn re-reads the full context window, so unnecessary turns are expensive.
+
+1. **No narration turns.** Do not output text-only turns like "Let me dispatch the task" or "Now I'll launch the executor." Combine text with a tool call in the same turn, or skip the text entirely.
+2. **Batch tool calls.** When multiple tool calls are independent, issue them all in one turn.
+3. **No waiting updates.** Do not output "Waiting for results..." turns. Wait silently until results arrive.
+4. **Keep context lean.** Do not read file contents you won't use directly. The task-executor agent has Read/Grep/Glob and will read files in its own context window.
+
+## Pre-flight: Model Recommendation
+
+**Your current effort level is `{{effort_level}}`.**
+
+Skip this step silently if effort is `high`, `xhigh`, or `max` (the scale is `low` < `medium` < `high` < `xhigh` < `max`, so `xhigh` and `max` are already above `high`).
+If effort is `low` or `medium` (i.e. below `high`), you MUST show the recommendation prompt — regardless of model.
+
+Otherwise → use `Ask the user`:
+
+```json
+{
+  "questions": [{
+    "question": "Implementation benefits from consistent multi-domain reasoning.\n\nTo switch: cancel, raise the reasoning effort to max in the model settings (and switch to GLM in the model picker if you are on GLM-Flash), then re-invoke.",
+    "header": "Effort check",
+    "options": [
+      { "label": "Continue" },
+      { "label": "Cancel — I'll switch first" }
+    ],
+    "multiSelect": false
+  }]
+}
+```
+
+If the user selects "Cancel — I'll switch first": output the switching commands and stop. Do not proceed with the skill.
+
+## Step 0: Resolve Project Context
+
+**Before dispatching, ensure project context is resolved:**
+
+1. **Monorepo check:** Does `.groundwork.yml` exist at the repo root?
+   - If yes → Is `{{project_name}}` non-empty?
+     - If empty → Follow the groundwork-select-project workflow steps to select a project, then restart this skill.
+     - If set → Project is `{{project_name}}`, specs at `{{specs_dir}}/`.
+   - If no → Continue (single-project repo).
+2. Proceed with the resolved project context.
+
+## Step 1: Resolve Plan File
+
+Parse input from the caller's conversation context. Three modes:
+
+- **plan_file_path provided** → Read the plan file header to extract `Identifier`, `Mode`, `Branch prefix`, `Tasks path`.
+- **task_id only** (no plan_file_path) → Derive path `{{plans_dir}}/TASK-NNN-plan.md` (project-scoped, mirroring `{{specs_dir}}`). If it does not exist and the project root differs from the repository root, also check the legacy unscoped location `.groundwork-plans/TASK-NNN-plan.md` at the repository root — but before adopting it, verify its `## Context` header: the recorded `Specs dir:`/`Tasks path:` must point inside the selected project's tree (a legacy repo-root plan can belong to a different project, since task IDs are only unique per project). If the header names another project, output `RESULT: FAILURE | Legacy plan at the repository root belongs to a different project. Re-run plan-task for this project.` and stop. If neither location exists, output `RESULT: FAILURE | No plan found for TASK-NNN. Run plan-task first.` and stop.
+- **task_id + plan_file_path** → Use the provided plan file path. Verify it exists.
+- **Neither** → Output `RESULT: FAILURE | No plan_file_path or task_id provided. Run plan-task first.` and stop.
+
+Read ONLY the `## Context` header from the plan file to extract:
+- `identifier` (e.g., `TASK-004` or `FEATURE-user-login`)
+- `mode` (task, feature, or task+blurb)
+- `branch_prefix` (task or feature)
+- `tasks_path` (path to tasks file, or N/A)
+- `specs_dir`
+
+Do NOT read the full plan content into this orchestrator's context. The task-executor agent will read it.
+
+## Step 2: Update Task Status (task mode only)
+
+**Skip this step if identifier starts with `FEATURE-`.**
+
+**Also skip this step if `GROUNDWORK_RUNNER_MODE=true`.** Add the equivalent status update to the task-executor instructions so it occurs and is committed inside the task worktree, never in the base checkout.
+
+Update the task file to `**Status:** In Progress` and update the status table in `{{specs_dir}}/tasks/_index.md` or `{{specs_dir}}/tasks.md` (change the task's row to `In Progress`).
+
+## Step 3: Dispatch to task-executor
+
+Dispatch to the task-executor agent with a fresh context window. This agent has `use-git-worktree` and `test-driven-development` skills preloaded — it does not need to call `Skill()` or spawn sub-tasks.
+
+**Build the Agent prompt — pass paths, not content.**
+
+### Task mode (`identifier` starts with `TASK-`)
+
+> Spawn the `task-executor` agent for **Execute {identifier}** with this task:
+>
+> You are implementing a task that has already been fully planned.
+>
+> [If GROUNDWORK_BATCH_MODE=true in session: include the line below]
+> [If interactive: omit this line]
+> Do NOT use Ask the user — proceed automatically.
+>
+> [If GROUNDWORK_RUNNER_MODE=true: include both lines below]
+> GROUNDWORK_RUNNER_MODE=true
+> RUNNER RECEIPT TOKEN: [runner-supplied exact token]
+> WORKTREE PATH: [runner-supplied absolute worktree path]
+> TASK BRANCH: [runner-supplied exact branch]
+> The runner exclusively owns the task-worktree lifecycle. Verify and reuse the precreated registered worktree; never create, remove, move, or repair a worktree in runner mode.
+> [If the runner reports an existing ambiguous or partial worktree: include the line below]
+> RESUME EXISTING WORKTREE=true
+>
+> PROJECT ROOT: [absolute path to project root]
+>
+> TASK:
+> - task_id: [TASK-NNN]
+> - tasks_path: [absolute path to tasks file]
+>
+> Read the '### TASK-NNN:' section from tasks_path for goal, action items,
+> and acceptance criteria. Do not ask the caller for task details.
+>
+> PLAN FILE: [plan_file_path]
+> Read this file first with the Read tool — it contains the validated implementation plan.
+>
+> INSTRUCTIONS:
+> 1. Follow your preloaded skills to create or safely resume a worktree and implement with TDD. When WORKTREE PATH and TASK BRANCH are supplied, the runner exclusively owns the worktree lifecycle and all commits: verify and reuse the precreated registered worktree at exactly that path and branch; do not create, remove, move, repair, stage, commit, amend, or rebase it. When RESUME EXISTING WORKTREE=true, inspect completed plan items and tests, and finish only remaining work.
+> 2. Read the task section from tasks_path and the plan from PLAN FILE — they provide all session context. Do NOT re-ask the user for requirements.
+> [If GROUNDWORK_RUNNER_MODE=true: change this task's status to In Progress inside the task worktree and include that bookkeeping in the prepared implementation changes.]
+> 3. When complete, output your final line in EXACTLY this format:
+>    [If GROUNDWORK_RUNNER_MODE=true:]
+>    RESULT: IMPLEMENTED | {
+
+
+### Feature mode (`identifier` starts with `FEATURE-`)
+
+> Spawn the `task-executor` agent for **Implement {identifier}** with this task:
+>
+> You are implementing a feature that has already been fully planned.
+>
+> PROJECT ROOT: [absolute path to project root]
+>
+> FEATURE:
+> - Identifier: [FEATURE-slug]
+>
+> PLAN FILE: [plan_file_path]
+> Read this file first with the Read tool — it contains the validated implementation plan
+> including full requirements, acceptance criteria, and spec paths.
+>
+> INSTRUCTIONS:
+> 1. Follow your preloaded skills to create a worktree, implement with TDD, and commit.
+> 2. The plan file provides all session context including requirements, acceptance criteria, and spec paths. Read spec files referenced in the plan for architecture and design context. Do NOT re-ask the user for requirements.
+> 3. When complete, output your final line in EXACTLY this format:
+>    RESULT: IMPLEMENTED | <worktree_path> | <branch> | <base_branch>
+>    OR:
+>    RESULT: FAILURE | [one-line reason]
+>
+> IMPORTANT:
+> - Do NOT run validate or merge — the caller handles those
+> - Do NOT use Ask the user for merge decisions
+> - Your LAST line of output MUST be the RESULT line
+>
+
+
+## Step 4: Parse Result
+
+**After the sub-task returns**, parse the result:
+
+- In runner mode, accept only the versioned JSON `RESULT: IMPLEMENTED` receipt with the exact runner token and task identity, then output that final line unchanged.
+- `RESULT: IMPLEMENTED | <path> | <branch> | <base-branch>` → Output:
+  ```
+  RESULT: IMPLEMENTED | worktree_path=<path> | branch=<branch> | base_branch=<base-branch>
+  ```
+- `RESULT: FAILURE | ...` → Output:
+  ```
+  RESULT: FAILURE | <reason>
+  ```
+- No parseable RESULT line → Output:
+  ```
+  RESULT: FAILURE | Implementation sub-task did not return a structured result. Check worktree status manually.
+  ```
+
+**DO NOT proceed past this step. The caller handles validation, merge, and completion.**

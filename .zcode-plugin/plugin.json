@@ -1,0 +1,12 @@
+{
+  "name": "groundwork",
+  "version": "3.5.0",
+  "description": "Groundwork skills library for ZCode: discovery, domain modeling, architecture, planning, TDD, debugging, validation, and shipping workflows — translated for GLM models, with native review agents.",
+  "author": {
+    "name": "Groundwork Contributors"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/etr/groundwork",
+  "repository": "https://github.com/etr/groundwork",
+  "skills": "skills"
+}

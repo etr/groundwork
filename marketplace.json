@@ -1,0 +1,12 @@
+{
+  "name": "groundwork-zcode",
+  "plugins": [
+    {
+      "name": "groundwork",
+      "version": "3.5.0",
+      "displayName": "Groundwork",
+      "description": "Groundwork skills library translated for ZCode: GLM model wording, native agents, marketplace-managed updates.",
+      "source": "./"
+    }
+  ]
+}
