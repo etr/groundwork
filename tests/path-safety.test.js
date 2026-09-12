@@ -54,38 +54,52 @@ function skillBodies() {
 
 function scanTargets() {
   const targets = [];
-  for (const dir of ['skills', 'agents', 'lib', 'hooks', 'bin']) {
-    const absolute = path.join(PLUGIN_ROOT, dir);
-    if (!fs.existsSync(absolute)) continue;
-    for (const entry of fs.readdirSync(absolute)) {
-      if (entry.endsWith('.test.js')) continue;
-      const full = path.join(absolute, entry);
-      const stat = fs.statSync(full);
-      if (stat.isFile() && /\.(js|sh|md)$/.test(entry)) {
-        targets.push({ name: `${dir}/${entry}`, body: fs.readFileSync(full, 'utf8') });
-      } else if (stat.isDirectory() && dir === 'skills') {
-        const skillPath = path.join(full, 'SKILL.md');
-        if (fs.existsSync(skillPath)) {
-          targets.push({ name: `skills/${entry}/SKILL.md`, body: fs.readFileSync(skillPath, 'utf8') });
-        }
+  const surfaces = ['skills', 'agents', 'references', 'lib', 'hooks', 'bin', 'pi-extension'];
+  const walk = (relativeRoot, absoluteDir) => {
+    for (const entry of fs.readdirSync(absoluteDir)) {
+      if (entry === 'node_modules' || entry === '.git') continue;
+      const full = path.join(absoluteDir, entry);
+      const relative = `${relativeRoot}/${entry}`;
+      let stat;
+      try {
+        stat = fs.statSync(full);
+      } catch {
+        continue;
       }
+      if (stat.isDirectory()) {
+        walk(relative, full);
+      } else if (stat.isFile() && /\.(js|sh|md|ts)$/.test(entry) && !/\.test\.js$/.test(entry)) {
+        targets.push({ name: relative, body: fs.readFileSync(full, 'utf8') });
+      }
+    }
+  };
+  for (const surface of surfaces) {
+    const absolute = path.join(PLUGIN_ROOT, surface);
+    if (fs.existsSync(absolute)) walk(surface, absolute);
+  }
+  // Authored root-level scripts and docs.
+  for (const entry of fs.readdirSync(PLUGIN_ROOT)) {
+    const full = path.join(PLUGIN_ROOT, entry);
+    if (fs.statSync(full).isFile() && /\.(sh|js|md)$/.test(entry)) {
+      targets.push({ name: entry, body: fs.readFileSync(full, 'utf8') });
     }
   }
   return targets;
 }
 
+// A mention of the unscoped form is exempt only when the line is a genuine
+// one-time migration instruction: it must name the legacy location
+// (legacy / migration / unscoped) AND move the file into the scoped
+// template destination (`mv ... {{debug_dir}}` / `{{research_dir}}`) or
+// explicitly withdraw the legacy location from use. A bare keyword
+// ("# legacy", "fallback:") must NOT exempt a live unscoped write — that
+// is the exact regression this guard exists to catch.
+const LEGACY_KEYWORD = /legacy|migration|unscoped/;
+const MIGRATION_FORM =
+  /mv[^\n]*\{\{(?:debug|research)_dir\}\}|\{\{(?:debug|research)_dir\}\}[^\n]*\bmv\b|legacy location/;
+const LEGACY_LINE = (line) => LEGACY_KEYWORD.test(line) && MIGRATION_FORM.test(line);
+
 describe('reserved directories are project-scoped in skills', () => {
-  // A mention of the unscoped form is exempt only when the line is a genuine
-  // one-time migration instruction: it must name the legacy location
-  // (legacy / migration / unscoped) AND move the file into the scoped
-  // template destination (`mv ... {{debug_dir}}` / `{{research_dir}}`) or
-  // explicitly withdraw the legacy location from use. A bare keyword
-  // ("# legacy", "fallback:") must NOT exempt a live unscoped write — that
-  // is the exact regression this guard exists to catch.
-  const LEGACY_KEYWORD = /legacy|migration|unscoped/;
-  const MIGRATION_FORM =
-    /mv[^\n]*\{\{(?:debug|research)_dir\}\}|\{\{(?:debug|research)_dir\}\}[^\n]*\bmv\b|legacy location/;
-  const LEGACY_LINE = (line) => LEGACY_KEYWORD.test(line) && MIGRATION_FORM.test(line);
 
   test('the legacy exemption cannot be bypassed by a bare keyword', () => {
     // Live unscoped writes that merely carry an exempt-looking word stay
@@ -272,6 +286,133 @@ describe('repo slug encoding (D2)', () => {
       fs.rmSync(home, { recursive: true, force: true });
       fs.rmSync(repo, { recursive: true, force: true });
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Invocation-unique debug/research journals: concurrent same-project,
+// same-slug work must never share a journal path. The instruction itself has
+// to generate a collision-resistant literal path (slug + run identity), pass
+// it to every collaborator, return it in the final output, locate prior
+// journals by slug prefix on resume, and never erect a shared pointer.
+// ---------------------------------------------------------------------------
+describe('invocation-unique debug and research journals', () => {
+  const JOURNAL_CASES = [
+    { file: 'skills/debug/SKILL.md', fixed: '{{debug_dir}}/{slug}.md', prefix: '{{debug_dir}}' },
+    { file: 'skills/swarm-debug/SKILL.md', fixed: '{{debug_dir}}/{slug}.md', prefix: '{{debug_dir}}' },
+    { file: 'skills/swarm-design-architecture/SKILL.md', fixed: '{{research_dir}}/{slug}-research.md', prefix: '{{research_dir}}' },
+  ];
+
+  test('no journal skill instructs a fixed slug-only path', () => {
+    for (const { file, fixed } of JOURNAL_CASES) {
+      const body = fs.readFileSync(path.join(PLUGIN_ROOT, file), 'utf8');
+      const offenders = body
+        .split('\n')
+        .filter((line) => line.includes(fixed) && !LEGACY_LINE(line));
+      assert.deepStrictEqual(
+        offenders.map((line) => line.trim()),
+        [],
+        `${file} still instructs a fixed journal name (concurrent same-slug work would overwrite)`
+      );
+    }
+  });
+
+  test('each journal skill generates a collision-resistant literal path once', () => {
+    for (const { file } of JOURNAL_CASES) {
+      const body = fs.readFileSync(path.join(PLUGIN_ROOT, file), 'utf8');
+      // Run identity: timestamp plus pid (the same contract as the handoff
+      // artifact), embedded in a generation command the skill runs once.
+      assert.match(body, /date \+%Y%m%d%H%M%S/, `${file} lacks a timestamp in the journal identity`);
+      assert.match(body, /-\$\$[-.)]/, `${file} lacks the pid in the journal identity`);
+      // The literal generated path is what collaborators receive.
+      assert.match(body, /literal (?:resolved )?(?:journal|path|research)/i, `${file} must pass the literal path to collaborators`);
+      // Prior work is found by slug prefix, never by a fixed name.
+      assert.match(body, /\$\{SLUG\}-\*/, `${file} must locate prior journals by slug prefix on resume`);
+      // No shared "current" pointer.
+      assert.ok(
+        !/\{\{(?:debug|research)_dir\}\}\/current/.test(body),
+        `${file} must never create a shared current pointer`
+      );
+    }
+  });
+
+  test('journal skills return the literal path in their output contract', () => {
+    for (const { file } of JOURNAL_CASES) {
+      const body = fs.readFileSync(path.join(PLUGIN_ROOT, file), 'utf8');
+      assert.match(
+        body,
+        /final output|handoff output|report the (?:literal )?(?:journal|research) path/i,
+        `${file} must return the journal path in its final or handoff output`
+      );
+    }
+  });
+});
+
+describe('fixed shared pointers and lock primitives', () => {
+  // A fixed shared pointer (an "active" slot another process rewrites) is
+  // only acceptable behind the approved lock primitive. `active.json` is the
+  // validation session pointer: code may touch it only in the session
+  // helper; protocol documentation is the explicit doc exemption.
+  const POINTER_DOCS = new Set(['references/validation-session-protocol.md']);
+
+  test('active pointers appear only in the validation session helper or its protocol doc', () => {
+    const offenders = [];
+    // A prohibition line ("Never edit ... active.json directly") names the
+    // pointer only to forbid touching it — that is the policy itself.
+    const PROHIBITION = /never edit|never modify|do not edit|must not|helper-owned/i;
+    for (const { name, body } of scanTargets()) {
+      if (name === 'lib/validation-session.js') continue;
+      if (POINTER_DOCS.has(name)) continue;
+      for (const line of body.split('\n')) {
+        if (/active\.json/.test(line) && !PROHIBITION.test(line)) {
+          offenders.push(`${name}: ${line.trim()}`);
+        }
+      }
+    }
+    assert.deepStrictEqual(offenders, []);
+  });
+
+  test('every shared-pointer and temporary allocation uses O_EXCL with holder identity', () => {
+    const atomicWrite = fs.readFileSync(path.join(PLUGIN_ROOT, 'lib', 'atomic-write.js'), 'utf8');
+    assert.match(atomicWrite, /openSync\(temporary, 'wx'/, 'atomic temporaries must be O_EXCL');
+    assert.match(atomicWrite, /randomBytes/, 'atomic temporaries must carry cryptographic uniqueness');
+    const ownedLock = fs.readFileSync(path.join(PLUGIN_ROOT, 'lib', 'owned-lock.js'), 'utf8');
+    assert.match(ownedLock, /openSync\(lockFile, 'wx'/, 'owned locks must be O_EXCL');
+    assert.match(ownedLock, /processStart/, 'owned locks must record holder process identity');
+    const session = fs.readFileSync(path.join(PLUGIN_ROOT, 'lib', 'validation-session.js'), 'utf8');
+    assert.match(session, /openSync\(lockFile, 'wx'/, 'the session open lock must be O_EXCL');
+  });
+
+  test('runtime export closure ships the locking primitives', () => {
+    const manifest = JSON.parse(
+      require('child_process').execFileSync(
+        'node',
+        [path.join(PLUGIN_ROOT, 'lib', 'external-runner-manifest.js'), '--json'],
+        { encoding: 'utf8' }
+      )
+    );
+    const installed = new Set(manifest.map((entry) => entry.installed));
+    for (const helper of ['atomic-write.js', 'owned-lock.js', 'process-identity.js', 'validation-session.js']) {
+      assert.ok(installed.has(helper), `the runner export is missing lock primitive ${helper}`);
+    }
+    const installer = fs.readFileSync(path.join(PLUGIN_ROOT, 'install-skills.sh'), 'utf8');
+    assert.ok(
+      installer.includes('external-runner-manifest.js'),
+      'the installer must export the runner runtime from the checked manifest, not a hand list'
+    );
+  });
+
+  test('accepted single-writer boundaries remain unchanged', () => {
+    // Fixed collaborative spec files stay intentionally single-writer per
+    // project: spec artifacts are addressed through {{specs_dir}}, and task
+    // claiming stays a loud Git branch/worktree collision via the shared
+    // identity helper — never a claim marker in the base checkout.
+    const claimMarkingOffenders = [];
+    for (const { name, body } of scanTargets()) {
+      if (!/^skills\/|^\agents\//.test(name)) continue;
+      if (/touch .*\.groundwork.*claim|claim[-_]marker/.test(body)) claimMarkingOffenders.push(name);
+    }
+    assert.deepStrictEqual(claimMarkingOffenders, []);
   });
 });
 

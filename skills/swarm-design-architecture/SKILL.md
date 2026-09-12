@@ -63,7 +63,7 @@ LOAD CONTEXT → IDENTIFY DECISIONS → RESEARCH SWARM → ITERATE DECISIONS →
       └────────────────┴───────────────────┴──────────────────┴──────────────┴───────────┘
                                            │
                                    RESEARCH JOURNAL
-                              {{research_dir}}/{slug}-research.md
+                              {{research_dir}}/{slug}-{timestamp}-{pid}-research.md
 ```
 
 ## Step 0: Resolve Project Context
@@ -308,11 +308,11 @@ Aggregate all advocate findings into a comparison table per decision area:
 
 ### 3.7 — Persist Research Journal
 
-Write findings to `{{research_dir}}/{slug}-research.md`. This survives context compaction and documents the research for future reference.
+Write findings to an invocation-unique research journal — `{{research_dir}}/${SLUG}-$(date +%Y%m%d%H%M%S)-$$-research.md`, generated once from the feature slug plus this run's identity (timestamp + PID). This survives context compaction and documents the research for future reference; concurrent research on the same slug can never overwrite these journals.
 
 `{{research_dir}}` resolves inside the selected project's root (mirroring `{{plans_dir}}`), so the same feature slug in two monorepo projects produces two distinct research journals instead of silently overwriting each other at the repository root.
 
-**Derive the slug once:** kebab-case of the feature name, truncated to 40 characters. Compute the resolved journal path from it and use that **literal path** everywhere for the rest of the session — including in advocate-agent prompts and the Decision Record links in Step 5 — so the path can never drift between derivations.
+**Derive the slug once:** kebab-case of the feature name, truncated to 40 characters. Generate the resolved research journal path from it exactly once and use that **literal path** everywhere for the rest of the session — including in advocate-agent prompts and the Decision Record links in Step 5 — so the path can never drift between derivations. **Return the literal research path in your final output and any handoff**, and when resuming research on the same feature, locate prior journals by slug prefix (`ls -t {{research_dir}}/${SLUG}-*-research.md`) and read the newest before re-researching. Never create a shared `current` pointer.
 
 **Create the directory and gitignore entry before writing:**
 ```bash
@@ -381,7 +381,7 @@ Write the architecture document using the template in `${CLAUDE_PLUGIN_ROOT}/ref
 
 **Additional:** In each Decision Record, add a "Research" section linking to the research journal entry for that decision area:
 ```markdown
-**Research:** See `{{research_dir}}/{slug}-research.md` — {N} advocates evaluated {options list}
+**Research:** See `{{research_dir}}/{slug}-{timestamp}-{pid}-research.md` (the literal generated path) — {N} advocates evaluated {options list}
 ```
 
 ## Step 6: Suggest Next Step

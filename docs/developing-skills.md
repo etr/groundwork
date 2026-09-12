@@ -88,11 +88,13 @@ See the example at: references/example.md
 
 ## Path Safety
 
-Skills produce files. Three invariants prevent the collision bug class where two projects (or two concurrent sessions) silently overwrite each other's artifacts — `tests/path-safety.test.js` enforces them repo-wide, so a violating skill fails CI:
+Skills produce files. The guard in `tests/path-safety.test.js` enforces the invariants repo-wide across every authored surface — `skills/`, `agents/`, `references/`, `lib/`, `hooks/`, `bin/`, `pi-extension/`, and the root-level scripts — so a violating skill or helper fails CI:
 
 1. **Scope by the key that makes a name unique.** Task IDs, feature slugs, and bug slugs are only unique *per project*, so any artifact named after one must live under the project root — use the template variables, never a bare CWD-relative path. Run-keyed artifacts (handoffs, per-invocation outputs) must carry a uniqueness suffix (timestamp + PID, or the run id).
-2. **No fixed shared temp paths.** Run-scoped data never goes to a fixed `/tmp/groundwork-*` path; use `mktemp`/`mkdtemp` or the run-scoped directories the helpers provide.
-3. **Shared pointers are locked, not conventional.** Anything acting as an "active/current" pointer across processes needs an O_EXCL lock with staleness recovery (see `lib/validation-session.js`), not just a conventional filename.
+2. **Absolute bindings, invariant to the caller's cwd.** Every operational binding (`project_root`, `specs_dir`, `plans_dir`, `debug_dir`, `research_dir`) is an absolute normalized path resolved through `lib/project-context.js`. Relative spellings are legacy-read forms (old plan headers, old persisted state) — never emitted by new writers.
+3. **Invocation-unique journals.** Debug and research journals are per-invocation artifacts: concurrent same-project, same-slug work must generate different paths (`{slug}-$(date +%Y%m%d%H%M%S)-$$.md`), pass the literal generated path to every collaborator, return it in the final or handoff output, and find prior journals by slug prefix when resuming. Never a fixed slug-only name, never a shared `current` pointer.
+4. **No fixed shared temp paths.** Run-scoped data never goes to a fixed `/tmp/groundwork-*` path; use `mktemp`/`mkdtemp` or the run-scoped directories the helpers provide. Library temporaries go through `lib/atomic-write.js`, whose names are O_EXCL plus cryptographically unique.
+5. **Shared pointers are locked, not conventional.** Anything acting as an "active/current" pointer across processes needs an O_EXCL lock with holder identity and staleness recovery (see `lib/owned-lock.js` and `lib/validation-session.js`), not just a conventional filename. Pointer code appears only in the approved helper; instruction surfaces may only *prohibit* editing pointers.
 
 ### Reserved directories (project-scoped template variables)
 
@@ -100,10 +102,10 @@ Skills produce files. Three invariants prevent the collision bug class where two
 |----------|-----------|------------|
 | `{{specs_dir}}` | `<project>/specs` | design-product, design-architecture, ux-design, create-tasks, … |
 | `{{plans_dir}}` | `<project>/.groundwork-plans` | plan-task, just-do-it (read by implement-task) |
-| `{{debug_dir}}` | `<project>/.debug` | debug, swarm-debug (bug-slug journals; gitignored) |
-| `{{research_dir}}` | `<project>/.architecture` | swarm-design-architecture (feature-slug research; gitignored) |
+| `{{debug_dir}}` | `<project>/.debug` | debug, swarm-debug (invocation-unique bug-slug journals; gitignored) |
+| `{{research_dir}}` | `<project>/.architecture` | swarm-design-architecture (invocation-unique feature-slug research; gitignored) |
 
-All four resolve through `lib/project-context.js` (exposed by the PostToolUse resolver, session-start bindings, and the portable `project-context-cli.js`) and are exported through `install-skills.sh`'s content gate — a new variable must be wired into all of those plus `tests/path-safety.test.js`, and a new reserved directory must be added to the gitignore entries `setup-repo` maintains.
+All four resolve absolutely through `lib/project-context.js` (exposed by the PostToolUse resolver, session-start bindings, and the portable `project-context-cli.js`) and are exported through `install-skills.sh`'s content gate — a new variable must be wired into all of those plus `tests/path-safety.test.js`, and a new reserved directory must be added to the gitignore entries `setup-repo` maintains.
 
 Worktrees and task branches must be resolved through `node ${CLAUDE_PLUGIN_ROOT}/lib/worktree-identity.js <task-id>` — never derived by hand in a skill. The helper is the same source of truth the terminal runner uses, so overlapping `TASK-NNN` identifiers across monorepo projects cannot collide in the one shared branch namespace.
 
