@@ -379,8 +379,14 @@ describe('fixed shared pointers and lock primitives', () => {
     const ownedLock = fs.readFileSync(path.join(PLUGIN_ROOT, 'lib', 'owned-lock.js'), 'utf8');
     assert.match(ownedLock, /openSync\(lockFile, 'wx'/, 'owned locks must be O_EXCL');
     assert.match(ownedLock, /processStart/, 'owned locks must record holder process identity');
+    assert.match(ownedLock, /withMutationTurn/, 'owned-lock transitions must run in a serialized mutation turn');
     const session = fs.readFileSync(path.join(PLUGIN_ROOT, 'lib', 'validation-session.js'), 'utf8');
-    assert.match(session, /openSync\(lockFile, 'wx'/, 'the session open lock must be O_EXCL');
+    // The session open lock delegates to owned-lock (single O_EXCL/identity
+    // implementation) instead of carrying its own lockfile creation.
+    assert.match(session, /acquireOwnedLock/, 'the session open lock must delegate to owned-lock');
+    const leaseMutation = fs.readFileSync(path.join(PLUGIN_ROOT, 'lib', 'lease-mutation.js'), 'utf8');
+    assert.match(leaseMutation, /openSync\(stagingPath, 'wx'/, 'mutation tickets must be O_EXCL staged');
+    assert.match(leaseMutation, /randomBytes/, 'mutation tickets must carry cryptographic uniqueness');
   });
 
   test('runtime export closure ships the locking primitives', () => {
