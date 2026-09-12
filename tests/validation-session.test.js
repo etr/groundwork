@@ -1088,6 +1088,145 @@ describe('capability ownership lifecycle (multi-process)', () => {
   });
 });
 
+describe('open-path mutation serialization (takeover vs old owner)', () => {
+  test('an old owner publishing mid-mutation cannot resurrect its record after takeover', () => {
+    const helper = require(HELPER);
+    const { acquireOwnedLock } = require(path.resolve(__dirname, '..', 'lib', 'owned-lock.js'));
+    const repo = fixture();
+    const barrier = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-validation-oldowner-'));
+    try {
+      const created = helper.openValidationSession(identity(repo));
+      const stateFile = path.join(created.runDir, '.validation-session.json');
+      const stale = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+      stale.owner.heartbeat.graceUntil = new Date(Date.now() - 60 * 1000).toISOString();
+      stale.owner.heartbeat.lastBeat = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
+      write(stateFile, JSON.stringify(stale));
+      // The computed revision the old owner will publish from mid-mutation:
+      // captured from the pre-takeover (old-owner) state.
+      const oldOwnerComputed = JSON.parse(JSON.stringify(stale));
+      oldOwnerComputed.revision = stale.revision + 1;
+
+      // The old owner is mid-mutation: it holds the run's mutation lock and
+      // has the computed revision above in hand.
+      const held = acquireOwnedLock(path.join(created.runDir, '.mutation.lock'));
+
+      const taker = spawnBarrierWorker(barrier, 'taker', openOperation(repo));
+      waitFor(() => fs.existsSync(taker.ready), 15000, 'taker ready');
+      fs.writeFileSync(taker.release, 'go\n');
+
+      // An unfenced takeover (the bug) publishes the successor immediately;
+      // a serialized one blocks on the mutation lock the old owner holds.
+      let unfencedTakeover = false;
+      try {
+        waitFor(() => JSON.parse(fs.readFileSync(stateFile, 'utf8')).owner.epoch
+          === created.state.owner.epoch + 1, 2000, 'unfenced takeover');
+        unfencedTakeover = true;
+      } catch (error) {
+        assert.match(error.message, /timed out waiting for unfenced takeover/);
+      }
+
+      // The old owner publishes its computed revision regardless.
+      write(stateFile, JSON.stringify(oldOwnerComputed));
+      held.release();
+
+      waitFor(() => fs.existsSync(taker.result), 20000, 'taker result');
+      const outcome = JSON.parse(fs.readFileSync(taker.result, 'utf8'));
+      assert.ok(outcome.ok, outcome.error);
+      assert.strictEqual(outcome.result.status, 'reclaimed');
+
+      const final = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+      assert.strictEqual(final.owner.epoch, created.state.owner.epoch + 1,
+        'the old owner record was resurrected over the successor');
+      assert.notStrictEqual(final.owner.tokenDigest, created.state.owner.tokenDigest,
+        'the old capability digest outlived the takeover');
+      assert.strictEqual(unfencedTakeover, false,
+        'the takeover was not serialized against the old owner\'s in-flight mutation');
+    } finally {
+      fs.rmSync(barrier, { recursive: true, force: true });
+      fs.rmSync(repo.root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('heartbeat hot path (lightweight, authenticated)', () => {
+  // Re-require the helper with a spawn-counting execFileSync so tests can
+  // prove which paths spawn git. The wrapper is captured in the fresh module
+  // instance's closure; the global is restored immediately after loading.
+  function freshHelperCountingGitSpawns() {
+    const cp = require('child_process');
+    const realExecFileSync = cp.execFileSync;
+    const counter = { gitSpawns: 0 };
+    cp.execFileSync = function countingExecFileSync(command) {
+      if (command === 'git') counter.gitSpawns++;
+      return realExecFileSync.apply(cp, arguments);
+    };
+    try {
+      delete require.cache[require.resolve(HELPER)];
+      return { helper: require(HELPER), counter };
+    } finally {
+      cp.execFileSync = realExecFileSync;
+    }
+  }
+
+  test('a beat updates liveness under the mutation lock without spawning git', () => {
+    const { helper, counter } = freshHelperCountingGitSpawns();
+    const repo = fixture();
+    try {
+      const created = helper.openValidationSession(identity(repo));
+      helper.heartbeatRegister(created.runDir, created.ownerToken);
+      sleepMs(10);
+      counter.gitSpawns = 0;
+
+      const stateFile = path.join(created.runDir, '.validation-session.json');
+      const before = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+      const beat = helper.heartbeatBeat(created.runDir, created.ownerToken);
+      assert.strictEqual(counter.gitSpawns, 0, 'the beat path spawned git processes');
+      const after = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+      assert.strictEqual(after.revision, before.revision + 1, 'the beat must bump the revision');
+      assert.notStrictEqual(
+        after.owner.heartbeat.lastBeat,
+        before.owner.heartbeat.lastBeat,
+        'the beat must advance lastBeat'
+      );
+      assert.strictEqual(beat.owner.heartbeat.lastBeat, after.owner.heartbeat.lastBeat);
+
+      // Authentication is still enforced on every beat — no lightweight path
+      // around the capability check.
+      assert.throws(
+        () => helper.heartbeatBeat(created.runDir, 'f'.repeat(48)),
+        /capability does not match/
+      );
+      assert.strictEqual(counter.gitSpawns, 0);
+    } finally {
+      fs.rmSync(repo.root, { recursive: true, force: true });
+    }
+  });
+
+  test('a full mutation verifies the session once (no pre-lock full load)', () => {
+    const { helper, counter } = freshHelperCountingGitSpawns();
+    const repo = fixture();
+    try {
+      const created = helper.openValidationSession(identity(repo));
+      const coordinatorFile = path.join(created.runDir, 'coordinator-iter1.json');
+      write(coordinatorFile, JSON.stringify(coordinatorState()));
+      counter.gitSpawns = 0;
+      helper.checkpointValidationSession(created.runDir, {
+        expectedStage: 'initial-audit-pending',
+        nextStage: 'review-batch-complete',
+        iteration: 1,
+        coordinatorFile,
+        ownerToken: created.ownerToken,
+      });
+      // One loadSession inside the lock = exactly one git spawn. The old
+      // pre-lock full load doubled it.
+      assert.strictEqual(counter.gitSpawns, 1,
+        'a mutation must pay the verification cost once, not twice');
+    } finally {
+      fs.rmSync(repo.root, { recursive: true, force: true });
+    }
+  });
+});
+
 process.on('exit', () => {
   console.log(`\n${passed} passed, ${failed} failed`);
   if (failed) process.exitCode = 1;

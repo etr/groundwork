@@ -588,5 +588,149 @@ describe('lock liveness edges (injected probe)', () => {
   });
 });
 
+describe('identity-verified lock unlinking (successor re-acquisition races)', () => {
+  // A reaper or releaser must never unlink a lockfile that a successor
+  // legitimately re-acquired in the read-to-unlink window: every unlink is
+  // verified against the inode that was actually inspected.
+  const OWNED_LOCK = path.resolve(__dirname, '..', 'lib', 'owned-lock.js');
+
+  test('releaseOwnedLock never unlinks a lockfile replaced by a successor mid-release', () => {
+    const { acquireOwnedLock, releaseOwnedLock } = require(OWNED_LOCK);
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-owned-lock-'));
+    try {
+      const lockFile = path.join(dir, 'owned.lock');
+      const acquired = acquireOwnedLock(lockFile);
+      let hooked = false;
+      const released = releaseOwnedLock(lockFile, acquired.holder.id, {
+        // Between release's holder read and its unlink, a successor reaps the
+        // stale lock and re-acquires the slot via atomic rename.
+        beforeUnlink: () => {
+          hooked = true;
+          const successor = path.join(dir, 'successor.lock');
+          write(successor, JSON.stringify({
+            id: 'successor-holder',
+            pid: process.pid,
+            host: os.hostname(),
+            acquiredAt: new Date().toISOString(),
+          }));
+          fs.renameSync(successor, lockFile);
+        },
+      });
+      assert.strictEqual(hooked, true, 'the before-unlink hook never ran');
+      assert.strictEqual(released, false, 'release unlinked a successor\'s lockfile');
+      const onDisk = JSON.parse(fs.readFileSync(lockFile, 'utf8'));
+      assert.strictEqual(onDisk.id, 'successor-holder', 'the successor holder was clobbered');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('a stale reap never unlinks a lockfile a successor just re-acquired', () => {
+    const { acquireOwnedLock } = require(OWNED_LOCK);
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-owned-lock-'));
+    try {
+      const lockFile = path.join(dir, 'owned.lock');
+      write(lockFile, JSON.stringify({
+        id: 'crashed-holder',
+        pid: -1,
+        host: 'definitely-not-this-host',
+        acquiredAt: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+      }));
+      let hooked = false;
+      assert.throws(
+        () => acquireOwnedLock(lockFile, { staleMs: 60 * 1000 }, {
+          // The successor re-acquires between the reap decision and the unlink.
+          beforeUnlink: () => {
+            hooked = true;
+            const successor = path.join(dir, 'successor.lock');
+            write(successor, JSON.stringify({
+              id: 'successor-holder',
+              pid: process.pid,
+              host: os.hostname(),
+              acquiredAt: new Date().toISOString(),
+            }));
+            fs.renameSync(successor, lockFile);
+          },
+        }),
+        /another process holds/
+      );
+      assert.strictEqual(hooked, true, 'the before-unlink hook never ran');
+      const onDisk = JSON.parse(fs.readFileSync(lockFile, 'utf8'));
+      assert.strictEqual(onDisk.id, 'successor-holder', 'the successor holder was reaped');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('the open lock release never unlinks a successor lockfile', () => {
+    const helper = require(HELPER);
+    assert.strictEqual(
+      typeof helper.tryAcquireOpenLock,
+      'function',
+      'tryAcquireOpenLock must be exported for successor-race coverage'
+    );
+    const repo = fixture();
+    try {
+      const created = helper.openValidationSession(identity(repo));
+      const parent = path.dirname(created.runDir);
+      const lockFile = path.join(parent, 'active.lock');
+      const release = helper.tryAcquireOpenLock(parent, lockFile);
+      // A successor reaper replaced the lock after our acquisition.
+      const successor = path.join(parent, 'successor.lock');
+      write(successor, JSON.stringify({
+        version: 2,
+        pid: 424242,
+        host: os.hostname(),
+        acquiredAt: new Date().toISOString(),
+      }));
+      fs.renameSync(successor, lockFile);
+      release();
+      const onDisk = JSON.parse(fs.readFileSync(lockFile, 'utf8'));
+      assert.strictEqual(onDisk.pid, 424242, 'release unlinked a successor\'s open lock');
+    } finally {
+      fs.rmSync(repo.root, { recursive: true, force: true });
+    }
+  });
+
+  test('a stale open-lock reap never unlinks a successor acquisition', () => {
+    const helper = require(HELPER);
+    assert.strictEqual(typeof helper.tryAcquireOpenLock, 'function');
+    const repo = fixture();
+    try {
+      const created = helper.openValidationSession(identity(repo));
+      const parent = path.dirname(created.runDir);
+      const lockFile = path.join(parent, 'active.lock');
+      write(lockFile, JSON.stringify({
+        version: 1,
+        pid: -1,
+        host: 'definitely-not-this-host',
+        acquiredAt: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+      }));
+      let hooked = false;
+      assert.throws(
+        () => helper.tryAcquireOpenLock(parent, lockFile, undefined, {
+          beforeUnlink: () => {
+            hooked = true;
+            const successor = path.join(parent, 'successor.lock');
+            write(successor, JSON.stringify({
+              version: 2,
+              pid: process.pid,
+              host: os.hostname(),
+              acquiredAt: new Date().toISOString(),
+            }));
+            fs.renameSync(successor, lockFile);
+          },
+        }),
+        /another validation open is in progress/
+      );
+      assert.strictEqual(hooked, true, 'the before-unlink hook never ran');
+      const onDisk = JSON.parse(fs.readFileSync(lockFile, 'utf8'));
+      assert.strictEqual(onDisk.pid, process.pid, 'the successor open lock was reaped');
+    } finally {
+      fs.rmSync(repo.root, { recursive: true, force: true });
+    }
+  });
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exitCode = 1;
