@@ -229,6 +229,15 @@ describe('config <-> skills/ parity', () => {
 
 // Run the installer for a target into a temp dir and return the output root.
 // Returns null (so the caller can skip) if bash isn't available.
+function bashAvailable() {
+  try {
+    execFileSync('bash', ['-c', 'exit 0'], { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function runInstaller(target, options = {}) {
   try {
     execFileSync('bash', ['-c', 'exit 0'], { stdio: 'ignore' });
@@ -1954,6 +1963,154 @@ describe('external runner runtime closure', () => {
           `installed ${entry.installed} differs from ${entry.source}`
         );
       }
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  function fixtureSourceCorruption(mutate) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-manifest-closure-'));
+    for (const dir of ['bin', 'lib', 'skills', 'agents']) {
+      fs.mkdirSync(path.join(root, dir), { recursive: true });
+    }
+    fs.cpSync(PLUGIN_ROOT, root, { recursive: true, filter: (src) => {
+      const rel = path.relative(PLUGIN_ROOT, src);
+      return !rel.startsWith('.git') && !rel.includes('node_modules');
+    } });
+    mutate(root);
+    return root;
+  }
+
+  function manifestResult(root) {
+    return spawnSync(
+      'node',
+      [path.join(root, 'lib', 'external-runner-manifest.js'), '--json'],
+      { encoding: 'utf8' }
+    );
+  }
+
+  test('a manifested helper with an unmanifested transitive relative import fails validation', () => {
+    const root = fixtureSourceCorruption((base) => {
+      // Lazy transitive dependency: only reached at runtime, invisible to a
+      // file-list manifest check, and deliberately NOT declared.
+      fs.writeFileSync(
+        path.join(base, 'lib', 'lazy-transitive-relative-import.js'),
+        'module.exports = { lazy: true };\n'
+      );
+      fs.appendFileSync(
+        path.join(base, 'lib', 'owned-lock.js'),
+        '\nconst lazyTransitive = require("./lazy-transitive-relative-import");\n'
+      );
+    });
+    try {
+      const result = manifestResult(root);
+      assert.notStrictEqual(result.status, 0, 'validation accepted an unmanifested transitive import');
+      assert.match(result.stderr, /lazy-transitive-relative-import|unmanifested/i, result.stderr);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('an unclassified dynamic local require fails validation; a classified one passes', () => {
+    const unclassified = fixtureSourceCorruption((base) => {
+      fs.appendFileSync(
+        path.join(base, 'lib', 'plan-check.js'),
+        '\nconst dyn = require(someVariable);\n'
+      );
+    });
+    try {
+      const result = manifestResult(unclassified);
+      assert.notStrictEqual(result.status, 0, 'validation accepted an unclassified dynamic require');
+      assert.match(result.stderr, /dynamic/i, result.stderr);
+    } finally {
+      fs.rmSync(unclassified, { recursive: true, force: true });
+    }
+
+    const classified = fixtureSourceCorruption((base) => {
+      fs.appendFileSync(
+        path.join(base, 'lib', 'plan-check.js'),
+        '\nconst dyn = require(someVariable); // runtime-closure: classified\n'
+      );
+    });
+    try {
+      const result = manifestResult(classified);
+      assert.strictEqual(result.status, 0, result.stderr);
+    } finally {
+      fs.rmSync(classified, { recursive: true, force: true });
+    }
+  });
+
+  test('manifest sources must stay inside the declared runner roots (bin/ and lib/)', () => {
+    const root = fixtureSourceCorruption((base) => {
+      const manifest = fs.readFileSync(path.join(base, 'lib', 'external-runner-manifest.js'), 'utf8');
+      fs.writeFileSync(
+        path.join(base, 'lib', 'external-runner-manifest.js'),
+        manifest.replace("source: 'bin/groundwork-run.js'", "source: 'skills/groundwork-run.js'")
+      );
+    });
+    try {
+      const result = manifestResult(root);
+      assert.notStrictEqual(result.status, 0, 'validation accepted a source outside the runner roots');
+      assert.match(result.stderr, /runner root|outside/i, result.stderr);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('the installer fails the export before writing any file when the manifest closure is broken', () => {
+    if (!bashAvailable()) return;
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-install-fail-closed-'));
+    const source = fixtureSourceCorruption((base) => {
+      fs.appendFileSync(
+        path.join(base, 'lib', 'owned-lock.js'),
+        '\nconst lazyTransitive = require("./lazy-transitive-relative-import");\n'
+      );
+    });
+    try {
+      let failed = null;
+      try {
+        runInstaller('codex', { root, source });
+      } catch (error) {
+        failed = error;
+      }
+      assert.ok(failed, 'installer completed although the runtime manifest closure is broken');
+      assert.notStrictEqual(failed.status, 0);
+      const codexDir = path.join(root, '.codex');
+      const exported = fs.existsSync(codexDir) ? fs.readdirSync(codexDir) : [];
+      assert.strictEqual(exported.length, 0, 'installer wrote files before manifest validation failed');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(source, { recursive: true, force: true });
+    }
+  });
+
+  test('fresh --codex export smoke: runner --help and a dry run work from the installed bundle', () => {
+    if (!bashAvailable()) return;
+    const root = runInstaller('codex');
+    if (root === null) return;
+    try {
+      // The runner operates on a git project; give the fixture one.
+      execFileSync('git', ['init', '-q'], { cwd: root });
+      execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: root });
+      execFileSync('git', ['config', 'user.name', 'Test'], { cwd: root });
+      fs.writeFileSync(path.join(root, 'README.md'), '# fixture\n');
+      fs.mkdirSync(path.join(root, 'specs'), { recursive: true });
+      fs.writeFileSync(path.join(root, 'specs', 'tasks.md'), '# Tasks\n\n**Status:** Approved\n\n### TASK-001: fixture\n\n- [ ] item\n');
+      execFileSync('git', ['add', '.'], { cwd: root });
+      execFileSync('git', ['commit', '-q', '-m', 'init'], { cwd: root });
+
+      const runner = path.join(root, '.codex', 'groundwork-run.js');
+      const help = spawnSync('node', [runner, '--help'], { encoding: 'utf8' });
+      assert.strictEqual(help.status, 0, help.stderr);
+
+      // The installed bundle is flat: helpers sit next to the runner, so the
+      // loader must resolve them in "installed" mode (not the source tree).
+      const dry = spawnSync(
+        'node',
+        [runner, 'all', '--harness', 'codex', '--dry-run'],
+        { encoding: 'utf8', cwd: root, env: process.env }
+      );
+      assert.strictEqual(dry.status, 0, dry.stderr || dry.stdout);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

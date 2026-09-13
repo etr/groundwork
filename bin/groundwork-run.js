@@ -21,7 +21,9 @@ function requireRuntimeHelper(name) {
     const candidate = path.join(directory, name);
     if (fs.existsSync(candidate)) {
       runtimeHelperPaths[name] = candidate;
-      return require(candidate);
+      // Candidates are exactly the manifested helpers; tests pin every
+      // requireRuntimeHelper call to the manifest.
+      return require(candidate); // runtime-closure: classified
     }
   }
   throw new Error(
@@ -1895,7 +1897,7 @@ const {
   createTranscriptWriter,
   parseRunnerMarker,
   transcriptSignalsFromEvent,
-} = require(workerData.runReportingModule);
+} = require(workerData.runReportingModule); // runtime-closure: classified — the parent resolved this through the manifested fail-closed loader
 const normalizeActivity = ${normalizeActivity.toString()};
 const shared = new Int32Array(workerData.shared);
 const decoder = new StringDecoder('utf8');

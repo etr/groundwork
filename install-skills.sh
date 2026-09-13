@@ -1240,6 +1240,11 @@ main() {
     load_model_override
     preflight_model_override_replacements
 
+    # Fail the whole export before any file is written if the external
+    # runner runtime closure is inconsistent (unmanifested transitive
+    # imports, unclassified dynamic requires, sources outside bin//lib/).
+    node "$SOURCE_DIR/lib/external-runner-manifest.js" --tsv > /dev/null
+
     echo "Groundwork Installer"
     echo "  Source: $SOURCE_DIR"
     echo "  Scope:  $SCOPE"
