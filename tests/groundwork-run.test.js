@@ -7083,6 +7083,31 @@ describe('installed standalone runner smoke', () => {
     }
   });
 
+  test('the runner fails closed on a present-but-invalid .groundwork.yml (no private parser)', () => {
+    const { root, runner } = installCodexRunner(PLUGIN_ROOT);
+    const repo = minimalFixtureRepo();
+    try {
+      // Same shape a permissive parser silently accepted: valid mapping plus
+      // an unsupported trailing line.
+      fs.writeFileSync(path.join(repo, '.groundwork.yml'),
+        'version: 1\nprojects:\n  web:\n    path: .\n::: garbage\n');
+      git(repo, 'add', '.groundwork.yml');
+      git(repo, 'commit', '-m', 'broken config');
+      const result = spawnSync(
+        'node',
+        [runner, 'all', '--harness', 'codex', '--repo', repo, '--dry-run'],
+        { encoding: 'utf8' }
+      );
+      assert.notStrictEqual(result.status, 0, 'the runner executed tasks against an invalid config');
+      assert.match(result.stderr || result.stdout, /groundwork\.yml|malformed/i,
+        'the failure does not name the invalid config');
+      assert.ok(!/RESULT: SUCCESS/.test(result.stdout), 'a run over an invalid config reported success');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
   test('installed runner previews a minimal repo through --dry-run without missing helpers', () => {
     const { root, runner } = installCodexRunner(PLUGIN_ROOT);
     const repo = minimalFixtureRepo();

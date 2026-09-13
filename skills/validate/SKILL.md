@@ -115,10 +115,11 @@ A new file per iteration preserves history across the fix-and-retry loop, so the
   "findings": [
     {"id": 1, "severity": "major", "category": "...", "file": "...", "line": 42, "finding": "...", "recommendation": "...", "disposition": "actionable"},
     {"id": 2, "severity": "minor", "category": "...", "file": "...", "line": 10, "finding": "...", "recommendation": "...", "disposition": "actionable"}
-Every finding carries a `disposition`: `"actionable"` while it demands work, or the closure outcome (`"resolved"`, `"approved"`, `"fixed"`, `"closure-observation"`) once it no longer does. A prior finding you re-checked and found already addressed is `"resolved"` (or `"closure-observation"` when it never demanded work) — never re-listed as actionable. The unworked-findings report persists only actionable items: fixed IDs and every closed disposition are dropped, so a stale "resolved" entry must not survive into the ledger.
   ]
 }
 ```
+
+Every finding carries a `disposition`: `"actionable"` while it demands work, or the closure outcome (`"resolved"`, `"approved"`, `"fixed"`, `"closure-observation"`) once it no longer does. A prior finding you re-checked and found already addressed is `"resolved"` (or `"closure-observation"` when it never demanded work) — never re-listed as actionable. The unworked-findings report persists only actionable items: fixed IDs and every closed disposition are dropped, so a stale "resolved" entry must not survive into the ledger.
 
 The **stable global ID** of a finding is `{agent_name}-iter{N}-{id}` (e.g. `code-quality-reviewer-iter1-2`). Use these IDs anywhere you need to reference a finding across iterations (fix-agent prompts, stuck detection, unworked_review_issues).
 

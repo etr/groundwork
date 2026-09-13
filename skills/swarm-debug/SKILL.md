@@ -73,7 +73,7 @@ UNDERSTAND → REPRODUCE → ISOLATE (SWARM) → FIX → VERIFY
      └────────────┴────────────┴───────────────┴───────┘
                          │
                    DEBUG JOURNAL
-              {{debug_dir}}/{slug}-{timestamp}-{pid}.md
+              {{debug_dir}}/{slug}-xxxxxx/journal.md
 ```
 
 ## Phase 1: UNDERSTAND

@@ -36,13 +36,50 @@ function parseGroundworkYmlResult(content) {
   let inProjects = false;
   let currentProject = null;
   let sawListEntry = false;
+  let sawVersion = false;
 
-  for (const line of content.split('\n')) {
+  // The canonical mapping grammar is exact (mirrors lib/project-context.js):
+  // any line that is not one of its productions is malformed — never
+  // silently ignored, so every consumer interprets the same config the
+  // same way.
+  const malformed = (lineNumber, line) => ({
+    ok: false,
+    code: 'malformed-yaml',
+    message: `.groundwork.yml line ${lineNumber} is not part of the canonical mapping schema: ${JSON.stringify(line)}`,
+  });
+
+  const lines = content.split('\n');
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index];
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith('#')) continue;
+    const lineNumber = index + 1;
+
+    if (inProjects) {
+      // List-style entries ("- name: web") are not the canonical mapping.
+      if (/^\s*-\s/.test(line)) {
+        sawListEntry = true;
+        continue;
+      }
+      const projectMatch = line.match(/^  ([A-Za-z0-9][A-Za-z0-9_-]*):\s*$/);
+      if (projectMatch) {
+        currentProject = projectMatch[1];
+        result.projects[currentProject] = {};
+        continue;
+      }
+      const propMatch = currentProject && line.match(/^    (\w+):\s*(.+)$/);
+      if (propMatch) {
+        if (propMatch[1] !== 'path') return malformed(lineNumber, line);
+        result.projects[currentProject][propMatch[1]] = propMatch[2].trim();
+        continue;
+      }
+      return malformed(lineNumber, line);
+    }
 
     const versionMatch = trimmed.match(/^version:\s*(\d+)$/);
     if (versionMatch) {
+      if (sawVersion) return malformed(lineNumber, line);
+      sawVersion = true;
       result.version = parseInt(versionMatch[1], 10);
       continue;
     }
@@ -51,28 +88,8 @@ function parseGroundworkYmlResult(content) {
       inProjects = true;
       continue;
     }
-    if (!inProjects) continue;
-    if (/^\S/.test(line)) break; // End of the projects block.
 
-    // List-style entries ("- name: web") are not the canonical mapping.
-    if (/^\s*-\s/.test(line)) {
-      sawListEntry = true;
-      continue;
-    }
-
-    const projectMatch = line.match(/^\s+([A-Za-z0-9][A-Za-z0-9_-]*):\s*$/);
-    if (projectMatch) {
-      currentProject = projectMatch[1];
-      result.projects[currentProject] = {};
-      continue;
-    }
-
-    if (currentProject) {
-      const propMatch = line.match(/^\s+(\w+):\s*(.+)$/);
-      if (propMatch) {
-        result.projects[currentProject][propMatch[1]] = propMatch[2].trim();
-      }
-    }
+    return malformed(lineNumber, line);
   }
 
   if (result.version !== 1) {

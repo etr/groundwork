@@ -1383,9 +1383,16 @@ describe('invalid project configuration fails closed', () => {
     'malformed-yaml': 'version: 1\nprojects:\n  - web\n',
     'empty': '',
     'unsupported-version': 'version: 2\nprojects:\n  web:\n    path: apps/web\n',
-    'missing-project-path': 'version: 1\nprojects:\n  web:\n    description: no path\n',
+    'missing-project-path': 'version: 1\nprojects:\n  web:\n',
     'escaping-project-path': 'version: 1\nprojects:\n  web:\n    path: ../outside\n',
     'invalid-indentation': 'version: 1\nprojects:\n   web:\n       path: apps/web\n',
+    // Unsupported YAML is not silently ignored: a config outside the exact
+    // canonical grammar is malformed no matter where the stray line sits.
+    'trailing-garbage': 'version: 1\nprojects:\n  web:\n    path: apps/web\n::: garbage\n',
+    'unknown-top-level-key': 'version: 1\nname: x\nprojects:\n  web:\n    path: apps/web\n',
+    'unknown-project-property': 'version: 1\nprojects:\n  web:\n    path: apps/web\n    description: hi\n',
+    'version-after-projects': 'version: 1\nprojects:\n  web:\n    path: apps/web\nversion: 1\n',
+    'duplicate-version': 'version: 1\nversion: 1\nprojects:\n  web:\n    path: apps/web\n',
   };
 
   function makeInvalidRepo(configName) {

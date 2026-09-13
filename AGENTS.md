@@ -119,6 +119,10 @@ Hooks are defined in `hooks/hooks.json` and use `${CLAUDE_PLUGIN_ROOT}` for port
 | `lib/resolve-template-vars.js` | Resolves `{{specs_dir}}`, `{{plans_dir}}`, `{{debug_dir}}`, `{{research_dir}}` etc. in skill bodies (PostToolUse) |
 | `lib/persist-project.js`, `lib/persist-unworked-findings.js` | Persist project + validation state (per terminal pane where pane identity exists; per-chat snapshots + labeled workspace default in pane-less UIs like ZCode) |
 | `lib/atomic-write.js` | Shared tmp+fsync+rename writes for anything a concurrent reader can observe |
+| `lib/owned-lock.js` | Token-bearing O_EXCL lock with holder process identity and identity-checked release |
+| `lib/lease-mutation.js` | Serialized mutation-turn queue fencing every fixed-lock/lease transition (compare-and-delete only inside a turn) |
+| `lib/process-identity.js` | PID + process-start identity for same-host liveness probes (locks, heartbeats, reaping) |
+| `lib/external-runner-manifest.js` | Checked manifest of the exported standalone runner runtime; validates its transitive import closure |
 | `lib/state-dir.js` | Prints the harness-resolved state directory so bash hooks/statusline cannot diverge from Node writers |
 | `lib/worktree-identity.js` | Single source of truth for task worktree paths and branch names (project-qualified in monorepos); CLI for skills, factory for the runner |
 | `lib/plan-check.js` | Verifies a legacy repo-root plan's recorded project before adoption |

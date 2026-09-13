@@ -2058,6 +2058,55 @@ describe('external runner runtime closure', () => {
     }
   });
 
+  test('multiline dynamic and literal requires cannot bypass closure validation', () => {
+    // A require whose argument wraps across lines is invisible to a
+    // per-line regex — the span-aware scanner must still classify it.
+    const multilineDynamic = fixtureSourceCorruption((base) => {
+      fs.appendFileSync(
+        path.join(base, 'lib', 'plan-check.js'),
+        '\nconst dyn = require(\n  someVariable\n);\n'
+      );
+    });
+    try {
+      const result = manifestResult(multilineDynamic);
+      assert.notStrictEqual(result.status, 0, 'a multiline dynamic require bypassed validation');
+      assert.match(result.stderr, /dynamic/i, result.stderr);
+    } finally {
+      fs.rmSync(multilineDynamic, { recursive: true, force: true });
+    }
+
+    // Same bypass shape with a literal relative import of an unmanifested
+    // module.
+    const multilineLiteral = fixtureSourceCorruption((base) => {
+      fs.writeFileSync(path.join(base, 'lib', 'undeclared-helper.js'), 'module.exports = 1;\n');
+      fs.appendFileSync(
+        path.join(base, 'lib', 'plan-check.js'),
+        '\nconst lazy = require(\n  "./undeclared-helper"\n);\n'
+      );
+    });
+    try {
+      const result = manifestResult(multilineLiteral);
+      assert.notStrictEqual(result.status, 0, 'a multiline literal require bypassed validation');
+      assert.match(result.stderr, /undeclared-helper|does not declare/i, result.stderr);
+    } finally {
+      fs.rmSync(multilineLiteral, { recursive: true, force: true });
+    }
+
+    // The classified multiline form (marker on the call's line span) passes.
+    const multilineClassified = fixtureSourceCorruption((base) => {
+      fs.appendFileSync(
+        path.join(base, 'lib', 'plan-check.js'),
+        '\nconst dyn = require(\n  someVariable\n); // runtime-closure: classified\n'
+      );
+    });
+    try {
+      const result = manifestResult(multilineClassified);
+      assert.strictEqual(result.status, 0, result.stderr);
+    } finally {
+      fs.rmSync(multilineClassified, { recursive: true, force: true });
+    }
+  });
+
   test('the installer fails the export before writing any file when the manifest closure is broken', () => {
     if (!bashAvailable()) return;
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-install-fail-closed-'));

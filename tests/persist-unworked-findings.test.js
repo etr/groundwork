@@ -117,6 +117,11 @@ describe('closed dispositions stay out of the unworked ledger', () => {
           finding: 'fixed by the fixer', recommendation: 'None', disposition: 'fixed' },
         { id: 6, severity: 'minor', category: 'legacy', file: 'f.js', line: 6,
           finding: 'legacy record with no disposition', recommendation: 'Do it' },
+        { id: 7, severity: 'minor', category: 'legacy', file: 'g.js', line: 7,
+          finding: 'prior finding 3 is RESOLVED by the lightweight path',
+          recommendation: 'None — resolved as claimed' },
+        { id: 8, severity: 'minor', category: 'legacy', file: 'h.js', line: 8,
+          finding: 'stale docs remain', recommendation: 'None' },
       ],
     }));
     try {
@@ -137,6 +142,10 @@ describe('closed dispositions stay out of the unworked ledger', () => {
       assert.ok(!report.includes('open-path writes'), 'a fixed-ID item re-entered the ledger');
       assert.ok(report.includes('legacy record with no disposition'),
         'a legacy actionable record was dropped from the ledger');
+      assert.ok(!report.includes('prior finding 3 is RESOLVED'),
+        'a legacy resolved-looking record was kept without being demonstrably actionable');
+      assert.ok(!report.includes('stale docs remain'),
+        'a legacy record with a None recommendation was kept');
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

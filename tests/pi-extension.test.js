@@ -289,6 +289,9 @@ describe('Pi project context fails closed on invalid config', () => {
     ['unsupported-version', 'version: 2\nprojects:\n  web:\n    path: apps/web\n'],
     ['missing-project-path', 'version: 1\nprojects:\n  web:\n    note: nothing\n'],
     ['escaping-project-path', 'version: 1\nprojects:\n  web:\n    path: ../outside\n'],
+    ['trailing-garbage', 'version: 1\nprojects:\n  web:\n    path: apps/web\n::: garbage\n'],
+    ['unknown-top-level-key', 'version: 1\nname: x\nprojects:\n  web:\n    path: apps/web\n'],
+    ['unknown-project-property', 'version: 1\nprojects:\n  web:\n    path: apps/web\n    description: hi\n'],
   ]) {
     test(`${label} config resolves to a structured failure, never single-project`, () => {
       const root = invalidRepo(content);

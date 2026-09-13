@@ -1470,29 +1470,28 @@ function refExists(repoRoot, refName) {
   }
 }
 
-function parseGroundworkConfig(content) {
-  const projects = {};
-  let current = null;
-  for (const line of content.split('\n')) {
-    const project = line.match(/^  ([A-Za-z0-9][A-Za-z0-9_-]*):\s*$/);
-    if (project) {
-      current = project[1];
-      projects[current] = {};
-      continue;
-    }
-    const property = current && line.match(/^    ([A-Za-z0-9_-]+):\s*(.+?)\s*$/);
-    if (property) projects[current][property[1]] = property[2].replace(/^['"]|['"]$/g, '');
+// The .groundwork.yml mapping is parsed by the shared, strict parser in
+// lib/project-context.js — the runner never keeps a private (necessarily
+// divergent) YAML subset. A present-but-invalid config fails closed here
+// exactly like it does in every other entry point.
+function loadProjectsMapping(repoRoot) {
+  const configPath = path.join(repoRoot, '.groundwork.yml');
+  if (!fs.existsSync(configPath)) return null;
+  const parsed = requireRuntimeHelper('project-context.js')
+    .parseConfigResult(fs.readFileSync(configPath, 'utf8'));
+  if (!parsed.ok) {
+    const error = new Error(`Invalid .groundwork.yml (${parsed.code}): ${parsed.message}`);
+    error.code = parsed.code;
+    throw error;
   }
-  return projects;
+  return parsed.config.projects;
 }
 
 function resolveProject(repoRoot, requestedProject, cwd = process.cwd()) {
-  const configPath = path.join(repoRoot, '.groundwork.yml');
-  if (!fs.existsSync(configPath)) {
+  const projects = loadProjectsMapping(repoRoot);
+  if (projects === null) {
     return { projectName: null, projectRoot: repoRoot, specsDir: path.join(repoRoot, 'specs') };
   }
-
-  const projects = parseGroundworkConfig(fs.readFileSync(configPath, 'utf8'));
   let projectName = requestedProject || process.env.GROUNDWORK_PROJECT || null;
   if (!projectName) {
     const absoluteCwd = path.resolve(cwd);
@@ -2667,9 +2666,8 @@ function localPlanIgnoreState(repoRoot, projectRoot) {
   const gitPath = execGit(repoRoot, ['rev-parse', '--git-path', 'info/exclude']);
   const excludePath = path.resolve(repoRoot, gitPath);
   const patterns = [];
-  const configPath = path.join(repoRoot, '.groundwork.yml');
-  if (fs.existsSync(configPath) && projectRoot !== repoRoot) {
-    const projects = parseGroundworkConfig(fs.readFileSync(configPath, 'utf8'));
+  if (projectRoot !== repoRoot) {
+    const projects = loadProjectsMapping(repoRoot) || {};
     for (const project of Object.values(projects)) {
       if (project.path) patterns.push(`/${project.path.replace(/^\.\//, '').replace(/\/$/, '')}/.groundwork-plans/`);
     }
