@@ -2146,6 +2146,46 @@ describe('external runner runtime closure', () => {
       }
     }
 
+    // Lexically aware boundary + alias + comment-argument cases.
+    for (const [label, mutation, expect] of [
+      ['require behind a string-brace inside a template expression',
+        '\nconst hidden = `${"}"; require("./undeclared-helper")}`;\n', /undeclared-helper|does not declare/],
+      ['require behind a regex-brace inside a template expression',
+        '\nconst hidden = `${/}/; require("./undeclared-helper")}`;\n', /undeclared-helper|does not declare/],
+      ['indirect require alias',
+        '\nconst r = require; const hidden = r("./undeclared-helper");\n', /undeclared-helper|does not declare/],
+      ['comment inside the argument list is still a literal require',
+        '\nconst hidden = require(/* why */ "./undeclared-helper");\n', /undeclared-helper|does not declare/],
+    ]) {
+      const root = fixtureSourceCorruption((base) => {
+        fs.writeFileSync(path.join(base, 'lib', 'undeclared-helper.js'), 'module.exports = 1;\n');
+        fs.appendFileSync(path.join(base, 'lib', 'plan-check.js'), mutation);
+      });
+      try {
+        const result = manifestResult(root);
+        assert.notStrictEqual(result.status, 0, `${label} bypassed validation`);
+        assert.match(result.stderr, expect, `${label}: ${result.stderr}`);
+        // Literal (not merely unclassified-dynamic): the diagnostic names the
+        // undeclared module, not the classification rule.
+        assert.doesNotMatch(result.stderr, /classify it by appending/, `${label} was misread as dynamic`);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    }
+
+    // Unprovable lexing fails closed: an unterminated string makes the
+    // import closure unprovable.
+    const unterminated = fixtureSourceCorruption((base) => {
+      fs.appendFileSync(path.join(base, 'lib', 'plan-check.js'), '\nconst broken = "never closed\n');
+    });
+    try {
+      const result = manifestResult(unterminated);
+      assert.notStrictEqual(result.status, 0, 'an unlexable manifested module passed validation');
+      assert.match(result.stderr, /cannot be lexed|unprovable/i, result.stderr);
+    } finally {
+      fs.rmSync(unterminated, { recursive: true, force: true });
+    }
+
     // A REAL comment marker on the call line still classifies.
     const commentClassified = fixtureSourceCorruption((base) => {
       fs.appendFileSync(path.join(base, 'lib', 'plan-check.js'), '\nconst hidden = require(dynamicName); // runtime-closure: classified\n');

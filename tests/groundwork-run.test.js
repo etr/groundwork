@@ -7157,6 +7157,39 @@ describe('installed standalone runner smoke', () => {
     }
   });
 
+  test('source and installed runners fail closed on a symlink-nested lexical overlap', () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-nested-link-'));
+    let installedRoot = null;
+    try {
+      initRepo(repo);
+      fs.mkdirSync(path.join(repo, 'apps'));
+      fs.mkdirSync(path.join(repo, 'packages', 'web'), { recursive: true });
+      // apps/web -> packages/web: physically disjoint, lexically nested.
+      fs.symlinkSync(path.join(repo, 'packages', 'web'), path.join(repo, 'apps', 'web'));
+      fs.writeFileSync(path.join(repo, '.groundwork.yml'),
+        'version: 1\nprojects:\n  web:\n    path: apps/web\n  root:\n    path: apps\n');
+      write(path.join(repo, 'packages', 'web', 'specs', 'tasks.md'),
+        '### TASK-004: Four\n**Status:** Not Started\n**Blocked by:** None\n');
+      git(repo, 'add', '.');
+      git(repo, 'commit', '-m', 'symlink overlap');
+
+      const shared = { encoding: 'utf8' };
+      const args = ['all', '--harness', 'codex', '--repo', repo, '--project', 'web', '--dry-run'];
+      const source = spawnSync('node', [path.join(PLUGIN_ROOT, 'bin', 'groundwork-run.js'), ...args], shared);
+      assert.notStrictEqual(source.status, 0, 'source runner accepted a lexical overlap behind a symlink');
+      assert.match(source.stderr || source.stdout, /overlapping-project-path/);
+
+      const { root, runner } = installCodexRunner(PLUGIN_ROOT);
+      installedRoot = root;
+      const installed = spawnSync('node', [runner, ...args], shared);
+      assert.notStrictEqual(installed.status, 0, 'installed runner accepted a lexical overlap behind a symlink');
+      assert.ok(!/RESULT: SUCCESS/.test(installed.stdout));
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+      if (installedRoot) fs.rmSync(installedRoot, { recursive: true, force: true });
+    }
+  });
+
   test('project lease mutation queues are sharded per project, not shared across packages', () => {
     const { acquireProjectLease } = require(RUNNER);
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-lease-shard-'));

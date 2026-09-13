@@ -1465,6 +1465,30 @@ describe('invalid project configuration fails closed', () => {
     }
   });
 
+  test('a lexically nested symlink pointing at a disjoint tree still fails closed', () => {
+    const root = makeMonorepo();
+    try {
+      // apps/web is a symlink to the physically disjoint packages/web: the
+      // realpaths do not alias, but the lexical namespace does — the apps
+      // owner can rename/replace apps/web under the child project.
+      fs.mkdirSync(path.join(root, 'packages', 'web'), { recursive: true });
+      // Replace the real apps/web directory with the disjoint symlink.
+      fs.rmSync(path.join(root, 'apps', 'web'), { recursive: true, force: true });
+      fs.symlinkSync(path.join(root, 'packages', 'web'), path.join(root, 'apps', 'web'));
+      fs.writeFileSync(path.join(root, '.groundwork.yml'),
+        'version: 1\nprojects:\n  web:\n    path: apps/web\n  root:\n    path: apps\n');
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-home-'));
+      const env = cleanEnv(home);
+      const result = runCliChecked(root, env, 'resolve', '--harness', 'codex');
+      assert.notStrictEqual(result.status, 0, 'lexical overlap behind a disjoint symlink was accepted');
+      assert.strictEqual(result.stdout.trim(), '', 'bindings were emitted for overlapping trees');
+      assert.match(result.stderr, /overlapping-project-path/);
+      assert.match(result.stderr, /lexical/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('select with an invalid config writes no receipt and no state', () => {
     const root = makeInvalidRepo('malformed-yaml');
     try {

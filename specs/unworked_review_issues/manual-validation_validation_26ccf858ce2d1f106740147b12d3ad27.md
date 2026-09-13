@@ -1,6 +1,6 @@
 # Unworked Review Issues
 
-**Run:** 2026-09-13 09:24:02
+**Run:** 2026-09-13 11:08:27
 **Task:** manual-validation
 **Total:** 22 (0 critical, 0 major, 22 minor)
 
@@ -24,7 +24,7 @@
 
 5. [ ] **coordinator** | `hooks/pin-session-selection.sh:24` | blocking-io
    The pin hook runs on every Bash PostToolUse and always spends one `cat` plus one `jq` spawn (plus a second jq for session_id when the gate passes) before its command gate exits. The gating is good (node never spawns for unrelated commands), but the fixed per-tool-use cost is two process spawns where one would do.
-   *Recommendation:* Extract tool_input.command and session_id with a single jq invocation (`jq -r '[.tool_input.command, .session_id] | @tsv``) or parse both in the one node process that already runs when the gate passes; the sed fallback path can stay as-is.
+   *Recommendation:* Extract tool_input.command and session_id with a single jq invocation (`jq -r '[.tool_input.command, .session_id] | @tsv`), or parse both in the one node process that already runs when the gate passes — there is no sed fallback anymore (jq is required and its absence is a clean no-op), so both values should come from the one spawn.
 
 6. [ ] **coordinator** | `hooks/pin-session-selection.sh:51` | injection
    PLUGIN_ROOT is interpolated directly into a node -e string literal (require('${PLUGIN_ROOT}/lib/project-context')). A plugin installation path containing a single quote (or backslash) breaks out of the string literal and executes arbitrary embedded JavaScript. The path is operator-chosen, so this is hardening rather than an external attack surface, but the same pattern is repeated across hooks.

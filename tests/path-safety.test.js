@@ -28,6 +28,9 @@
  *     primitive implementations themselves (owned-lock, lease-mutation,
  *     atomic-write, validation-session, manifest) plus a corpus-wide
  *     prohibition on touching shared pointers outside the approved helper.
+ *   - R5 worktree/branch identity: targeted contract check over the
+ *     instruction surfaces (skills and agents) plus the helper-surface
+ *     assertion in use-git-worktree.
  *
  * Run with: node tests/path-safety.test.js
  */

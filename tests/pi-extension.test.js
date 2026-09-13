@@ -283,6 +283,24 @@ describe('Pi project context fails closed on invalid config', () => {
     return root;
   }
 
+  test('a lexically nested symlink pointing at a disjoint tree still fails closed', () => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'gw-pi-nested-link-')));
+    try {
+      fs.mkdirSync(path.join(root, 'packages', 'web', 'specs'), { recursive: true });
+      fs.mkdirSync(path.join(root, 'apps'), { recursive: true });
+      fs.rmSync(path.join(root, 'apps', 'web'), { recursive: true, force: true });
+      fs.symlinkSync(path.join(root, 'packages', 'web'), path.join(root, 'apps', 'web'));
+      fs.writeFileSync(path.join(root, '.groundwork.yml'),
+        'version: 1\nprojects:\n  web:\n    path: apps/web\n  root:\n    path: apps\n');
+      const result = resolveProjectContext(root, 'web');
+      assert.strictEqual(result.ok, false, `resolved as: ${JSON.stringify(result)}`);
+      assert.strictEqual(result.code, 'overlapping-project-path');
+      assert.match(result.message, /lexical/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('symlinked project roots that alias one tree resolve to a structured failure', () => {
     const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'gw-pi-alias-')));
     try {
