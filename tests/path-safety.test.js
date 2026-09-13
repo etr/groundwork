@@ -1,15 +1,26 @@
 /**
- * Repo-wide path-safety guard.
+ * Path-safety guard.
  *
- * Enforces the three invariants that prevent the plan-collision bug class
+ * Enforces the five invariants that prevent the plan-collision bug class
  * from recurring:
  *   1. Scope by the key that makes a name unique — artifacts keyed on
  *      per-project identifiers (task IDs, feature/bug slugs) must be
- *      project-scoped via template vars, and run-keyed artifacts must carry
- *      a uniqueness suffix.
- *   2. No fixed shared temp paths for run-scoped data.
- *   3. Worktree/branch construction routes through the shared
+ *      project-scoped via template variables, and run-keyed artifacts must
+ *      carry a uniqueness suffix.
+ *   2. Operational bindings are normalized absolute paths.
+ *   3. No fixed shared temp paths for run-scoped data.
+ *   4. Fixed mutable state ("active" pointers, owned locks, lease
+ *      publications) transitions only through the serialized owned-lock /
+ *      lease-mutation protocol with holder identity.
+ *   5. Worktree/branch construction routes through the shared
  *      worktree-identity helper — never derived by hand in a skill.
+ *
+ * Corpus scope: rules 1-4 scan every authored surface (skills, agents,
+ * references, lib, hooks, bin, pi-extension, root scripts/docs). Two rules
+ * are deliberately targeted at the artifacts they govern: the invocation-
+ * unique journal contract (the three journal-authoring skills) and the
+ * handoff output suffix (the handoff skill). docs/developing-skills.md
+ * states the same scope.
  *
  * Run with: node tests/path-safety.test.js
  */
@@ -124,7 +135,7 @@ describe('reserved directories are project-scoped in skills', () => {
 
   test('debug journals are written via {{debug_dir}}', () => {
     const offenders = [];
-    for (const { name, body } of skillBodies()) {
+    for (const { name, body } of scanTargets()) {
       for (const line of body.split('\n')) {
         if (/\.debug\/\{slug\}\.md/.test(line) && !LEGACY_LINE(line)) {
           offenders.push(`${name}: ${line.trim()}`);
@@ -136,7 +147,7 @@ describe('reserved directories are project-scoped in skills', () => {
 
   test('research journals are written via {{research_dir}}', () => {
     const offenders = [];
-    for (const { name, body } of skillBodies()) {
+    for (const { name, body } of scanTargets()) {
       for (const line of body.split('\n')) {
         if (/\.architecture\/\{slug\}-research\.md/.test(line) && !LEGACY_LINE(line)) {
           offenders.push(`${name}: ${line.trim()}`);
@@ -148,8 +159,10 @@ describe('reserved directories are project-scoped in skills', () => {
 
   test('plan paths are written via {{plans_dir}}', () => {
     const offenders = [];
-    for (const { name, body } of skillBodies()) {
-      if (/plan_file_path\s*=\s*`?\.groundwork-plans\//.test(body)) offenders.push(name);
+    for (const { name, body } of scanTargets()) {
+      for (const line of body.split('\n')) {
+        if (/plan_file_path\s*=\s*`?\.groundwork-plans\//.test(line)) offenders.push(`${name}: ${line.trim()}`);
+      }
     }
     assert.deepStrictEqual(offenders, []);
   });

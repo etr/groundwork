@@ -2107,6 +2107,53 @@ describe('external runner runtime closure', () => {
     }
   });
 
+  test('parenthesized and comment-obscured requires cannot bypass closure validation', () => {
+    // A lexer (not a regex) classifies these: `(require)("./x")` and
+    // `require /* c */ ("./x")` are literal requires of unmanifested files.
+    for (const [label, mutation] of [
+      ['parenthesized require', '\nconst hidden = (require)("./undeclared-helper");\n'],
+      ['comment-obscured require', '\nconst hidden = require /* comment */ ("./undeclared-helper");\n'],
+    ]) {
+      const root = fixtureSourceCorruption((base) => {
+        fs.writeFileSync(path.join(base, 'lib', 'undeclared-helper.js'), 'module.exports = 1;\n');
+        fs.appendFileSync(path.join(base, 'lib', 'plan-check.js'), mutation);
+      });
+      try {
+        const result = manifestResult(root);
+        assert.notStrictEqual(result.status, 0, `${label} bypassed validation`);
+        assert.match(result.stderr, /undeclared-helper|does not declare/i, result.stderr);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    }
+
+    // The wrapped dynamic form still demands classification.
+    const dynamic = fixtureSourceCorruption((base) => {
+      fs.appendFileSync(path.join(base, 'lib', 'plan-check.js'), '\nconst hidden = (require)(someVariable);\n');
+    });
+    try {
+      const result = manifestResult(dynamic);
+      assert.notStrictEqual(result.status, 0, 'a wrapped dynamic require bypassed validation');
+      assert.match(result.stderr, /dynamic/i, result.stderr);
+    } finally {
+      fs.rmSync(dynamic, { recursive: true, force: true });
+    }
+
+    // String contents that merely mention require( are not calls.
+    const prose = fixtureSourceCorruption((base) => {
+      fs.appendFileSync(
+        path.join(base, 'lib', 'plan-check.js'),
+        '\nconst notice = "a per-line regex would flag require(./nope) in this string";\n'
+      );
+    });
+    try {
+      const result = manifestResult(prose);
+      assert.strictEqual(result.status, 0, result.stderr);
+    } finally {
+      fs.rmSync(prose, { recursive: true, force: true });
+    }
+  });
+
   test('the installer fails the export before writing any file when the manifest closure is broken', () => {
     if (!bashAvailable()) return;
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-install-fail-closed-'));

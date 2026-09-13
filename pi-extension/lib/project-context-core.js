@@ -41,11 +41,12 @@ function parseGroundworkYmlResult(content) {
   // The canonical mapping grammar is exact (mirrors lib/project-context.js):
   // any line that is not one of its productions is malformed — never
   // silently ignored, so every consumer interprets the same config the
-  // same way.
-  const malformed = (lineNumber, line) => ({
+  // same way. Exactly one unindented `version:` line must precede exactly
+  // one `projects:` line; project keys and path properties are unique.
+  const malformed = (lineNumber, line, detail) => ({
     ok: false,
     code: 'malformed-yaml',
-    message: `.groundwork.yml line ${lineNumber} is not part of the canonical mapping schema: ${JSON.stringify(line)}`,
+    message: `.groundwork.yml line ${lineNumber}${detail ? ` (${detail})` : ''}: ${JSON.stringify(line)}`,
   });
 
   const lines = content.split('\n');
@@ -64,32 +65,51 @@ function parseGroundworkYmlResult(content) {
       const projectMatch = line.match(/^  ([A-Za-z0-9][A-Za-z0-9_-]*):\s*$/);
       if (projectMatch) {
         currentProject = projectMatch[1];
+        if (Object.hasOwn(result.projects, currentProject)) {
+          return malformed(lineNumber, line, 'duplicate project key');
+        }
         result.projects[currentProject] = {};
         continue;
       }
       const propMatch = currentProject && line.match(/^    (\w+):\s*(.+)$/);
       if (propMatch) {
         if (propMatch[1] !== 'path') return malformed(lineNumber, line);
+        if (result.projects[currentProject].path !== undefined) {
+          return malformed(lineNumber, line, 'duplicate path property');
+        }
         result.projects[currentProject][propMatch[1]] = propMatch[2].trim();
         continue;
       }
       return malformed(lineNumber, line);
     }
 
+    if (/^[ \t]/.test(line)) {
+      return malformed(lineNumber, line, 'a top-level key must not be indented');
+    }
     const versionMatch = trimmed.match(/^version:\s*(\d+)$/);
     if (versionMatch) {
-      if (sawVersion) return malformed(lineNumber, line);
+      if (sawVersion) return malformed(lineNumber, line, 'duplicate version line');
       sawVersion = true;
       result.version = parseInt(versionMatch[1], 10);
       continue;
     }
 
     if (trimmed === 'projects:') {
+      if (!sawVersion) return malformed(lineNumber, line, 'projects: appears before version:');
       inProjects = true;
       continue;
     }
 
     return malformed(lineNumber, line);
+  }
+
+  if (!sawVersion || !inProjects) {
+    return {
+      ok: false,
+      code: 'malformed-yaml',
+      message: '.groundwork.yml must contain exactly one "version: 1" line followed by one "projects:" mapping'
+        + `${sawVersion ? '' : ' (version: is missing)'}${inProjects ? '' : ' (projects: is missing)'}`,
+    };
   }
 
   if (result.version !== 1) {
@@ -161,6 +181,48 @@ function bindings(projectName, projectRoot) {
 }
 
 /**
+ * Validate that configured project roots map to disjoint filesystem trees
+ * (mirrors lib/project-context.js): duplicate or ancestor/descendant roots —
+ * including symlink/realpath aliases — would receive different leases while
+ * targeting overlapping trees.
+ */
+function validateProjectMapping(config, repoRoot) {
+  const names = Object.keys(config.projects);
+  const lexical = new Map(names.map((name) => [name, path.resolve(repoRoot, config.projects[name].path)]));
+  const real = new Map();
+  const realRepoRoot = fs.realpathSync(repoRoot);
+  for (const name of names) {
+    try {
+      const realPath = fs.realpathSync(lexical.get(name));
+      const relative = path.relative(realRepoRoot, realPath);
+      if (relative.startsWith('..' + path.sep) || relative === '..') {
+        return { ok: false, code: 'overlapping-project-path', message: `project "${name}" realpath escapes the repository: ${realPath}` };
+      }
+      real.set(name, realPath);
+    } catch {
+      // Not on disk yet: the lexical check below still applies.
+    }
+  }
+  const aliasOf = (name) => real.get(name) || lexical.get(name);
+  for (let i = 0; i < names.length; i++) {
+    for (let j = i + 1; j < names.length; j++) {
+      const a = aliasOf(names[i]);
+      const b = aliasOf(names[j]);
+      const relative = path.relative(a, b);
+      const nested = relative === '' || (!relative.startsWith('..' + path.sep) && relative !== '..' && !path.isAbsolute(relative));
+      if (nested) {
+        return {
+          ok: false,
+          code: 'overlapping-project-path',
+          message: `projects "${names[i]}" (${a}) and "${names[j]}" (${b}) target overlapping trees — distinct project names must map to disjoint directories (checked lexically and after realpath)`,
+        };
+      }
+    }
+  }
+  return { ok: true };
+}
+
+/**
  * Resolve the Groundwork project context for a working directory.
  *
  * @param {string} cwd - Current working directory
@@ -195,6 +257,10 @@ function resolveProjectContext(cwd, selectedProject) {
     return { ok: false, code: parsed.code, reason: parsed.message, message: parsed.message };
   }
   const config = parsed.config;
+  const tree = validateProjectMapping(config, root);
+  if (!tree.ok) {
+    return { ok: false, code: tree.code, reason: tree.message, message: tree.message };
+  }
 
   if (!selectedProject) {
     // A configured monorepo without a verified selection: the caller must

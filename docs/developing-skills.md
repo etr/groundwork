@@ -88,7 +88,7 @@ See the example at: references/example.md
 
 ## Path Safety
 
-Skills produce files. The guard in `tests/path-safety.test.js` enforces the invariants repo-wide across every authored surface — `skills/`, `agents/`, `references/`, `lib/`, `hooks/`, `bin/`, `pi-extension/`, and the root-level scripts — so a violating skill or helper fails CI:
+Skills produce files. The guard in `tests/path-safety.test.js` enforces invariants 1-4 below across every authored surface — `skills/`, `agents/`, `references/`, `lib/`, `hooks/`, `bin/`, `pi-extension/`, and the root-level scripts — so a violating skill or helper fails CI. Two rules are deliberately targeted instead of corpus-wide, because they govern specific authored artifacts: the invocation-unique journal contract (checked against the three journal-authoring skills) and the handoff output suffix (checked against the handoff skill):
 
 1. **Scope by the key that makes a name unique.** Task IDs, feature slugs, and bug slugs are only unique *per project*, so any artifact named after one must live under the project root — use the template variables, never a bare CWD-relative path. Run-keyed artifacts (handoffs, per-invocation outputs) must carry a uniqueness suffix (timestamp + PID, or the run id).
 2. **Absolute bindings, invariant to the caller's cwd.** Every operational binding (`project_root`, `specs_dir`, `plans_dir`, `debug_dir`, `research_dir`) is an absolute normalized path resolved through `lib/project-context.js`. Relative spellings are legacy-read forms (old plan headers, old persisted state) — never emitted by new writers.

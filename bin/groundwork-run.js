@@ -1496,11 +1496,19 @@ function refExists(repoRoot, refName) {
 function loadProjectsMapping(repoRoot) {
   const configPath = path.join(repoRoot, '.groundwork.yml');
   if (!fs.existsSync(configPath)) return null;
-  const parsed = requireRuntimeHelper('project-context.js')
-    .parseConfigResult(fs.readFileSync(configPath, 'utf8'));
+  const shared = requireRuntimeHelper('project-context.js');
+  const parsed = shared.parseConfigResult(fs.readFileSync(configPath, 'utf8'));
   if (!parsed.ok) {
     const error = new Error(`Invalid .groundwork.yml (${parsed.code}): ${parsed.message}`);
     error.code = parsed.code;
+    throw error;
+  }
+  // Overlapping project trees would get distinct leases over the same
+  // directories — reject exactly like every other consumer.
+  const tree = shared.validateProjectMapping(parsed.config, repoRoot);
+  if (!tree.ok) {
+    const error = new Error(`Invalid .groundwork.yml (${tree.code}): ${tree.message}`);
+    error.code = tree.code;
     throw error;
   }
   return parsed.config.projects;
@@ -3242,21 +3250,14 @@ function runTasks(options, dependencies = {}) {
   const callPhase = dependencies.invokePhase || invokePhase;
   function invokeOnce(input) {
     if (dependencies.beforePhase) dependencies.beforePhase(input);
-    const releaseGate = acquireRepositoryGate(
-      commonDir,
-      'read',
-      leaseOwner(input.taskId),
-      leaseDependencies
-    );
-    try {
-      const phaseLeases = input.phaseLeases || (input.phaseLease ? [input.phaseLease] : []);
-      return callPhase({
-        ...input,
-        phaseLeases: [...phaseLeases, { leasePath: releaseGate.leasePath, owner: releaseGate.record }],
-      });
-    } finally {
-      releaseGate();
-    }
+    // The repository reader gate is deliberately NOT held across a phase:
+    // phases run inside their own task worktree over their own branch, so a
+    // publication in another package must not wait out this phase. Genuinely
+    // shared Git/base-checkout operations — startup, worktree setup, the
+    // workspace registry, cleanup, and publication itself — take the gate at
+    // their own call sites for exactly their duration.
+    const phaseLeases = input.phaseLeases || (input.phaseLease ? [input.phaseLease] : []);
+    return callPhase({ ...input, phaseLeases });
   }
 
   function invokeGenericRepair(input, failure) {

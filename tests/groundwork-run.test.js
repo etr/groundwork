@@ -7083,6 +7083,80 @@ describe('installed standalone runner smoke', () => {
     }
   });
 
+  test('a held project-A mutation queue never delays project B (two processes)', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-shard-proc-'));
+    const crypto = require('crypto');
+    const keyOf = (project) => crypto.createHash('sha256').update(project).digest('hex').slice(0, 32);
+    const projectsDir = path.join(root, 'projects');
+    fs.mkdirSync(path.join(projectsDir, `${keyOf('api')}.queue`), { recursive: true });
+    const sleepTest = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+    try {
+      const markers = {
+        held: path.join(root, 'held'),
+        release: path.join(root, 'release'),
+        done: path.join(root, 'done'),
+      };
+      const childScript = `
+        const lm = require(${JSON.stringify(path.join(PLUGIN_ROOT, 'lib', 'lease-mutation.js'))});
+        const fs = require('fs');
+        const release = lm.acquireLeaseMutation(${JSON.stringify(path.join(projectsDir, `${keyOf('api')}.queue`))});
+        fs.writeFileSync(${JSON.stringify(markers.held)}, 'held');
+        const deadline = Date.now() + 30000;
+        while (!fs.existsSync(${JSON.stringify(markers.release)})) {
+          if (Date.now() > deadline) process.exit(2);
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+        }
+        release();
+        fs.writeFileSync(${JSON.stringify(markers.done)}, 'done');
+      `;
+      const child = spawn('node', ['-e', childScript], { stdio: 'ignore' });
+      try {
+        waitForFile(markers.held, 15000);
+
+        // Project B's queue is a different shard: acquiring it must succeed
+        // promptly while another process holds project A's queue.
+        const lm = require(path.join(PLUGIN_ROOT, 'lib', 'lease-mutation.js'));
+        const startedAt = Date.now();
+        const releaseWeb = lm.acquireLeaseMutation(path.join(projectsDir, `${keyOf('web')}.queue`));
+        const elapsed = Date.now() - startedAt;
+        releaseWeb();
+        assert.ok(elapsed < 2000, `project B waited ${elapsed}ms on project A's queue — sharding is not behavioral`);
+
+        // The same project DOES serialize: A's queue is held by the child.
+        // The contender signals completion through a file — this test blocks
+        // the event loop with Atomics.wait, so child exit events would never
+        // be observed inline.
+        const contenderDone = path.join(root, 'contender-done');
+        const blocked = spawn('node', ['-e', `
+          const lm = require(${JSON.stringify(path.join(PLUGIN_ROOT, 'lib', 'lease-mutation.js'))});
+          const release = lm.acquireLeaseMutation(${JSON.stringify(path.join(projectsDir, `${keyOf('api')}.queue`))});
+          release();
+          require('fs').writeFileSync(${JSON.stringify(contenderDone)}, 'done');
+        `], { stdio: 'ignore' });
+        try {
+          sleepTest(1000);
+          assert.strictEqual(fs.existsSync(markers.done), false,
+            'a contender entered project A\'s queue while it was held');
+          assert.strictEqual(fs.existsSync(contenderDone), false,
+            'the contender finished while the queue was held');
+          fs.writeFileSync(markers.release, 'go');
+          const deadline = Date.now() + 15000;
+          while (!fs.existsSync(contenderDone)) {
+            if (Date.now() > deadline) throw new Error('the contender did not finish after the queue was released');
+            sleepTest(20);
+          }
+        } finally {
+          try { blocked.kill('SIGKILL'); } catch {}
+        }
+      } finally {
+        fs.writeFileSync(markers.release, 'go');
+        try { child.kill('SIGKILL'); } catch {}
+      }
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('project lease mutation queues are sharded per project, not shared across packages', () => {
     const { acquireProjectLease } = require(RUNNER);
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-lease-shard-'));
@@ -7111,6 +7185,46 @@ describe('installed standalone runner smoke', () => {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
+
+  // Parity: every .groundwork.yml rejection shape must fail the SOURCE
+  // runner and the FRESHLY INSTALLED runner identically — a config one
+  // entry point accepts and another rejects is a split-brain monorepo map.
+  for (const [label, config] of [
+    ['trailing garbage', 'version: 1\nprojects:\n  web:\n    path: .\n::: garbage\n'],
+    ['missing version', 'projects:\n  web:\n    path: .\n'],
+    ['duplicate project key', 'version: 1\nprojects:\n  web:\n    path: .\n  web:\n    path: apps\n'],
+    ['duplicate path property', 'version: 1\nprojects:\n  web:\n    path: .\n    path: apps\n'],
+    ['indented top-level key', '  version: 1\nprojects:\n  web:\n    path: .\n'],
+    ['overlapping nested trees', 'version: 1\nprojects:\n  web:\n    path: .\n  api:\n    path: apps\n'],
+    ['duplicate project root', 'version: 1\nprojects:\n  web:\n    path: apps\n  api:\n    path: apps\n'],
+  ]) {
+    test(`source and installed runners both fail closed on ${label}`, () => {
+      const repo = minimalFixtureRepo();
+      let installedRoot = null;
+      try {
+        fs.writeFileSync(path.join(repo, '.groundwork.yml'), config);
+        git(repo, 'add', '.groundwork.yml');
+        git(repo, 'commit', '-m', 'invalid config');
+        const shared = { encoding: 'utf8' };
+        const args = ['all', '--harness', 'codex', '--repo', repo, '--dry-run'];
+
+        const source = spawnSync('node', [path.join(PLUGIN_ROOT, 'bin', 'groundwork-run.js'), ...args], shared);
+        assert.notStrictEqual(source.status, 0, `source runner accepted ${label}`);
+        assert.ok(/groundwork\.yml|malformed|overlapping/i.test(source.stderr || source.stdout),
+          `source runner failure does not name the config for ${label}`);
+        assert.ok(!/RESULT: SUCCESS/.test(source.stdout));
+
+        const { root, runner } = installCodexRunner(PLUGIN_ROOT);
+        installedRoot = root;
+        const installed = spawnSync('node', [runner, ...args], shared);
+        assert.notStrictEqual(installed.status, 0, `installed runner accepted ${label}`);
+        assert.ok(!/RESULT: SUCCESS/.test(installed.stdout));
+      } finally {
+        fs.rmSync(repo, { recursive: true, force: true });
+        if (installedRoot) fs.rmSync(installedRoot, { recursive: true, force: true });
+      }
+    });
+  }
 
   test('the runner fails closed on a present-but-invalid .groundwork.yml (no private parser)', () => {
     const { root, runner } = installCodexRunner(PLUGIN_ROOT);

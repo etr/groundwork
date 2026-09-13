@@ -8,9 +8,9 @@ Do not edit `.validation-session.json` or `active.json` directly. Write only the
 
 A validation session (schema version 2) is owned by a **bearer capability**, not by whoever names its run id:
 
-- `open` returns `owner_token` exactly once per successful create, authorized resume, or reclaim — the only place the raw token ever appears. Durable state stores only its SHA-256 digest, an owner `epoch`, and a monotonic `revision`.
-- **Capability transport:** the owner capability reaches commands through an owner-only (0600) capability file — `open --save-capability <file>` writes the raw token once and omits it from stdout; every mutating command reads it via `--capability-file <file>` (a group/world-readable file is refused). A one-shot stdin pipe (`printf %s "$TOKEN" | validation-session.js <command> ...`, first trimmed line) is the alternative when the token is held only in working notes. It must never appear on the command line (readable by every local process via `ps(1)`/procfs) or in the environment; the CLI rejects `--owner-token` in either spelling. The module API keeps accepting the token as an in-process parameter.
-- Every mutating command (`checkpoint`, `begin-fixer`, `complete-fixer`, `complete`, `heartbeat-*`) requires the capability (file or stdin pipe). Mutations acquire the run's mutation lock, reload state, authenticate the digest, validate the expected stage (and revision, when `--expected-revision` is passed), and write one new revision. Authorized contenders serialize on the lock; the loser rereads state and fails the stage/revision check instead of overwriting the winner.
+- `open` mints the bearer capability per successful create, authorized resume, or reclaim. In manual mode it persists the raw token to the owner-only `capability_file` it returns; the raw token never appears in any status, log, or artifact output. Durable state stores only its SHA-256 digest, an owner `epoch`, and a monotonic `revision`.
+- **Capability transport:** a manual `open` persists the owner capability to an owner-only (0600) `manual-capability-<run_id>.json` beside the run directory and returns its non-secret path as `capability_file`; the raw token never appears on stdout. Every mutating command authenticates via `--capability-file <file>` — the file is opened through a single O_NOFOLLOW descriptor and fstat, so symlinks and group/world-readable files are refused without a check/read race. A one-shot stdin pipe (first trimmed line) is the fallback when a token is held only in working notes. The capability must never appear on the command line (readable by every local process via `ps(1)`/procfs) or in the environment; the CLI rejects `--owner-token` in either spelling. The module API keeps accepting the token as an in-process parameter.
+- Every mutating command (`checkpoint`, `begin-fixer`, `complete-fixer`, `complete`, `heartbeat-*`) requires the capability (file, or stdin pipe as fallback). Mutations acquire the run's mutation lock, reload state, authenticate the digest, validate the expected stage (and revision, when `--expected-revision` is passed), and write one new revision. Authorized contenders serialize on the lock; the loser rereads state and fails the stage/revision check instead of overwriting the winner.
 - Liveness is a **heartbeat worker**, not the brief `open` process. Start it before long gate/reviewer/fixer work and stop it through trap/finalization handling:
 
 ```text
@@ -34,10 +34,10 @@ Completed version-1 sessions remain replayable read-only. An incomplete version-
 Open the session before gates, reviewer dispatch, or artifact creation:
 
 ```text
-validation-session.js open --repo-root <repo> --project-root <project> --worktree <worktree> --task-id <TASK-NNN|manual-validation> --branch <branch> --base-head <sha> --protocol-version 1 [--runner-mode] [--resume-run <run_id>]  # resume: pipe the owner capability on stdin
+validation-session.js open --repo-root <repo> --project-root <project> --worktree <worktree> --task-id <TASK-NNN|manual-validation> --branch <branch> --base-head <sha> --protocol-version 1 [--runner-mode] [--resume-run <run_id> --capability-file <file>]  # resume: authenticate with the capability_file a prior open returned
 ```
 
-The JSON result supplies `run_id`, `run_dir`, `findings_dir`, `stage`, `iteration`, `coordinator_file`, `owner_token` (create/resume/reclaim only), and optional recovery/completion data. A runner invocation uses `--runner-mode`; an interactive invocation does not.
+The JSON result supplies `run_id`, `run_dir`, `findings_dir`, `stage`, `iteration`, `coordinator_file`, `capability_file` (the non-secret path to the persisted capability; runner mode instead keeps its private store), and optional recovery/completion data. A runner invocation uses `--runner-mode`; an interactive invocation does not.
 
 Handle its status exactly:
 

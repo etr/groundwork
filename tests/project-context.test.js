@@ -1393,6 +1393,14 @@ describe('invalid project configuration fails closed', () => {
     'unknown-project-property': 'version: 1\nprojects:\n  web:\n    path: apps/web\n    description: hi\n',
     'version-after-projects': 'version: 1\nprojects:\n  web:\n    path: apps/web\nversion: 1\n',
     'duplicate-version': 'version: 1\nversion: 1\nprojects:\n  web:\n    path: apps/web\n',
+    'missing-version': 'projects:\n  web:\n    path: apps/web\n',
+    'missing-projects': 'version: 1\n',
+    'duplicate-project-key': 'version: 1\nprojects:\n  web:\n    path: apps/web\n  web:\n    path: apps/api\n',
+    'duplicate-path-property': 'version: 1\nprojects:\n  web:\n    path: apps/web\n    path: apps/api\n',
+    'indented-top-level-key': '  version: 1\nprojects:\n  web:\n    path: apps/web\n',
+    'projects-before-version': 'projects:\n  web:\n    path: apps/web\nversion: 1\n',
+    'overlapping-nested-trees': 'version: 1\nprojects:\n  web:\n    path: apps\n  api:\n    path: apps/web\n',
+    'duplicate-project-root': 'version: 1\nprojects:\n  web:\n    path: apps/web\n  api:\n    path: apps/web\n',
   };
 
   function makeInvalidRepo(configName) {
@@ -1436,6 +1444,25 @@ describe('invalid project configuration fails closed', () => {
       });
     }
   }
+
+  test('symlinked project roots that alias one tree fail closed', () => {
+    const root = makeMonorepo();
+    try {
+      // api's root is a symlink to web's root: lexically distinct, the same
+      // tree after realpath — two names must not own two leases over it.
+      fs.symlinkSync(path.join(root, 'apps', 'web'), path.join(root, 'apps', 'alias'));
+      fs.writeFileSync(path.join(root, '.groundwork.yml'),
+        'version: 1\nprojects:\n  web:\n    path: apps/web\n  api:\n    path: apps/alias\n');
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-home-'));
+      const env = cleanEnv(home);
+      const result = runCliChecked(root, env, 'resolve', '--harness', 'codex');
+      assert.notStrictEqual(result.status, 0, 'aliased project trees were accepted');
+      assert.strictEqual(result.stdout.trim(), '', 'bindings were emitted for aliased trees');
+      assert.match(result.stderr, /overlapping-project-path/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
 
   test('select with an invalid config writes no receipt and no state', () => {
     const root = makeInvalidRepo('malformed-yaml');

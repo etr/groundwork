@@ -118,10 +118,11 @@ describe('closed dispositions stay out of the unworked ledger', () => {
         { id: 6, severity: 'minor', category: 'legacy', file: 'f.js', line: 6,
           finding: 'legacy record with no disposition', recommendation: 'Do it' },
         { id: 7, severity: 'minor', category: 'legacy', file: 'g.js', line: 7,
-          finding: 'prior finding 3 is RESOLVED by the lightweight path',
+          finding: 'legacy record whose prose says RESOLVED but carries no disposition',
           recommendation: 'None — resolved as claimed' },
         { id: 8, severity: 'minor', category: 'legacy', file: 'h.js', line: 8,
-          finding: 'stale docs remain', recommendation: 'None' },
+          finding: 'legacy record with no disposition and a None recommendation',
+          recommendation: 'None' },
       ],
     }));
     try {
@@ -134,18 +135,21 @@ describe('closed dispositions stay out of the unworked ledger', () => {
       assert.strictEqual(result.status, 0, result.stderr);
       const outcome = JSON.parse(result.stdout);
       assert.strictEqual(outcome.status, 'written', result.stdout);
-      assert.strictEqual(outcome.counts.minor, 1, JSON.stringify(outcome.counts));
+      assert.strictEqual(outcome.counts.minor, 3, JSON.stringify(outcome.counts));
       const report = fs.readFileSync(outcome.written, 'utf8');
-      assert.ok(!report.includes('RESOLVED'), 'a resolved item re-entered the ledger');
+      assert.ok(!report.includes('prior finding is RESOLVED'), 'a resolved item re-entered the ledger');
       assert.ok(!report.includes('approved deviation'), 'an approved item re-entered the ledger');
       assert.ok(!report.includes('fixed by the fixer'), 'a fixed item re-entered the ledger');
       assert.ok(!report.includes('open-path writes'), 'a fixed-ID item re-entered the ledger');
       assert.ok(report.includes('legacy record with no disposition'),
         'a legacy actionable record was dropped from the ledger');
-      assert.ok(!report.includes('prior finding 3 is RESOLVED'),
-        'a legacy resolved-looking record was kept without being demonstrably actionable');
-      assert.ok(!report.includes('stale docs remain'),
-        'a legacy record with a None recommendation was kept');
+      // Prose is NOT a disposition: legacy records without an explicit
+      // disposition field stay actionable — only the explicit field (or
+      // verified fixed IDs) closes a finding.
+      assert.ok(report.includes('legacy record whose prose says RESOLVED'),
+        'a disposition was inferred from finding prose');
+      assert.ok(report.includes('legacy record with no disposition and a None recommendation'),
+        'a disposition was inferred from the recommendation text');
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

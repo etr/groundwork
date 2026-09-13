@@ -283,6 +283,21 @@ describe('Pi project context fails closed on invalid config', () => {
     return root;
   }
 
+  test('symlinked project roots that alias one tree resolve to a structured failure', () => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'gw-pi-alias-')));
+    try {
+      fs.mkdirSync(path.join(root, 'apps', 'web', 'specs'), { recursive: true });
+      fs.writeFileSync(path.join(root, '.groundwork.yml'),
+        'version: 1\nprojects:\n  web:\n    path: apps/web\n  api:\n    path: apps/alias\n');
+      fs.symlinkSync(path.join(root, 'apps', 'web'), path.join(root, 'apps', 'alias'));
+      const result = resolveProjectContext(root, 'web');
+      assert.strictEqual(result.ok, false, `resolved as: ${JSON.stringify(result)}`);
+      assert.strictEqual(result.code, 'overlapping-project-path');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   for (const [label, content] of [
     ['malformed-yaml', 'version: 1\nprojects:\n  - web\n'],
     ['empty', ''],
@@ -292,6 +307,12 @@ describe('Pi project context fails closed on invalid config', () => {
     ['trailing-garbage', 'version: 1\nprojects:\n  web:\n    path: apps/web\n::: garbage\n'],
     ['unknown-top-level-key', 'version: 1\nname: x\nprojects:\n  web:\n    path: apps/web\n'],
     ['unknown-project-property', 'version: 1\nprojects:\n  web:\n    path: apps/web\n    description: hi\n'],
+    ['missing-version', 'projects:\n  web:\n    path: apps/web\n'],
+    ['duplicate-project-key', 'version: 1\nprojects:\n  web:\n    path: apps/web\n  web:\n    path: apps/api\n'],
+    ['duplicate-path-property', 'version: 1\nprojects:\n  web:\n    path: apps/web\n    path: apps/api\n'],
+    ['indented-top-level-key', '  version: 1\nprojects:\n  web:\n    path: apps/web\n'],
+    ['overlapping-nested-trees', 'version: 1\nprojects:\n  web:\n    path: apps\n  api:\n    path: apps/web\n'],
+    ['duplicate-project-root', 'version: 1\nprojects:\n  web:\n    path: apps/web\n  api:\n    path: apps/web\n'],
   ]) {
     test(`${label} config resolves to a structured failure, never single-project`, () => {
       const root = invalidRepo(content);

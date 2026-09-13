@@ -1057,10 +1057,15 @@ describe('capability ownership lifecycle (multi-process)', () => {
         // it, and an open pipe with no writer would block the child forever.
       ], { input: '', encoding: 'utf8' });
       assert.strictEqual(opened.status, 0, opened.stderr);
-      const token = JSON.parse(opened.stdout).owner_token;
-      assert.ok(token, 'open returns the capability to its caller');
+      // New contract: open persists the raw token to an owner-only file and
+      // returns the NON-SECRET path; the raw token never appears on stdout.
+      const openResult = JSON.parse(opened.stdout);
+      const token = fs.readFileSync(openResult.capability_file, 'utf8').trim();
+      assert.ok(token, 'open persisted the capability to its capability_file');
+      assert.strictEqual(openResult.owner_token, null, 'open echoed the raw token on stdout');
+      assert.strictEqual(fs.statSync(openResult.capability_file).mode & 0o777, 0o600);
 
-      const stateFile = path.join(JSON.parse(opened.stdout).run_dir, '.validation-session.json');
+      const stateFile = openResult.run_dir + '/.validation-session.json';
       const stateText = fs.readFileSync(stateFile, 'utf8');
       assert.ok(!stateText.includes(token), 'raw capability leaked into session state');
 
@@ -1412,17 +1417,24 @@ describe('capability transport and storage hardening', () => {
     const helper = require(HELPER);
     const repo = fixture();
     try {
-      const capabilityFile = path.join(repo.root, 'manual-capability');
       const opened = spawnSync(process.execPath, [
         HELPER, 'open',
         '--repo-root', repo.root, '--project-root', repo.root, '--worktree', repo.root,
         '--task-id', 'TASK-075', '--branch', 'task/TASK-075',
         '--base-head', repo.baseHead, '--protocol-version', '1',
-        '--save-capability', capabilityFile,
       ], { input: '', encoding: 'utf8' });
       assert.strictEqual(opened.status, 0, opened.stderr);
       const parsed = JSON.parse(opened.stdout);
       assert.strictEqual(parsed.owner_token, null, 'open echoed the raw token although it saved it to the file');
+      // Deterministic location beside the run directory, returned as a
+      // non-secret path — no caller-side derivation required.
+      const capabilityFile = parsed.capability_file;
+      assert.ok(capabilityFile, 'open did not return a capability_file path');
+      assert.strictEqual(
+        capabilityFile,
+        path.join(path.dirname(parsed.run_dir), `manual-capability-${parsed.run_id}.json`),
+        'the capability file is not at the documented deterministic location'
+      );
       assert.strictEqual(fs.statSync(capabilityFile).mode & 0o777, 0o600);
       const token = fs.readFileSync(capabilityFile, 'utf8').trim();
       assert.ok(token, 'saved capability file is empty');
@@ -1450,6 +1462,40 @@ describe('capability transport and storage hardening', () => {
       assert.notStrictEqual(refused.status, 0, 'a group-readable capability file was accepted');
       assert.match(refused.stderr, /chmod 600/);
       fs.rmSync(loose, { force: true });
+
+      // Regression: resume over stdin must work — main() may consume stdin
+      // exactly once. A second read returns empty and failed the resume.
+      const resumedStdin = spawnSync(process.execPath, [
+        HELPER, 'open',
+        '--repo-root', repo.root, '--project-root', repo.root, '--worktree', repo.root,
+        '--task-id', 'TASK-075', '--branch', 'task/TASK-075',
+        '--base-head', repo.baseHead, '--protocol-version', '1',
+        '--resume-run', parsed.run_id,
+      ], { input: `${token}\n`, encoding: 'utf8' });
+      assert.strictEqual(resumedStdin.status, 0, resumedStdin.stderr);
+      assert.strictEqual(JSON.parse(resumedStdin.stdout).status, 'resumed',
+        'piping the capability on stdin did not resume the session');
+
+      // Resume through the capability file refreshes it and re-authenticates.
+      const resumedFile = spawnSync(process.execPath, [
+        HELPER, 'open',
+        '--repo-root', repo.root, '--project-root', repo.root, '--worktree', repo.root,
+        '--task-id', 'TASK-075', '--branch', 'task/TASK-075',
+        '--base-head', repo.baseHead, '--protocol-version', '1',
+        '--resume-run', parsed.run_id, '--capability-file', capabilityFile,
+      ], { encoding: 'utf8' });
+      assert.strictEqual(resumedFile.status, 0, resumedFile.stderr);
+      assert.strictEqual(JSON.parse(resumedFile.stdout).status, 'resumed');
+
+      // A symlinked capability file is refused at open (O_NOFOLLOW), with no
+      // check/read race to exploit.
+      const link = path.join(repo.root, 'capability-link');
+      fs.symlinkSync(capabilityFile, link);
+      const viaLink = spawnSync(process.execPath, [
+        HELPER, 'heartbeat-beat', '--run-dir', parsed.run_dir, '--capability-file', link,
+      ], { encoding: 'utf8' });
+      assert.notStrictEqual(viaLink.status, 0, 'a symlinked capability file was accepted');
+      assert.match(viaLink.stderr, /symlink/);
     } finally {
       fs.rmSync(repo.root, { recursive: true, force: true });
     }
