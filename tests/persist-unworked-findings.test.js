@@ -89,6 +89,60 @@ function spawnPersistWorker(barrierDir, name, args) {
   return { child, ready, release, result };
 }
 
+describe('closed dispositions stay out of the unworked ledger', () => {
+  const { spawnSync } = require('child_process');
+
+  test('mixed-disposition fixture persists only actionable and legacy-actionable items', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-unworked-dispo-'));
+    const findingsDir = path.join(root, 'findings');
+    const specsDir = path.join(root, 'specs');
+    fs.mkdirSync(findingsDir);
+    fs.mkdirSync(specsDir);
+    fs.writeFileSync(path.join(findingsDir, 'findings-reviewer-iter2.json'), JSON.stringify({
+      agent: 'reviewer',
+      iteration: 2,
+      findings: [
+        { id: 1, severity: 'minor', category: 'blocking-io', file: 'a.js', line: 1,
+          finding: 'prior finding is RESOLVED', recommendation: 'None — resolved as claimed',
+          disposition: 'resolved' },
+        { id: 2, severity: 'minor', category: 'blocking-io', file: 'b.js', line: 2,
+          finding: 'prior finding is RESOLVED (closure re-check)', recommendation: 'None — resolved as claimed',
+          disposition: 'closure-observation' },
+        { id: 35, severity: 'minor', category: 'specification-gap', file: 'c.js', line: 3,
+          finding: 'open-path writes bypass the mutation lock', recommendation: 'Route through it',
+          disposition: 'actionable' },
+        { id: 4, severity: 'minor', category: 'docs', file: 'd.js', line: 4,
+          finding: 'approved deviation', recommendation: 'None', disposition: 'approved' },
+        { id: 5, severity: 'major', category: 'cleanup', file: 'e.js', line: 5,
+          finding: 'fixed by the fixer', recommendation: 'None', disposition: 'fixed' },
+        { id: 6, severity: 'minor', category: 'legacy', file: 'f.js', line: 6,
+          finding: 'legacy record with no disposition', recommendation: 'Do it' },
+      ],
+    }));
+    try {
+      // Item 35 is also claimed fixed by --fixed-ids: even an actionable
+      // disposition must yield to the verified fix list.
+      const result = spawnSync(process.execPath, [PERSIST,
+        '--findings-dir', findingsDir, '--specs-dir', specsDir,
+        '--task-id', 'TASK-075', '--fixed-ids', 'reviewer-iter2-35',
+      ], { encoding: 'utf8' });
+      assert.strictEqual(result.status, 0, result.stderr);
+      const outcome = JSON.parse(result.stdout);
+      assert.strictEqual(outcome.status, 'written', result.stdout);
+      assert.strictEqual(outcome.counts.minor, 1, JSON.stringify(outcome.counts));
+      const report = fs.readFileSync(outcome.written, 'utf8');
+      assert.ok(!report.includes('RESOLVED'), 'a resolved item re-entered the ledger');
+      assert.ok(!report.includes('approved deviation'), 'an approved item re-entered the ledger');
+      assert.ok(!report.includes('fixed by the fixer'), 'a fixed item re-entered the ledger');
+      assert.ok(!report.includes('open-path writes'), 'a fixed-ID item re-entered the ledger');
+      assert.ok(report.includes('legacy record with no disposition'),
+        'a legacy actionable record was dropped from the ledger');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('concurrent manual unworked-findings persistence', () => {
   test('many same-second writers produce one intact, distinct report each', () => {
     const { root, findingsDir, specsDir } = fixture();

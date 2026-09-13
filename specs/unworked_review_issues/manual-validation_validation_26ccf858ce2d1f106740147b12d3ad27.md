@@ -2,7 +2,7 @@
 
 **Run:** 2026-09-12 15:30:36
 **Task:** manual-validation
-**Total:** 44 (0 critical, 3 major, 41 minor)
+**Total:** 42 (0 critical, 3 major, 39 minor)
 
 ## Major
 
@@ -120,66 +120,58 @@
    processStartIdentity unconditionally calls processIsZombie, which spawns `ps -o stat=` — one process spawn per liveness probe — before consulting /proc. On Linux, /proc/<pid>/stat field 3 already carries the process state (zombie check without any spawn), and on macOS the subsequent lstart probe spawns `ps` again, so each identity probe costs up to two process spawns. These probes run inside the runner's 1s gate/poll loops and the mutation-entry wait loop, i.e. continuously while any contention exists.
    *Recommendation:* On Linux, read the state field from the same /proc/<pid>/stat buffer already parsed for starttime and treat state 'Z' as dead, eliminating the extra ps spawn. On macOS, the lstart `ps` output alone can serve (a dead pid errors); consider caching identities for a short TTL in polling loops that probe the same pid repeatedly.
 
-29. [ ] **performance-reviewer** | `lib/validation-session.js:620` | blocking-io
-   Prior finding 2 (withRunLock called loadSession pre-lock solely for a version check, doubling critical-section entry cost) is RESOLVED. The pre-lock gate is now readSessionStateLightweight (single realpath + JSON parse, no git spawn); the authoritative loadSession runs once inside the lock; the v1 rejection message is preserved via LEGACY_READONLY_MESSAGE. tests/validation-session.test.js:1205-1227 asserts exactly one git spawn per full mutation (checkpoint).
-   *Recommendation:* None — resolved as claimed.
-
-30. [ ] **performance-reviewer** | `lib/validation-session.js:648` | missing-caching
-   Prior finding 1 (heartbeatBeat paid full session verification: 2 git spawns + artifact re-hash every 15s) is RESOLVED. withHeartbeatLock uses readSessionStateLightweight (realpath + regular-file JSON read only, no execGit, no verifySessionArtifacts) both pre-lock and inside the lock, calls authenticateOwner inside the lock, and falls back to withRunLock on unrecognized version/owner shape. tests/validation-session.test.js:1171-1203 asserts zero git spawns per beat and that a forged token still throws (/capability does not match/) on the lightweight path.
-   *Recommendation:* None — resolved as claimed.
-
-31. [ ] **security-reviewer** | `hooks/pin-session-selection.sh:51` | injection
+29. [ ] **security-reviewer** | `hooks/pin-session-selection.sh:51` | injection
    PLUGIN_ROOT is interpolated directly into a node -e string literal (require('${PLUGIN_ROOT}/lib/project-context')). A plugin installation path containing a single quote (or backslash) breaks out of the string literal and executes arbitrary embedded JavaScript. The path is operator-chosen, so this is hardening rather than an external attack surface, but the same pattern is repeated across hooks.
    *Recommendation:* Pass PLUGIN_ROOT via environment (PLUGIN_ROOT=... node -e "... require(process.env.PLUGIN_ROOT + '/lib/project-context') ...") instead of string interpolation.
 
-32. [ ] **security-reviewer** | `lib/owned-lock.js:86` | insecure-design
+30. [ ] **security-reviewer** | `lib/owned-lock.js:86` | insecure-design
    A lock recorded on a foreign host (holderDead requires lockHolder.host === os.hostname()) can never be proven dead, so it is reaped purely on age (staleMs, default 5 min) even while its holder is alive — for example with a git common directory on a shared/network filesystem used from two machines. The validation-session open lock has the same property. This silently breaks mutual exclusion for cross-host checkouts of the same repository.
    *Recommendation:* Either document the single-host assumption explicitly in the ownership protocol (references/validation-session-protocol.md) and refuse cross-host reaping until a configurable longer cross-host staleness window elapses, or add a host-aware grace multiplier for foreign-host holders.
 
-33. [ ] **security-reviewer** | `lib/validation-session.js:1217` | sensitive-data-exposure
+31. [ ] **security-reviewer** | `lib/validation-session.js:1217` | sensitive-data-exposure
    The owner bearer capability is accepted and passed as a CLI argument (heartbeat-loop --owner-token <token>, open --owner-token ...), and sessionBusyMessage (line 640) explicitly instructs users to put --owner-token <capability> on the command line. argv is readable by every local user via ps(1)/procfs (CWE-598), which contradicts the plan's requirement that the raw token be 'passed through controlled local invocation state/environment' and omitted from diagnostics.
    *Recommendation:* Accept the capability via an environment variable (e.g., GROUNDWORK_VALIDATION_OWNER_TOKEN) or stdin, and update sessionBusyMessage and skills/validate documentation to never place the token in an argument vector.
 
-34. [ ] **security-reviewer** | `lib/validation-session.js:659` | cryptographic-failures
+32. [ ] **security-reviewer** | `lib/validation-session.js:659` | cryptographic-failures
    saveRunnerCapability writes the plaintext owner token with mode only at creation (writeFileSync {mode: 0o600}) and chmods only when the file did not previously exist. If runner-capability.json already exists with looser permissions (e.g., created by an older version or restored by a tool applying umask), the bearer capability stays world/group-readable.
    *Recommendation:* chmod 0o600 unconditionally after every write (the chmod is already wrapped in a best-effort try), independent of the existed flag.
 
-35. [ ] **spec-alignment-checker** | `lib/validation-session.js:768` | specification-gap
+33. [ ] **spec-alignment-checker** | `lib/validation-session.js:768` | specification-gap
    The plan invariant 'Every validation mutation is token-authenticated, serialized, and compare-and-swap guarded' is enforced for checkpoint/begin-fixer/complete-fixer/complete/heartbeat-* via withRunLock (mutation lock + reload + authenticate + revision bump), but the open-path writes — the authorized-resume heartbeat refresh (line ~768-780), the stale-takeover epoch mint (line ~787-800), and the fixer-inflight->fixer-prepared recovery write in recoverOrResume (line ~697-712) — write state directly via atomicWriteJson while holding only the slot open lock, not the run's .mutation.lock. In a narrow interleaving, a just-resumed old heartbeat worker that loaded pre-takeover state inside withRunLock could commit its revision after the takeover write, resurrecting the stale owner's tokenDigest. The window requires a worker whose lastBeat is already older than the 2h staleness window to beat again exactly during takeover, so it is theoretical, and all realistic takeover cases (crashed/dead worker) are safe.
    *Recommendation:* Route the resume/takeover/recovery state writes through the same mutation-lock discipline (acquire .mutation.lock, reload, then write), or have the takeover path acquire .mutation.lock before minting the successor epoch so an in-flight old-worker beat serializes against it and fails authentication.
 
-36. [ ] **test-quality-reviewer** | `tests/groundwork-run.test.js:1450` | implementation-coupling
+34. [ ] **test-quality-reviewer** | `tests/groundwork-run.test.js:1450` | implementation-coupling
    The identity-delegation test slices the runner source between 'function activeProjectOwners' and 'function acquireRepositoryGate' and asserts the body lacks '`task/${' and ".worktrees', holder.taskId". Function-boundary slicing breaks silently if either anchor function is renamed or reordered (indexOf returns -1 and the slice is empty, making the assertion vacuously true).
    *Recommendation:* Guard the anchors: assert indexOf('function activeProjectOwners') !== -1 and that the end index is greater than the start index before slicing, so a refactor fails loudly instead of turning the check into an always-pass.
 
-37. [ ] **test-quality-reviewer** | `tests/groundwork-run.test.js:7180` | missing-test
+35. [ ] **test-quality-reviewer** | `tests/groundwork-run.test.js:7180` | missing-test
    Plan slice 4 requires the capability to be absent from reporter artifacts/events ('never in reporter events'). The runner-arbitration tests assert the retained capability file is mode 0600 and never stored for sessions the runner does not own, but no test asserts reporter events / run-reporting output exclude the owner token.
    *Recommendation:* Extend 'runner-owned continuation resumes through its retained capability' (or the capability-leak test in tests/validation-session.test.js) to run one report emission with the token in scope and assert the produced report/event stream does not contain it.
 
-38. [ ] **test-quality-reviewer** | `tests/pi-extension.test.js:263` | logic-in-test
+36. [ ] **test-quality-reviewer** | `tests/pi-extension.test.js:263` | logic-in-test
    assert.ok(!/name:\s*\\?/.test('') && !projectContext.includes('- name:')) — the first conjunct runs a regex against the empty string, which is always false, so !false is always true. It is dead logic (likely a refactoring leftover) that makes the line read as if two checks exist when only one does.
    *Recommendation:* Delete the always-true conjunct and keep the real assertion: assert.ok(!projectContext.includes('- name:'), 'project-context.ts must not parse the list-style schema itself').
 
-39. [ ] **test-quality-reviewer** | `tests/project-context.test.js:1304` | implementation-coupling
+37. [ ] **test-quality-reviewer** | `tests/project-context.test.js:1304` | implementation-coupling
    'the pin hook never consults shared pane state for a pin decision' asserts on hook source text (!hook.includes('restorePaneSelection') / !hook.includes('>= snap')). This couples the test to exact identifier spelling and will silently stop guarding if the hook is refactored to an equivalent call under a different name, while passing today even if a renamed arbitration path is reintroduced.
    *Recommendation:* Keep it only as a supplementary policy lint (like path-safety), but rely on the existing behavioral tests (same-second arbitration test at line 1111 already pins the invariant). Consider asserting the outcome only, or move the source scan into tests/path-safety.test.js where source-scanning is the declared policy.
 
-40. [ ] **test-quality-reviewer** | `tests/skills-core.test.js:1` | missing-test
+38. [ ] **test-quality-reviewer** | `tests/skills-core.test.js:1` | missing-test
    lib/skills-core.js resolveTemplateVariables() was changed in this delta to emit the absolute project_root (slice 2 contract), but no test asserts the new absolute output for this function. Only the parallel implementation in lib/resolve-template-vars.js is covered (tests/plans-dir.test.js hook wiring). The two copies of the binding contract can now diverge without a failing test.
    *Recommendation:* Add one focused test in tests/skills-core.test.js asserting resolveTemplateVariables('{{project_root}}') yields the absolute project root (and '{{specs_dir}}' absolute), mirroring the plans-dir hook assertion — or consolidate both resolvers on one tested implementation.
 
-41. [ ] **test-quality-reviewer** | `tests/validation-session.test.js:1122` | non-deterministic
+39. [ ] **test-quality-reviewer** | `tests/validation-session.test.js:1122` | non-deterministic
    The takeover-serialization test's negative check waits a fixed 2s window for an 'unfenced takeover' epoch bump and treats timeout as proof of serialization. On a severely loaded machine a buggy (unfenced) taker might not publish within 2s, letting the bug false-pass this specific assertion.
    *Recommendation:* Acceptable as-is because the load-bearing final-state assertions (epoch bumped, tokenDigest rotated after the old owner's direct publish) independently catch the bug — they are what failed on pre-repair code. Optionally raise the window or comment that the final assertions are the real fence proof.
 
-42. [ ] **test-quality-reviewer** | `tests/validation-session.test.js:1171` | missing-test
+40. [ ] **test-quality-reviewer** | `tests/validation-session.test.js:1171` | missing-test
    withHeartbeatLock's defensive fallback to withRunLock (unrecognized owner shape / non-v2 state on the lightweight read) and releaseOpenLockVerified's unreadable-file leave-alone branch (lib/validation-session.js) are exercised only implicitly, not by dedicated tests.
    *Recommendation:* Add one test writing a malformed owner object to the state file and asserting a beat still succeeds via the fully verified path; add one test making the lockfile unreadable before release and asserting it is left in place.
 
-43. [ ] **test-quality-reviewer** | `tests/validation-session.test.js:1222` | implementation-coupling
+41. [ ] **test-quality-reviewer** | `tests/validation-session.test.js:1222` | implementation-coupling
    assert.strictEqual(counter.gitSpawns, 1) couples the test to the exact number of git invocations inside loadSession; a behavior-preserving refactor that legitimately issues two git calls would break it.
    *Recommendation:* Fine to keep since the exact count is the regression being pinned (pre-repair doubled it to 2); if loadSession's git usage ever becomes an implementation detail, relax to counter.gitSpawns <= 1 or assert the delta relative to a control path.
 
-44. [ ] **test-quality-reviewer** | `tests/validation-session.test.js:760` | non-deterministic
+42. [ ] **test-quality-reviewer** | `tests/validation-session.test.js:760` | non-deterministic
    The live-heartbeat test sleeps a fixed 400ms and asserts lastBeat changed (beat interval 100ms via GROUNDWORK_VALIDATION_BEAT_MS). Under heavy CI load a 400ms window can pass without an observed beat, producing an intermittent failure — the only fixed-sleep-as-assertion-margin in the otherwise barrier-deterministic suite.
    *Recommendation:* Replace the sleep+compare with the suite's existing waitFor() helper: waitFor(() => heartbeatState(created.runDir).lastBeat !== before, 10000, 'heartbeat advancement'). Same idea applies to the real-time staleness wait at line 799, which already uses waitFor correctly.

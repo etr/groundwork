@@ -113,8 +113,9 @@ A new file per iteration preserves history across the fix-and-retry loop, so the
   "score": 85,
   "verdict": "approve",
   "findings": [
-    {"id": 1, "severity": "major", "category": "...", "file": "...", "line": 42, "finding": "...", "recommendation": "..."},
-    {"id": 2, "severity": "minor", "category": "...", "file": "...", "line": 10, "finding": "...", "recommendation": "..."}
+    {"id": 1, "severity": "major", "category": "...", "file": "...", "line": 42, "finding": "...", "recommendation": "...", "disposition": "actionable"},
+    {"id": 2, "severity": "minor", "category": "...", "file": "...", "line": 10, "finding": "...", "recommendation": "...", "disposition": "actionable"}
+Every finding carries a `disposition`: `"actionable"` while it demands work, or the closure outcome (`"resolved"`, `"approved"`, `"fixed"`, `"closure-observation"`) once it no longer does. A prior finding you re-checked and found already addressed is `"resolved"` (or `"closure-observation"` when it never demanded work) — never re-listed as actionable. The unworked-findings report persists only actionable items: fixed IDs and every closed disposition are dropped, so a stale "resolved" entry must not survive into the ledger.
   ]
 }
 ```
