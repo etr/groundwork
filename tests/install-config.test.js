@@ -2153,7 +2153,7 @@ describe('external runner runtime closure', () => {
       ['require behind a regex-brace inside a template expression',
         '\nconst hidden = `${/}/; require("./undeclared-helper")}`;\n', /undeclared-helper|does not declare/],
       ['indirect require alias',
-        '\nconst r = require; const hidden = r("./undeclared-helper");\n', /undeclared-helper|does not declare/],
+        '\nconst r = require; const hidden = r("./undeclared-helper");\n', /bare\/indirect|classify/],
       ['comment inside the argument list is still a literal require',
         '\nconst hidden = require(/* why */ "./undeclared-helper");\n', /undeclared-helper|does not declare/],
     ]) {
@@ -2165,9 +2165,66 @@ describe('external runner runtime closure', () => {
         const result = manifestResult(root);
         assert.notStrictEqual(result.status, 0, `${label} bypassed validation`);
         assert.match(result.stderr, expect, `${label}: ${result.stderr}`);
-        // Literal (not merely unclassified-dynamic): the diagnostic names the
-        // undeclared module, not the classification rule.
-        assert.doesNotMatch(result.stderr, /classify it by appending/, `${label} was misread as dynamic`);
+        // For literal-shape cases the diagnostic names the undeclared module,
+        // not the classification rule (the alias case is intentionally the
+        // classification message).
+        if (/undeclared/.test(String(expect))) {
+          assert.doesNotMatch(result.stderr, /classify it by appending/, `${label} was misread as dynamic`);
+        }
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    }
+
+    // The narrow grammar rejects every unrecognized indirect form — no
+    // alias-pattern enumeration to evade.
+    for (const [label, mutation] of [
+      ['commented alias', '\nconst r /* comment */ = require; const hidden = r("./undeclared-helper");\n'],
+      ['parenthesized alias', '\nconst r = (require); const hidden = r("./undeclared-helper");\n'],
+      ['require.call', '\nconst hidden = require.call(null, "./undeclared-helper");\n'],
+      ['Reflect.apply', '\nconst hidden = Reflect.apply(require, null, ["./undeclared-helper"]);\n'],
+    ]) {
+      const root = fixtureSourceCorruption((base) => {
+        fs.writeFileSync(path.join(base, 'lib', 'undeclared-helper.js'), 'module.exports = 1;\n');
+        fs.appendFileSync(path.join(base, 'lib', 'plan-check.js'), mutation);
+      });
+      try {
+        const result = manifestResult(root);
+        assert.notStrictEqual(result.status, 0, `${label} bypassed validation`);
+        assert.match(result.stderr, /bare\/indirect|classify/i, `${label}: ${result.stderr}`);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    }
+
+    // Explicitly classified indirection and approved require.main pass.
+    for (const [label, mutation] of [
+      ['classified alias', '\nconst r = require; // runtime-closure: classified — aliased loader, targets are manifested\nconst hidden = r("./plan-check");\n'],
+      ['require.main access', '\nconst isDirect = require.main === module;\n'],
+    ]) {
+      const root = fixtureSourceCorruption((base) => {
+        fs.appendFileSync(path.join(base, 'lib', 'plan-check.js'), mutation);
+      });
+      try {
+        const result = manifestResult(root);
+        assert.strictEqual(result.status, 0, `${label}: ${result.stderr}`);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    }
+
+    // Unterminated block comments and regex literals are unprovable.
+    for (const [label, mutation] of [
+      ['unterminated block comment', '\nconst x = 1; /* never closed\n'],
+      ['unterminated regex literal', '\nconst re = /never closed\n'],
+    ]) {
+      const root = fixtureSourceCorruption((base) => {
+        fs.appendFileSync(path.join(base, 'lib', 'plan-check.js'), mutation);
+      });
+      try {
+        const result = manifestResult(root);
+        assert.notStrictEqual(result.status, 0, `${label} passed validation`);
+        assert.match(result.stderr, /unterminated|unprovable/i, `${label}: ${result.stderr}`);
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }

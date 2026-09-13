@@ -284,9 +284,11 @@ describe('template-variable wiring', () => {
     for (const [anchor, label] of invariants) {
       assert.match(docs, anchor, `docs/developing-skills.md lost the invariant anchor: ${label}`);
     }
-    // Non-vacuity: the guard's corpus genuinely spans every authored
-    // surface (not a hand-picked file list), so each rule above is
-    // exercised against the whole repository.
+    // Non-vacuity: the corpus used by the corpus-wide rules (R1 project
+    // scoping, R3 fixed temp paths — see the per-rule scope in the header)
+    // genuinely spans every authored surface, not a hand-picked file list.
+    // The functional, primitive-level, and targeted rules have their own
+    // enforcement sites and are not claimed to scan this corpus.
     const surfaces = new Set(scanTargets().map(({ name }) => name.split('/')[0]));
     for (const surface of ['skills', 'agents', 'references', 'lib', 'hooks', 'bin', 'pi-extension']) {
       assert.ok(surfaces.has(surface), `the path-safety corpus no longer scans ${surface}/`);
