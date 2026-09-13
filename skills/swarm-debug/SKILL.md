@@ -82,7 +82,7 @@ Follow the `groundwork:debug` skill's Phase 1 exactly.
 
 Read the system. Check your assumptions. Don't touch anything yet. Trace the code path from input to failure. For multi-component systems, instrument at each boundary before forming hypotheses.
 
-Create the debug journal at an invocation-unique path `{{debug_dir}}/${SLUG}-$(date +%Y%m%d%H%M%S)-$$.md` during this phase, following the `groundwork:debug` skill's journal discipline: derive the slug once (kebab-case of the bug's one-line description, max 40 chars), create the directory with the idempotent `.debug/` gitignore append, migrate any legacy repository-root journal into place with one visible `mv`, generate the literal journal path once, pass it to every hypothesis agent, return it in the final output, and locate prior journals by slug prefix (`ls -t {{debug_dir}}/${SLUG}-*.md`) when resuming — never a fixed name, never a shared `current` pointer.
+Create the debug journal at an invocation-unique path during this phase, following the `groundwork:debug` skill's journal discipline: derive the slug once (kebab-case of the bug's one-line description, max 40 chars), create the directory with the idempotent `.debug/` gitignore append, allocate an atomically unique run directory (`RUN_DIR="$(mktemp -d "{{debug_dir}}/${SLUG}-XXXXXX")"; JOURNAL_PATH="$RUN_DIR/journal.md"`), migrate any legacy repository-root journal into place with visible commands, generate the literal journal path once, pass it to every hypothesis agent, return it in the final output, and locate prior run directories by slug prefix (`ls -dt {{debug_dir}}/${SLUG}-*/`) when resuming — if several match, use the handoff's literal path or ask the user; never a fixed name, never a shared `current` pointer.
 
 ## Phase 2: REPRODUCE
 

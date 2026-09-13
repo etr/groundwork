@@ -82,7 +82,7 @@ digraph debugging {
     fix [label="FIX\nMinimal change\n+ failing test", shape=box, style=filled, fillcolor="#ccffcc"];
     verify [label="VERIFY\nProve it's fixed", shape=box, style=filled, fillcolor="#ccccff"];
     escalate [label="ESCALATE\nReport to human", shape=box, style=filled, fillcolor="#ffccee"];
-    journal [label="DEBUG JOURNAL\n{{debug_dir}}/{slug}-{timestamp}-{pid}.md", shape=note, style=filled, fillcolor="#f0f0f0"];
+    journal [label="DEBUG JOURNAL\n{{debug_dir}}/{slug}-xxxxxx/journal.md", shape=note, style=filled, fillcolor="#f0f0f0"];
 
     understand -> reproduce;
     reproduce -> isolate;
@@ -354,21 +354,27 @@ Maintain a persistent debug journal **at an invocation-unique path** — the slu
 
 `{{debug_dir}}` resolves inside the selected project's root (mirroring `{{plans_dir}}`), so the same bug slug in two monorepo projects produces two distinct journal locations instead of colliding at the repository root.
 
-**Derive the slug once, at the start of Phase 1:** kebab-case of the bug's one-line description, truncated to 40 characters (e.g. "login timeout on token refresh" → `login-timeout-on-token-refresh`). Then generate the journal path **once** from the slug plus a collision-resistant run identity (timestamp + PID):
+**Derive the slug once, at the start of Phase 1:** kebab-case of the bug's one-line description, truncated to 40 characters (e.g. "login timeout on token refresh" → `login-timeout-on-token-refresh`). Then allocate the journal's run directory **once** — an atomically unique `mktemp` directory keyed on the slug:
 
 ```bash
 mkdir -p {{debug_dir}}
 grep -qxF '.debug/' .gitignore 2>/dev/null || printf '.debug/\n' >> .gitignore
-JOURNAL="{{debug_dir}}/${SLUG}-$(date +%Y%m%d%H%M%S)-$$.md"
+RUN_DIR="$(mktemp -d "{{debug_dir}}/${SLUG}-XXXXXX")"
+JOURNAL_PATH="$RUN_DIR/journal.md"
 ```
 
 The `.gitignore` pattern is unanchored, so it covers debug directories at any project depth; the append is idempotent.
 
 Use that **literal resolved path** everywhere for the rest of the session — including in every subagent prompt — so the path can never drift between derivations, and **return it in your final output and any handoff** so the next session can adopt it directly.
 
-**Resuming prior work on the same slug:** find earlier journals by slug prefix, newest first — `ls -t {{debug_dir}}/${SLUG}-*.md` — read the newest one before repeating hypotheses, then continue writing to your own invocation-unique journal (never a shared `current` pointer, never the older file).
+**Resuming prior work on the same slug:** find earlier run directories by slug prefix — `ls -dt {{debug_dir}}/${SLUG}-*/` — and read the journal inside. If more than one match exists, do not silently pick one: use the literal journal path from your handoff, or ask the user which run to continue. Then continue writing to your own invocation-unique journal (never a shared `current` pointer, never the older file).
 
-**One-time migration:** if a legacy journal for this slug exists at the unscoped repository-root location `.debug/{slug}.md` while `{{debug_dir}}` points elsewhere, move it into place as a prior journal with a single visible `mv .debug/{slug}.md {{debug_dir}}/{slug}-migrated-$(date +%Y%m%d%H%M%S)-$$.md` and say so — do not keep reading the legacy location.
+**One-time migration:** if a legacy journal for this slug exists at the unscoped repository-root location `.debug/{slug}.md` while `{{debug_dir}}` points elsewhere, move it into a fresh run directory with two visible commands and say so — do not keep reading the legacy location:
+
+```bash
+RUN_DIR="$(mktemp -d "{{debug_dir}}/{slug}-migrated-XXXXXX")"
+mv .debug/{slug}.md "$RUN_DIR/journal.md" # legacy location migration
+```
 
 ```markdown
 # Debug: {slug}

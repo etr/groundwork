@@ -386,14 +386,18 @@ describe('invocation-unique debug and research journals', () => {
   test('each journal skill generates a collision-resistant literal path once', () => {
     for (const { file } of JOURNAL_CASES) {
       const body = fs.readFileSync(path.join(PLUGIN_ROOT, file), 'utf8');
-      // Run identity: timestamp plus pid (the same contract as the handoff
-      // artifact), embedded in a generation command the skill runs once.
-      assert.match(body, /date \+%Y%m%d%H%M%S/, `${file} lacks a timestamp in the journal identity`);
-      assert.match(body, /-\$\$[-.)]/, `${file} lacks the pid in the journal identity`);
+      // Run identity: an atomically unique mktemp directory keyed on the
+      // slug (mktemp is O_EXCL under the hood, so same-second invocations
+      // and PID reuse cannot collide). A timestamp+PID-only contract is
+      // rejected — it collides on same-process-same-second and pid reuse.
+      assert.match(body, /mktemp -d "\{\{(?:debug|research)_dir\}\}\/\$\{SLUG\}-X{6}"/, `${file} must allocate its journal run directory with mktemp`);
+      assert.ok(!/\$\$[-.)]/.test(body), `${file} still uses the pid in its journal identity (pid reuse collides)`);
       // The literal generated path is what collaborators receive.
       assert.match(body, /literal (?:resolved )?(?:journal|path|research)/i, `${file} must pass the literal path to collaborators`);
-      // Prior work is found by slug prefix, never by a fixed name.
-      assert.match(body, /\$\{SLUG\}-\*/, `${file} must locate prior journals by slug prefix on resume`);
+      // Prior work is found by slug-prefixed run directories, never by a fixed name.
+      assert.match(body, /\$\{SLUG\}-\*\//, `${file} must locate prior journal run directories by slug prefix on resume`);
+      // Several matches must not be silently resolved.
+      assert.match(body, /more than one match|several match/i, `${file} must require a literal path or user selection when several runs match`);
       // No shared "current" pointer.
       assert.ok(
         !/\{\{(?:debug|research)_dir\}\}\/current/.test(body),
@@ -410,6 +414,29 @@ describe('invocation-unique debug and research journals', () => {
         /final output|handoff output|report the (?:literal )?(?:journal|research) path/i,
         `${file} must return the journal path in its final or handoff output`
       );
+    }
+  });
+
+  test('the mktemp run-directory contract is collision-proof in the same second and across pid reuse', () => {
+    // Same process, same second: two allocations must not collide.
+    const base = fs.mkdtempSync(path.join(require('os').tmpdir(), 'gw-journal-'));
+    try {
+      const { execSync } = require('child_process');
+      const first = execSync('mktemp -d "$BASE/login-timeout-XXXXXX"', {
+        shell: '/bin/bash', encoding: 'utf8', env: { ...process.env, BASE: base },
+      }).trim();
+      const second = execSync('mktemp -d "$BASE/login-timeout-XXXXXX"', {
+        shell: '/bin/bash', encoding: 'utf8', env: { ...process.env, BASE: base },
+      }).trim();
+      assert.notStrictEqual(first, second, 'two same-second allocations collided');
+      assert.ok(fs.statSync(first).isDirectory());
+      assert.ok(fs.statSync(second).isDirectory());
+      // Resume contract: slug-prefix matching finds both, in the shell
+      // spelling the skills document.
+      const matches = fs.readdirSync(base).filter((name) => name.startsWith('login-timeout-'));
+      assert.strictEqual(matches.length, 2, `slug-prefix resume glob found ${matches.length}`);
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
     }
   });
 });
