@@ -758,7 +758,7 @@ describe('capability ownership lifecycle (multi-process)', () => {
         assert.throws(() => helper.openValidationSession(identity(repo)), /already active/);
 
         const before = heartbeatState(created.runDir).lastBeat;
-        sleepMs(400);
+        waitFor(() => heartbeatState(created.runDir).lastBeat !== before, 15000, 'beat advancement');
         const after = heartbeatState(created.runDir).lastBeat;
         assert.notStrictEqual(after, before, 'beats must advance while the worker is live');
         assert.throws(() => helper.openValidationSession(identity(repo)), /already active/);
@@ -1114,16 +1114,19 @@ describe('open-path mutation serialization (takeover vs old owner)', () => {
       waitFor(() => fs.existsSync(taker.ready), 15000, 'taker ready');
       fs.writeFileSync(taker.release, 'go\n');
 
-      // An unfenced takeover (the bug) publishes the successor immediately;
-      // a serialized one blocks on the mutation lock the old owner holds.
-      let unfencedTakeover = false;
-      try {
-        waitFor(() => JSON.parse(fs.readFileSync(stateFile, 'utf8')).owner.epoch
-          === created.state.owner.epoch + 1, 2000, 'unfenced takeover');
-        unfencedTakeover = true;
-      } catch (error) {
-        assert.match(error.message, /timed out waiting for unfenced takeover/);
-      }
+      // IPC state barrier: the taker holds the slot's open lock for the whole
+      // open critical section, so its presence proves the taker is mid-open;
+      // its result marker still being absent while the old owner holds the
+      // mutation lock IS the fence — no wall-clock negative assertion.
+      const openLock = path.join(path.dirname(created.runDir), 'active.lock');
+      waitFor(() => fs.existsSync(openLock), 15000, 'taker entering the open critical section');
+      assert.strictEqual(fs.existsSync(taker.result), false,
+        'the taker completed while the old owner held the mutation lock');
+      assert.strictEqual(
+        JSON.parse(fs.readFileSync(stateFile, 'utf8')).owner.epoch,
+        created.state.owner.epoch,
+        'an unfenced takeover published while the old owner held the lock'
+      );
 
       // The old owner publishes its computed revision regardless.
       write(stateFile, JSON.stringify(oldOwnerComputed));
@@ -1139,8 +1142,6 @@ describe('open-path mutation serialization (takeover vs old owner)', () => {
         'the old owner record was resurrected over the successor');
       assert.notStrictEqual(final.owner.tokenDigest, created.state.owner.tokenDigest,
         'the old capability digest outlived the takeover');
-      assert.strictEqual(unfencedTakeover, false,
-        'the takeover was not serialized against the old owner\'s in-flight mutation');
     } finally {
       fs.rmSync(barrier, { recursive: true, force: true });
       fs.rmSync(repo.root, { recursive: true, force: true });
@@ -1221,6 +1222,120 @@ describe('heartbeat hot path (lightweight, authenticated)', () => {
       // pre-lock full load doubled it.
       assert.strictEqual(counter.gitSpawns, 1,
         'a mutation must pay the verification cost once, not twice');
+    } finally {
+      fs.rmSync(repo.root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('heartbeat lease survives lock contention (dedicated worker keeps the lease)', () => {
+  const { acquireOwnedLock } = require(path.resolve(__dirname, '..', 'lib', 'owned-lock.js'));
+
+  test('a heartbeat beat survives a mutation lock held beyond the acquire timeout', () => {
+    const helper = require(HELPER);
+    const repo = fixture();
+    const barrier = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-validation-contention-'));
+    try {
+      const created = helper.openValidationSession(identity(repo));
+      const before = heartbeatState(created.runDir).lastBeat;
+
+      // A contender holds the run's mutation lock well beyond the beat's
+      // acquire timeout (300ms via env) — the heartbeat must keep trying.
+      const held = acquireOwnedLock(path.join(created.runDir, '.mutation.lock'));
+      const worker = spawnBarrierWorker(barrier, 'beat', {
+        op: 'heartbeat-beat',
+        runDir: created.runDir,
+        ownerToken: created.ownerToken,
+      }, {
+        GROUNDWORK_MUTATION_LOCK_WAIT_MS: '300',
+        GROUNDWORK_HEARTBEAT_LOCK_PATIENCE_MS: '30000',
+      });
+      waitFor(() => fs.existsSync(worker.ready), 15000, 'beat worker ready');
+      fs.writeFileSync(worker.release, 'go\n');
+
+      // Contention observed: past the acquire timeout (300ms here, 5s by
+      // default) the worker is still in the game — no result marker, no exit,
+      // lease intact. The hold outlasts even the default 5s acquire deadline.
+      sleepMs(5200);
+      assert.strictEqual(fs.existsSync(worker.result), false,
+        'the heartbeat gave up while the mutation lock was merely contended');
+      held.release();
+
+      waitFor(() => fs.existsSync(worker.result), 20000, 'beat result');
+      const outcome = JSON.parse(fs.readFileSync(worker.result, 'utf8'));
+      assert.ok(outcome.ok, `the contended heartbeat beat failed: ${outcome.error}`);
+      const after = heartbeatState(created.runDir).lastBeat;
+      assert.notStrictEqual(after, before, 'the beat did not advance after contention cleared');
+    } finally {
+      fs.rmSync(barrier, { recursive: true, force: true });
+      fs.rmSync(repo.root, { recursive: true, force: true });
+    }
+  });
+
+  test('a crashed heartbeat worker is detected by process identity, not just age', () => {
+    const helper = require(HELPER);
+    const repo = fixture();
+    try {
+      const created = helper.openValidationSession(identity(repo));
+      const worker = spawnHeartbeatWorker(created.runDir, created.ownerToken, {
+        GROUNDWORK_VALIDATION_BEAT_MS: '100',
+      });
+      waitFor(() => heartbeatState(created.runDir).registered, 15000, 'heartbeat registration');
+      killAndWait(worker);
+
+      // The last beat is fresh, but the registered worker is provably gone:
+      // liveness must follow the recorded process identity immediately.
+      const stateFile = path.join(created.runDir, '.validation-session.json');
+      const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+      assert.strictEqual(helper.sessionLiveness(state), 'stale');
+      const reclaimed = helper.openValidationSession(identity(repo));
+      assert.strictEqual(reclaimed.status, 'reclaimed');
+    } finally {
+      fs.rmSync(repo.root, { recursive: true, force: true });
+    }
+  });
+
+  test('host identity decides heartbeat liveness: dead, mismatched, foreign, malformed', () => {
+    const helper = require(HELPER);
+    const now = new Date().toISOString();
+    const liveHeartbeat = {
+      registered: true,
+      pid: process.pid,
+      host: os.hostname(),
+      processStart: require(path.resolve(__dirname, '..', 'lib', 'process-identity.js'))
+        .processStartIdentity(process.pid),
+      startedAt: now,
+      lastBeat: now,
+      graceUntil: now,
+      stopped: false,
+    };
+    const withHeartbeat = (overrides) => ({
+      stage: 'review-batch-complete',
+      owner: { terminal: false, heartbeat: { ...liveHeartbeat, ...overrides } },
+    });
+
+    // Fresh beat, same host, provably dead pid: stale.
+    assert.strictEqual(helper.sessionLiveness(withHeartbeat({ pid: 424242, processStart: 'proc:1' })), 'stale');
+    // Fresh beat, live pid, but a different process instance (start mismatch): stale.
+    assert.strictEqual(helper.sessionLiveness(withHeartbeat({ processStart: 'proc:not-this-one' })), 'stale');
+    // Fresh beat on a foreign host: never probed, never reaped while young.
+    assert.strictEqual(helper.sessionLiveness(withHeartbeat({ host: 'definitely-not-this-host' })), 'live');
+    // Malformed identity (no processStart, non-integer pid): undecidable, so
+    // the recorded fresh beat governs — the session is not reaped.
+    assert.strictEqual(helper.sessionLiveness(withHeartbeat({ pid: 'not-a-pid', processStart: undefined })), 'live');
+  });
+
+  test('an unreadable session state fails the heartbeat closed without mutation', () => {
+    const helper = require(HELPER);
+    const repo = fixture();
+    try {
+      const created = helper.openValidationSession(identity(repo));
+      const stateFile = path.join(created.runDir, '.validation-session.json');
+      fs.chmodSync(stateFile, 0o000);
+      assert.throws(() => helper.heartbeatBeat(created.runDir, created.ownerToken));
+      fs.chmodSync(stateFile, 0o600);
+      const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+      assert.strictEqual(state.revision, created.state.revision, 'state changed under an unreadable beat');
     } finally {
       fs.rmSync(repo.root, { recursive: true, force: true });
     }
