@@ -128,7 +128,7 @@ Hooks are defined in `hooks/hooks.json` and use `${CLAUDE_PLUGIN_ROOT}` for port
 
 ### Path safety
 
-Files produced by skills follow three invariants, enforced repo-wide by `tests/path-safety.test.js` (see `docs/developing-skills.md` → "Path Safety" for the full rules and the reserved-dirs table): artifacts keyed on per-project identifiers are project-scoped via template variables; run-keyed artifacts carry uniqueness suffixes; and shared "active" pointers use O_EXCL locks with staleness recovery (as in `lib/validation-session.js`).
+Files produced by skills follow five invariants, enforced repo-wide by `tests/path-safety.test.js` (see `docs/developing-skills.md` → "Path Safety" for the full rules and the reserved-dirs table): artifacts keyed on per-project identifiers are project-scoped via template variables (in both template and literal relative shell spellings); run-keyed artifacts carry uniqueness suffixes; operational bindings are normalized absolute paths; fixed mutable state ("active" pointers, owned locks, lease publications) transitions only through the serialized mutation protocol (`lib/owned-lock.js`, `lib/lease-mutation.js`, holder identity from `lib/process-identity.js`); and task worktree/branch identity comes from `lib/worktree-identity.js`. The exported standalone runner closure is declared and validated by `lib/external-runner-manifest.js`.
 
 ## Multi-target installation
 

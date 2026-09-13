@@ -205,6 +205,72 @@ describe('worktree and branch construction routes through the helper', () => {
 });
 
 describe('template-variable wiring', () => {
+  test('reserved directories are never addressed by a literal relative shell spelling', () => {
+    // The template form is covered above; this catches the equivalent shell
+    // spelling of the same violation (`.debug/...` instead of
+    // `{{debug_dir}}/...`). Only write contexts count — prose mentions and
+    // `.gitignore` maintenance name the directory without addressing an
+    // artifact inside it.
+    const offenders = [];
+    const WRITE_CONTEXT = /mkdir|printf|echo\b|tee\b|\bmv\b|\bcp\b|\brm\b|>>|>|--output\b|\bopen\(|writeFileSync|mkdirSync/;
+    const GITIGNORE_MAINTENANCE = /gitignore/i;
+    for (const { name, body } of scanTargets()) {
+      if (!/^skills\/|^agents\//.test(name)) continue;
+      for (const line of body.split('\n')) {
+        if (
+          /(?:^|[\s"'`=(])\.(?:debug|architecture|groundwork-plans)\//.test(line)
+          && WRITE_CONTEXT.test(line)
+          && !GITIGNORE_MAINTENANCE.test(line)
+          && !LEGACY_LINE(line)
+        ) {
+          offenders.push(`${name}: ${line.trim()}`);
+        }
+      }
+    }
+    assert.deepStrictEqual(offenders, []);
+  });
+
+  test('operational bindings resolve to normalized absolute paths', () => {
+    const cli = require('child_process').spawnSync(
+      'node',
+      [path.join(PLUGIN_ROOT, 'lib', 'project-context-cli.js'), 'resolve', '--harness', 'zcode'],
+      { cwd: PLUGIN_ROOT, encoding: 'utf8' }
+    );
+    assert.strictEqual(cli.status, 0, cli.stderr);
+    const bindings = JSON.parse(cli.stdout);
+    for (const key of ['project_root', 'debug_dir', 'research_dir']) {
+      const value = bindings[key];
+      assert.ok(value, `binding ${key} missing`);
+      assert.ok(path.isAbsolute(value), `binding ${key} is not absolute: ${value}`);
+      assert.strictEqual(value, path.normalize(value), `binding ${key} is not normalized: ${value}`);
+    }
+  });
+
+  test('the five path-safety invariants are anchored and non-vacuous in the docs', () => {
+    const docs = fs.readFileSync(path.join(PLUGIN_ROOT, 'docs', 'developing-skills.md'), 'utf8');
+    const invariants = [
+      [/project-scoped via template variables?|Scope by the key that makes a name unique/, 'project-keyed artifacts are project-scoped'],
+      [/uniqueness suffix|invocation-unique/, 'run-keyed artifacts are invocation-unique'],
+      [/absolute normalized path/, 'operational bindings are normalized absolute paths'],
+      [/O_EXCL lock|serialized mutation turn/, 'fixed mutable state uses serialized owned-lock transitions'],
+      [/worktree-identity\.js/, 'task worktree/branch identity comes from worktree-identity'],
+    ];
+    for (const [anchor, label] of invariants) {
+      assert.match(docs, anchor, `docs/developing-skills.md lost the invariant anchor: ${label}`);
+    }
+    // Non-vacuity: the guard itself exercises each invariant category.
+    const guard = fs.readFileSync(__filename, 'utf8');
+    for (const probe of [
+      /skillBodies\(\)/,          // project-scoped corpus
+      /uniqueness|suffix/,        // invocation-unique corpus
+      /isAbsolute/,               // absolute bindings
+      /withMutationTurn|O_EXCL/,  // serialized lock transitions
+      /worktree-identity/,        // identity helper routing
+    ]) {
+      assert.match(guard, probe, `the path-safety guard no longer exercises ${probe}`);
+    }
+  });
+
   test('resolver emits {{debug_dir}} and {{research_dir}}', () => {
     const resolver = fs.readFileSync(path.join(PLUGIN_ROOT, 'lib', 'resolve-template-vars.js'), 'utf8');
     assert.ok(resolver.includes('- {{debug_dir}} = ${debugDir}'));
