@@ -1002,7 +1002,12 @@ function acquireProjectLease(commonDir, owner, dependencies = {}) {
   const projectKey = crypto.createHash('sha256').update(project).digest('hex').slice(0, 32);
   const directory = path.join(commonDir, 'groundwork', 'projects');
   const leasePath = path.join(directory, `${projectKey}.lock`);
-  const leaseDependencies = { ...dependencies, mutationRoot: directory };
+  // Shard the mutation queue per project: only mutators of THIS project's
+  // lease need mutual exclusion, so different packages never serialize on a
+  // shared projects/ queue. Mixed-version note: a runner older than the
+  // sharding still queues at projects/.lease-mutation — drain old runners
+  // before upgrading, exactly like the repository-gate v2 precondition.
+  const leaseDependencies = { ...dependencies, mutationRoot: path.join(directory, `${projectKey}.queue`) };
   let lastProgressAt = -Infinity;
   createContainedDirectory(commonDir, directory, 'Project lease directory');
   for (;;) {
@@ -1076,7 +1081,10 @@ function activeProjectOwners(commonDir, repoRoot, dependencies = {}) {
   const worktrees = (dependencies.registeredWorktrees || registeredWorktrees)(repoRoot);
   const registeredByPath = new Map(worktrees.map((entry) => [entry.path, entry]));
   for (const name of fs.readdirSync(directory)) {
-    if (name === '.reclaim.lock' || name === '.lease-mutation' || name === '.phase-children' || name.startsWith('.staging-')) continue;
+    // Skip coordination entries: shared reclaim/mutation/phase state plus
+    // the per-project sharded mutation queue directories (`<key>.queue`).
+    if (name === '.reclaim.lock' || name === '.lease-mutation' || name === '.phase-children'
+      || name.startsWith('.staging-') || /^[0-9a-f]{32}\.queue$/.test(name)) continue;
     if (!/^[0-9a-f]{32}\.lock$/.test(name)) {
       throw new Error(`Project lease filename is invalid: ${path.join(directory, name)}`);
     }
@@ -1123,6 +1131,17 @@ function activeProjectOwners(commonDir, repoRoot, dependencies = {}) {
   return owners;
 }
 
+// Architectural scope note: the repository read/write gate and the
+// workspace-registry lock are deliberately repository-global, NOT sharded
+// per project. The workspace registry IS Git's repository-global worktree
+// list (git worktree prune/list mutate one shared state), so any
+// per-project sharding would race exactly where Git itself cannot. The
+// repository gate guards base-checkout-wide invariants (clean tree,
+// publication, setup/cleanup) that by definition span every package in the
+// monorepo; narrowing it per package would let package A's publication
+// observe package B's half-written tree. These are the only two
+// repository-global coordination points — everything finer is project- or
+// task-scoped.
 function acquireRepositoryGate(commonDir, mode, owner, dependencies = {}) {
   if (!['read', 'write'].includes(mode)) throw new Error(`Invalid repository gate mode: ${mode}`);
   const log = dependencies.log || console.log;

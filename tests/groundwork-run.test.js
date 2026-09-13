@@ -7083,6 +7083,35 @@ describe('installed standalone runner smoke', () => {
     }
   });
 
+  test('project lease mutation queues are sharded per project, not shared across packages', () => {
+    const { acquireProjectLease } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-lease-shard-'));
+    let releaseWeb;
+    try {
+      initRepo(root);
+      const commonDir = path.join(root, '.git');
+      releaseWeb = acquireProjectLease(commonDir, { project: 'web', taskId: 'TASK-004' }, {
+        log: () => {}, now: () => 1_000,
+      });
+      releaseWeb();
+      releaseWeb = null;
+
+      const crypto = require('crypto');
+      const keyOf = (project) => crypto.createHash('sha256').update(project).digest('hex').slice(0, 32);
+      const projectsDir = path.join(commonDir, 'groundwork', 'projects');
+      // Each project's transitions ran in its own queue directory …
+      assert.ok(fs.existsSync(path.join(projectsDir, `${keyOf('web')}.queue`, '.lease-mutation')),
+        'the per-project mutation queue directory is missing');
+      // … and no shared projects/ queue serializes unrelated packages.
+      assert.strictEqual(fs.existsSync(path.join(projectsDir, '.lease-mutation')), false,
+        'a shared projects/ mutation queue still exists — cross-package serialization');
+      assert.notStrictEqual(keyOf('web'), keyOf('api'));
+    } finally {
+      if (releaseWeb) { try { releaseWeb(); } catch {} }
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('the runner fails closed on a present-but-invalid .groundwork.yml (no private parser)', () => {
     const { root, runner } = installCodexRunner(PLUGIN_ROOT);
     const repo = minimalFixtureRepo();

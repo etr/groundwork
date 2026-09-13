@@ -1408,6 +1408,53 @@ describe('capability transport and storage hardening', () => {
     }
   });
 
+  test('manual capability-file transport: saved owner-only, omitted from stdout, accepted by mutations', () => {
+    const helper = require(HELPER);
+    const repo = fixture();
+    try {
+      const capabilityFile = path.join(repo.root, 'manual-capability');
+      const opened = spawnSync(process.execPath, [
+        HELPER, 'open',
+        '--repo-root', repo.root, '--project-root', repo.root, '--worktree', repo.root,
+        '--task-id', 'TASK-075', '--branch', 'task/TASK-075',
+        '--base-head', repo.baseHead, '--protocol-version', '1',
+        '--save-capability', capabilityFile,
+      ], { input: '', encoding: 'utf8' });
+      assert.strictEqual(opened.status, 0, opened.stderr);
+      const parsed = JSON.parse(opened.stdout);
+      assert.strictEqual(parsed.owner_token, null, 'open echoed the raw token although it saved it to the file');
+      assert.strictEqual(fs.statSync(capabilityFile).mode & 0o777, 0o600);
+      const token = fs.readFileSync(capabilityFile, 'utf8').trim();
+      assert.ok(token, 'saved capability file is empty');
+
+      // A mutation authenticates from the file — no stdin, no argv, no env.
+      const stateFile = path.join(parsed.run_dir, '.validation-session.json');
+      const coordinatorFile = path.join(parsed.run_dir, 'coordinator-iter1.json');
+      write(coordinatorFile, JSON.stringify(coordinatorState()));
+      const checkpoint = spawnSync(process.execPath, [
+        HELPER, 'checkpoint', '--run-dir', path.dirname(stateFile),
+        '--expected-stage', 'initial-audit-pending', '--next-stage', 'review-batch-complete',
+        '--iteration', '1', '--coordinator-file', coordinatorFile,
+        '--capability-file', capabilityFile,
+      ], { encoding: 'utf8' });
+      assert.strictEqual(checkpoint.status, 0, checkpoint.stderr);
+      assert.ok(!checkpoint.stdout.includes(token), 'the raw capability leaked into mutation output');
+
+      // A loose capability file must be refused before any mutation runs.
+      const loose = path.join(repo.root, 'loose-capability');
+      fs.writeFileSync(loose, `${token}\n`, { mode: 0o644 });
+      const refused = spawnSync(process.execPath, [
+        HELPER, 'heartbeat-beat', '--run-dir', path.dirname(stateFile),
+        '--capability-file', loose,
+      ], { encoding: 'utf8' });
+      assert.notStrictEqual(refused.status, 0, 'a group-readable capability file was accepted');
+      assert.match(refused.stderr, /chmod 600/);
+      fs.rmSync(loose, { force: true });
+    } finally {
+      fs.rmSync(repo.root, { recursive: true, force: true });
+    }
+  });
+
   test('the capability is never read from the environment', () => {
     const source = fs.readFileSync(HELPER, 'utf8');
     assert.doesNotMatch(source, /env\.[A-Z_]*OWNER/i, 'the capability must not come from env');

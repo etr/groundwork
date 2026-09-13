@@ -214,14 +214,17 @@ describe('template-variable wiring', () => {
     const offenders = [];
     const WRITE_CONTEXT = /mkdir|printf|echo\b|tee\b|\bmv\b|\bcp\b|\brm\b|>>|>|--output\b|\bopen\(|writeFileSync|mkdirSync/;
     const GITIGNORE_MAINTENANCE = /gitignore/i;
+    // JS writers address reserved dirs through resolved absolute bindings
+    // (path.join(projectRoot, '.debug')), never a CWD-relative literal.
+    const JS_RESOLVED_BINDING = /\bjoin\(\s*(?:projectRoot|projectPath|project_root|root)\b|\b(projectRoot|projectPath|debugDir|researchDir|plansDir)\s*[,)]/;
     for (const { name, body } of scanTargets()) {
-      if (!/^skills\/|^agents\//.test(name)) continue;
       for (const line of body.split('\n')) {
         if (
           /(?:^|[\s"'`=(])\.(?:debug|architecture|groundwork-plans)\//.test(line)
           && WRITE_CONTEXT.test(line)
           && !GITIGNORE_MAINTENANCE.test(line)
           && !LEGACY_LINE(line)
+          && !(name.endsWith('.js') && JS_RESOLVED_BINDING.test(line))
         ) {
           offenders.push(`${name}: ${line.trim()}`);
         }
@@ -258,17 +261,14 @@ describe('template-variable wiring', () => {
     for (const [anchor, label] of invariants) {
       assert.match(docs, anchor, `docs/developing-skills.md lost the invariant anchor: ${label}`);
     }
-    // Non-vacuity: the guard itself exercises each invariant category.
-    const guard = fs.readFileSync(__filename, 'utf8');
-    for (const probe of [
-      /skillBodies\(\)/,          // project-scoped corpus
-      /uniqueness|suffix/,        // invocation-unique corpus
-      /isAbsolute/,               // absolute bindings
-      /withMutationTurn|O_EXCL/,  // serialized lock transitions
-      /worktree-identity/,        // identity helper routing
-    ]) {
-      assert.match(guard, probe, `the path-safety guard no longer exercises ${probe}`);
+    // Non-vacuity: the guard's corpus genuinely spans every authored
+    // surface (not a hand-picked file list), so each rule above is
+    // exercised against the whole repository.
+    const surfaces = new Set(scanTargets().map(({ name }) => name.split('/')[0]));
+    for (const surface of ['skills', 'agents', 'references', 'lib', 'hooks', 'bin', 'pi-extension']) {
+      assert.ok(surfaces.has(surface), `the path-safety corpus no longer scans ${surface}/`);
     }
+    assert.ok(scanTargets().length >= 130, 'the path-safety corpus suspiciously shrank');
   });
 
   test('resolver emits {{debug_dir}} and {{research_dir}}', () => {

@@ -174,22 +174,23 @@ node ${CLAUDE_PLUGIN_ROOT}/lib/validation-session.js open \
   --branch "<branch>" \
   --base-head "<base_sha>" \
   --protocol-version 1 \
+  <optional --save-capability "<capability_file>" — persist the raw capability once to an owner-only 0600 file instead of receiving it on stdout; use "<validation_dir>/manual-capability" beside the run directory> \
   <optional --runner-mode> \
-  <optional --resume-run "<run_id>" — pipe the owner capability on stdin: `printf %s "$OWNER_TOKEN" | node .../validation-session.js open ... --resume-run "<run_id>"`. Include the resume id and capability on every re-open within this validation when you already hold them from a prior open or your tracking notes. The capability must never appear on the command line or in the environment — argv is readable by every local process. In runner mode, the phase prompt supplies RESUME VALIDATION SESSION=<run_id> (environment GROUNDWORK_VALIDATION_RUN_ID): pass that value here verbatim; the runner's retained capability is applied automatically>
+  <optional --resume-run "<run_id>" --capability-file "<capability_file>" — resume from the owner-only capability file a prior open saved. Include both on every re-open within this validation. The capability must never appear on the command line, the environment, the transcript, or session state: `--save-capability` (below) is the sanctioned persistence; piping on stdin (`printf %s "$TOKEN" | ...`) is the one-shot alternative for a capability you hold only in working notes. In runner mode, the phase prompt supplies RESUME VALIDATION SESSION=<run_id> (environment GROUNDWORK_VALIDATION_RUN_ID): pass that value here verbatim; the runner's retained capability is applied automatically>
 ```
 
 Parse only the returned one-line JSON. Save `run_id`, `run_dir`, `findings_dir`, `stage`, `iteration`, `coordinator_file`, and `owner_token` (returned by `created`, `resumed`, and `reclaimed`).
 
-**Capability handling:** the `owner_token` is a bearer capability — keep it only in your in-context working notes and pass it to mutating commands on stdin (`printf %s "$OWNER_TOKEN" | node .../validation-session.js <command> ...`). Never put it on the command line, in the environment, or into files, artifacts, logs, reviewer prompts, or reports; durable state records only its digest. If you lose it, you cannot mutate the live session: wait until the heartbeat is provably stale, then re-open to reclaim a successor capability.
+**Capability handling:** the `owner_token` is a bearer capability. Pass `--save-capability "<validation_dir>/manual-capability"` on the FIRST `open`: the raw token is then written once to an owner-only (0600) file beside the run directory and omitted from stdout entirely. Every later mutating command passes `--capability-file "<capability_file>"` — this never places the token on argv, in the environment, in the transcript, or in durable session state (which stores only its digest). After a reclaim or resume that mints a fresh capability, re-run `open` with `--resume-run` and `--save-capability` to refresh the file. A one-shot stdin pipe (`printf %s "$TOKEN" | node .../validation-session.js <command> ...`) is the fallback when you hold the token only in working notes. If you lose both the token and the file, you cannot mutate the live session: wait until the heartbeat is provably stale, then re-open to reclaim a successor capability.
 
 **Heartbeat worker (start immediately after a successful open):** the session's liveness is this worker, not your process. Run it in the background for the whole validation and stop it in every exit path (completion, failure, or trap) — the capability travels on a private stdin pipe in both cases:
 
 ```bash
-printf %s "$OWNER_TOKEN" | node ${CLAUDE_PLUGIN_ROOT}/lib/validation-session.js heartbeat-loop \
-  --run-dir "<run_dir>" &
+node ${CLAUDE_PLUGIN_ROOT}/lib/validation-session.js heartbeat-loop \
+  --run-dir "<run_dir>" --capability-file "<capability_file>" &
 # on completion or failure:
-printf %s "$OWNER_TOKEN" | node ${CLAUDE_PLUGIN_ROOT}/lib/validation-session.js heartbeat-stop \
-  --run-dir "<run_dir>"
+node ${CLAUDE_PLUGIN_ROOT}/lib/validation-session.js heartbeat-stop \
+  --run-dir "<run_dir>" --capability-file "<capability_file>"
 ```
 
 - `created`: initialize iteration 1, freeze the baseline, start the heartbeat worker, and run the initial audit.
@@ -348,12 +349,13 @@ After every assigned findings artifact in the batch is complete and validated, u
 Populate the arrays with the complete compact semantic state needed to resume; do not store only IDs where closure requires invariant/evidence/outcome. For the initial batch checkpoint `initial-audit-pending -> review-batch-complete`. For a post-fix closure batch checkpoint `gates-complete -> review-batch-complete`:
 
 ```bash
-printf %s "$OWNER_TOKEN" | node ${CLAUDE_PLUGIN_ROOT}/lib/validation-session.js checkpoint \
+node ${CLAUDE_PLUGIN_ROOT}/lib/validation-session.js checkpoint \
   --run-dir "<run_dir>" \
   --expected-stage "<initial-audit-pending|gates-complete>" \
   --next-stage "review-batch-complete" \
   --iteration "<N>" \
-  --coordinator-file "<run_dir>/coordinator-iter<N>.json"
+  --coordinator-file "<run_dir>/coordinator-iter<N>.json" \
+  --capability-file "<capability_file>"
 ```
 
 Only this successful checkpoint makes the reviewer batch durable. If execution stops earlier, rerun that exact pending batch on resume.
@@ -387,10 +389,11 @@ Continue until every valid baseline finding is closed and all impacted reviewers
    If a finding contradicts or expands the frozen baseline, do not send it to the fixer; reject or persist it according to the review protocol. If the baseline is genuinely missing or contradictory, use the existing user-clarification/failure path. Otherwise write the envelope as `{run_dir}/repair-envelope-iter{N}.json`. Before spawning the validation-fixer, record the durable semantic transition to `fixer-inflight`:
 
    ```bash
-   printf %s "$OWNER_TOKEN" | node ${CLAUDE_PLUGIN_ROOT}/lib/validation-session.js begin-fixer \
+   node ${CLAUDE_PLUGIN_ROOT}/lib/validation-session.js begin-fixer \
      --run-dir "<run_dir>" \
      --iteration "<N>" \
-     --envelope-file "<run_dir>/repair-envelope-iter<N>.json"
+     --envelope-file "<run_dir>/repair-envelope-iter<N>.json" \
+     --capability-file "<capability_file>"
    ```
 
    Then spawn the fixer, even when the repair requires substantial restructuring. Do not ask the fixer to discover its own scope.
@@ -424,10 +427,11 @@ Continue until every valid baseline finding is closed and all impacted reviewers
    A conversational result is not durable completion. After the normal fixer-result validator accepts `{run_dir}/fixer-result-iter{N}.json`, record the accepted result:
 
    ```bash
-   printf %s "$OWNER_TOKEN" | node ${CLAUDE_PLUGIN_ROOT}/lib/validation-session.js complete-fixer \
+   node ${CLAUDE_PLUGIN_ROOT}/lib/validation-session.js complete-fixer \
      --run-dir "<run_dir>" \
      --iteration "<N>" \
-     --result-file "<run_dir>/fixer-result-iter<N>.json"
+     --result-file "<run_dir>/fixer-result-iter<N>.json" \
+     --capability-file "<capability_file>"
    ```
 
    If the process stops before this succeeds, resume the `fixer-inflight` transaction through the recovery rules; never adopt partial source mutations as an implicit fixer result.
@@ -435,7 +439,7 @@ Continue until every valid baseline finding is closed and all impacted reviewers
 4. **Write Closure Brief and Re-run Impacted Agents** — Run every required post-fix project gate on the current worktree. Once they pass, update the coordinator file and checkpoint the durable gate boundary:
 
    ```bash
-   printf %s "$OWNER_TOKEN" | node ${CLAUDE_PLUGIN_ROOT}/lib/validation-session.js checkpoint \
+   node ${CLAUDE_PLUGIN_ROOT}/lib/validation-session.js checkpoint \
      --run-dir "<run_dir>" \
      --expected-stage "fixer-result-ready" \
      --next-stage "gates-complete" \
@@ -546,13 +550,14 @@ After all agents approve—or before returning `Validation INCOMPLETE` in nonint
 Before emitting any PASS result, persist the reusable completion receipt. For `action: "none"`:
 
 ```bash
-printf %s "$OWNER_TOKEN" | node ${CLAUDE_PLUGIN_ROOT}/lib/validation-session.js complete \
+node ${CLAUDE_PLUGIN_ROOT}/lib/validation-session.js complete \
   --run-dir "<run_dir>" \
   --expected-stage "review-batch-complete" \
   --iterations "<N>" \
   --fixed "<M>" \
   --unworked "<K>" \
-  --action "none"
+  --action "none" \
+  --capability-file "<capability_file>"
 ```
 
 For `action: "commit"`, use the same command with `--action "commit" --commit-subject "<subject>" --commit-body "<body>"`. Only a successful `complete` transition authorizes PASS. Retain `run_dir`; it is the restart record, not temporary cleanup.
