@@ -505,7 +505,10 @@ describe('project context CLI', () => {
         cwd: repo, env: cleanEnv(home), encoding: 'utf8',
       });
       assert.notStrictEqual(result.status, 0);
-      assert.ok(result.stderr.includes('No .groundwork.yml found'), result.stderr);
+      // The unsafe name yields no canonical mapping: the config itself is
+      // rejected as invalid rather than degrading to "no config found".
+      assert.ok(result.stderr.includes('.groundwork.yml'), result.stderr);
+      assert.ok(result.stderr.includes('malformed-yaml'), result.stderr);
     } finally {
       fs.rmSync(repo, { recursive: true, force: true });
     }
@@ -1305,6 +1308,176 @@ describe('receipt-based pane-less pinning', () => {
     const hook = fs.readFileSync(PIN_HOOK, 'utf8');
     assert.ok(!hook.includes('restorePaneSelection'), 'hook must not read pane state to decide pins');
     assert.ok(!hook.includes('>= snap'), 'hook must not arbitrate by timestamp');
+  });
+});
+
+describe('invalid project configuration fails closed', () => {
+  // An invalid .groundwork.yml must never degrade to single-project resolution:
+  // every operational surface (CLI resolve/select, persist, detection, the pin
+  // hook) refuses with a non-zero exit, emits no bindings or receipt, and
+  // names the config as the problem. Only a MISSING config is single-project.
+  const INVALID_CONFIGS = {
+    'malformed-yaml': 'version: 1\nprojects:\n  - web\n',
+    'empty': '',
+    'unsupported-version': 'version: 2\nprojects:\n  web:\n    path: apps/web\n',
+    'missing-project-path': 'version: 1\nprojects:\n  web:\n    description: no path\n',
+    'escaping-project-path': 'version: 1\nprojects:\n  web:\n    path: ../outside\n',
+    'invalid-indentation': 'version: 1\nprojects:\n   web:\n       path: apps/web\n',
+  };
+
+  function makeInvalidRepo(configName) {
+    const root = makeMonorepo();
+    if (configName === 'unreadable') {
+      fs.writeFileSync(path.join(root, '.groundwork.yml'), 'version: 1\nprojects:\n  web:\n    path: apps/web\n');
+      fs.chmodSync(path.join(root, '.groundwork.yml'), 0o000);
+    } else {
+      fs.writeFileSync(path.join(root, '.groundwork.yml'), INVALID_CONFIGS[configName]);
+    }
+    return root;
+  }
+
+  const CWD_VARIANTS = {
+    'repo-root': (root) => root,
+    'project-root': (root) => path.join(root, 'apps', 'web'),
+    'nested-descendant': (root) => path.join(root, 'apps', 'web', 'specs'),
+  };
+
+  const spawns = [];
+  function runCliChecked(cwd, env, ...args) {
+    const result = spawnSync('node', [CLI, ...args], { cwd, env, encoding: 'utf8' });
+    spawns.push(result);
+    return result;
+  }
+
+  for (const configName of [...Object.keys(INVALID_CONFIGS), 'unreadable']) {
+    for (const [cwdName, cwdOf] of Object.entries(CWD_VARIANTS)) {
+      test(`resolve with ${configName} config fails closed from the ${cwdName}`, () => {
+        const root = makeInvalidRepo(configName);
+        try {
+          const home = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-home-'));
+          const env = cleanEnv(home);
+          const result = runCliChecked(cwdOf(root), env, 'resolve', '--harness', 'codex');
+          assert.notStrictEqual(result.status, 0, `exit was ${result.status}: ${result.stdout}`);
+          assert.strictEqual(result.stdout.trim(), '', 'bindings were emitted for an invalid config');
+          assert.match(result.stderr, /groundwork/i, 'the failure does not mention the config');
+        } finally {
+          fs.rmSync(root, { recursive: true, force: true });
+        }
+      });
+    }
+  }
+
+  test('select with an invalid config writes no receipt and no state', () => {
+    const root = makeInvalidRepo('malformed-yaml');
+    try {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-home-'));
+      const env = cleanEnv(home);
+      const result = runCliChecked(root, env, 'select', 'web', '--harness', 'codex');
+      assert.notStrictEqual(result.status, 0);
+      assert.ok(!result.stdout.includes('selection_id'), 'a receipt was emitted for an invalid config');
+      const stateDir = path.join(home, 'codex-home', 'groundwork-state');
+      assert.strictEqual(fs.existsSync(stateDir), false, 'selection state was persisted anyway');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('persist-project with an invalid config exits non-zero without a receipt', () => {
+    const root = makeInvalidRepo('escaping-project-path');
+    try {
+      const result = spawnSync('node', [path.join(PLUGIN_ROOT, 'lib', 'persist-project.js'), 'web'], {
+        cwd: root, env: cleanEnv(fs.mkdtempSync(path.join(os.tmpdir(), 'gw-home-'))), encoding: 'utf8',
+      });
+      assert.notStrictEqual(result.status, 0);
+      assert.ok(!result.stdout.includes('selection_id'));
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('detect-project-state reports the config error instead of degrading to single-project', () => {
+    const root = makeInvalidRepo('unsupported-version');
+    try {
+      const result = spawnSync('node', [DETECT], { cwd: root, encoding: 'utf8' });
+      assert.notStrictEqual(result.status, 0, 'invalid config detection exited 0');
+      assert.ok(!/"isMonorepo":false/.test(result.stdout), 'detector silently degraded to single-project');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('the pin hook is a no-op in an invalid-config repository', () => {
+    const root = makeInvalidRepo('malformed-yaml');
+    try {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-home-'));
+      const receiptish = JSON.stringify({
+        protocol: 'groundwork-project-selection-v1',
+        status: 'selected',
+        project_name: 'web',
+        project_root: path.join(root, 'apps', 'web'),
+        repo_root: root,
+        selection_id: 'a'.repeat(24),
+      });
+      const hookInput = JSON.stringify({
+        session_id: 'chat-a',
+        tool_input: { command: 'node persist-project.js web' },
+        tool_response: { stdout: receiptish },
+      });
+      const result = spawnSync('bash', [PIN_HOOK], {
+        cwd: root, env: { ...cleanEnv(home), GROUNDWORK_HARNESS: 'codex' }, input: hookInput, encoding: 'utf8',
+      });
+      assert.strictEqual(result.status, 0, 'the hook itself must never fail a session');
+      const snapshots = path.join(home, 'codex-home', 'groundwork-state', 'chat-snapshots');
+      assert.strictEqual(fs.existsSync(snapshots), false, 'a pin was written from an invalid config repo');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('a missing config stays a single-project resolution with selection_required false', () => {
+    const root = makeSingleProjectRepo();
+    try {
+      const env = cleanEnv(fs.mkdtempSync(path.join(os.tmpdir(), 'gw-home-')));
+      const output = runCli(root, env, 'resolve', '--harness', 'codex');
+      assert.strictEqual(output.selection_required, false);
+      assert.strictEqual(path.isAbsolute(output.project_root), true);
+      assert.strictEqual(path.isAbsolute(output.specs_dir), true);
+      assert.strictEqual(path.isAbsolute(output.plans_dir), true);
+      assert.strictEqual(path.isAbsolute(output.debug_dir), true);
+      assert.strictEqual(path.isAbsolute(output.research_dir), true);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('a valid monorepo without a selection reports selection_required true', () => {
+    const root = makeMonorepo();
+    try {
+      const env = cleanEnv(fs.mkdtempSync(path.join(os.tmpdir(), 'gw-home-')));
+      const output = runCli(root, env, 'resolve', '--harness', 'codex');
+      assert.strictEqual(output.selection_required, true);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('template variable resolution preserves absolute bindings in a no-config repo', () => {
+    const root = makeSingleProjectRepo();
+    try {
+      const result = spawnSync('node', [path.join(PLUGIN_ROOT, 'lib', 'resolve-template-vars.js')], {
+        cwd: root,
+        env: cleanEnv(fs.mkdtempSync(path.join(os.tmpdir(), 'gw-home-'))),
+        input: '',
+        encoding: 'utf8',
+      });
+      const context = JSON.parse(result.stdout).hookSpecificOutput.additionalContext;
+      const specs = context.split('\n').find((line) => line.startsWith('- {{specs_dir}}'));
+      const plans = context.split('\n').find((line) => line.startsWith('- {{plans_dir}}'));
+      assert.match(specs, new RegExp(`= ${root.replace(/\//g, '\\/')}/specs$`));
+      assert.match(plans, new RegExp(`= ${root.replace(/\//g, '\\/')}/\\.groundwork-plans$`));
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 

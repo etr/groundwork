@@ -20,64 +20,90 @@ const fs = require('fs');
 const path = require('path');
 
 /**
- * Parse the canonical .groundwork.yml mapping schema.
+ * Parse and classify the canonical .groundwork.yml mapping schema.
+ *
+ * @param {string} content - File content
+ * @returns {{ok: boolean, config?: object, code?: string, message?: string}}
+ *   {ok:true, config} for the canonical mapping; {ok:false, code, message}
+ *   with a typed code (empty-config, malformed-yaml, unsupported-version,
+ *   missing-project-path, escaping-project-path) otherwise.
+ */
+function parseGroundworkYmlResult(content) {
+  if (!content || typeof content !== 'string' || !content.trim()) {
+    return { ok: false, code: 'empty-config', message: '.groundwork.yml is empty' };
+  }
+  const result = { version: 1, projects: {} };
+  let inProjects = false;
+  let currentProject = null;
+  let sawListEntry = false;
+
+  for (const line of content.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+
+    const versionMatch = trimmed.match(/^version:\s*(\d+)$/);
+    if (versionMatch) {
+      result.version = parseInt(versionMatch[1], 10);
+      continue;
+    }
+
+    if (trimmed === 'projects:') {
+      inProjects = true;
+      continue;
+    }
+    if (!inProjects) continue;
+    if (/^\S/.test(line)) break; // End of the projects block.
+
+    // List-style entries ("- name: web") are not the canonical mapping.
+    if (/^\s*-\s/.test(line)) {
+      sawListEntry = true;
+      continue;
+    }
+
+    const projectMatch = line.match(/^\s+([A-Za-z0-9][A-Za-z0-9_-]*):\s*$/);
+    if (projectMatch) {
+      currentProject = projectMatch[1];
+      result.projects[currentProject] = {};
+      continue;
+    }
+
+    if (currentProject) {
+      const propMatch = line.match(/^\s+(\w+):\s*(.+)$/);
+      if (propMatch) {
+        result.projects[currentProject][propMatch[1]] = propMatch[2].trim();
+      }
+    }
+  }
+
+  if (result.version !== 1) {
+    return { ok: false, code: 'unsupported-version', message: `unsupported .groundwork.yml version ${result.version} (expected 1)` };
+  }
+  const names = Object.keys(result.projects);
+  if (sawListEntry || names.length === 0) {
+    return { ok: false, code: 'malformed-yaml', message: '.groundwork.yml is not the canonical mapping schema (version/projects/<name>/path)' };
+  }
+  for (const name of names) {
+    const project = result.projects[name];
+    if (!project.path) {
+      return { ok: false, code: 'missing-project-path', message: `project "${name}" is missing its path` };
+    }
+    if (path.isAbsolute(project.path) || project.path.split(/[\\/]/).includes('..')) {
+      return { ok: false, code: 'escaping-project-path', message: `project "${name}" path is outside repository: ${project.path}` };
+    }
+  }
+  return { ok: true, config: result };
+}
+
+/**
+ * Parse the canonical .groundwork.yml mapping schema (legacy shape).
  *
  * @param {string} content - File content
  * @returns {{version: number, projects: Record<string, {path: string}>}|null}
  *   Parsed config, or null when the content is not a canonical mapping.
  */
 function parseGroundworkYml(content) {
-  if (!content || typeof content !== 'string') return null;
-  try {
-    const result = { version: 1, projects: {} };
-    const lines = content.split('\n');
-    let inProjects = false;
-    let currentProject = null;
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith('#')) continue;
-
-      const versionMatch = trimmed.match(/^version:\s*(\d+)$/);
-      if (versionMatch) {
-        result.version = parseInt(versionMatch[1], 10);
-        continue;
-      }
-
-      if (trimmed === 'projects:') {
-        inProjects = true;
-        continue;
-      }
-      if (!inProjects) continue;
-      if (/^\S/.test(line)) break; // End of the projects block.
-
-      // List-style entries ("- name: web") are not the canonical mapping.
-      if (/^\s*-\s/.test(line)) return null;
-
-      const projectMatch = line.match(/^\s+([A-Za-z0-9][A-Za-z0-9_-]*):\s*$/);
-      if (projectMatch) {
-        currentProject = projectMatch[1];
-        result.projects[currentProject] = {};
-        continue;
-      }
-
-      if (currentProject) {
-        const propMatch = line.match(/^\s+(\w+):\s*(.+)$/);
-        if (propMatch) {
-          result.projects[currentProject][propMatch[1]] = propMatch[2].trim();
-        }
-      }
-    }
-
-    const names = Object.keys(result.projects);
-    if (names.length === 0) return null;
-    for (const name of names) {
-      if (!result.projects[name].path) return null;
-    }
-    return result;
-  } catch {
-    return null;
-  }
+  const result = parseGroundworkYmlResult(content);
+  return result.ok ? result.config : null;
 }
 
 /**
@@ -128,17 +154,30 @@ function bindings(projectName, projectRoot) {
 function resolveProjectContext(cwd, selectedProject) {
   const root = findRepoRoot(cwd);
   const configPath = path.join(root, '.groundwork.yml');
-  let config = null;
+
+  let content = null;
+  let configExists = false;
   try {
-    config = parseGroundworkYml(fs.readFileSync(configPath, 'utf8'));
-  } catch {
-    config = null;
+    content = fs.readFileSync(configPath, 'utf8');
+    configExists = true;
+  } catch (error) {
+    if (error.code !== 'ENOENT') {
+      // Present but unreadable: fail closed with the typed shape.
+      return { ok: false, code: 'unreadable-config', reason: error.message, message: `.groundwork.yml cannot be read: ${error.message}` };
+    }
   }
 
-  if (!config) {
+  if (!configExists) {
     // No-config single-project repository: resolve outright.
     return { ...bindings('', root), selection_required: false };
   }
+
+  const parsed = parseGroundworkYmlResult(content);
+  if (!parsed.ok) {
+    // A present-but-invalid config never degrades to single-project.
+    return { ok: false, code: parsed.code, reason: parsed.message, message: parsed.message };
+  }
+  const config = parsed.config;
 
   if (!selectedProject) {
     // A configured monorepo without a verified selection: the caller must
@@ -189,4 +228,4 @@ function listProjects(cwd) {
   }
 }
 
-module.exports = { parseGroundworkYml, findRepoRoot, resolveProjectContext, listProjects };
+module.exports = { parseGroundworkYml, parseGroundworkYmlResult, findRepoRoot, resolveProjectContext, listProjects };

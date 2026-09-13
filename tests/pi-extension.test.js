@@ -271,5 +271,41 @@ describe('Pi runtime shipping', () => {
   });
 });
 
+describe('Pi project context fails closed on invalid config', () => {
+  // A present-but-invalid .groundwork.yml must never resolve as a no-config
+  // single-project repository: the Pi core reports a structured failure.
+  const { resolveProjectContext } = require(CORE);
+
+  function invalidRepo(content) {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'gw-pi-invalid-')));
+    fs.mkdirSync(path.join(root, 'apps', 'web'), { recursive: true });
+    write(path.join(root, '.groundwork.yml'), content);
+    return root;
+  }
+
+  for (const [label, content] of [
+    ['malformed-yaml', 'version: 1\nprojects:\n  - web\n'],
+    ['empty', ''],
+    ['unsupported-version', 'version: 2\nprojects:\n  web:\n    path: apps/web\n'],
+    ['missing-project-path', 'version: 1\nprojects:\n  web:\n    note: nothing\n'],
+    ['escaping-project-path', 'version: 1\nprojects:\n  web:\n    path: ../outside\n'],
+  ]) {
+    test(`${label} config resolves to a structured failure, never single-project`, () => {
+      const root = invalidRepo(content);
+      try {
+        const result = resolveProjectContext(root);
+        assert.strictEqual(result.ok, false, `resolved as: ${JSON.stringify(result)}`);
+        assert.strictEqual(typeof result.code, 'string');
+        assert.ok(result.code.length > 0);
+        assert.strictEqual(typeof result.message, 'string');
+        assert.ok(result.message.length > 0);
+        assert.ok(!('specs_dir' in result), 'failure output must not carry operational bindings');
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exitCode = 1;

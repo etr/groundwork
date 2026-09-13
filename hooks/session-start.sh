@@ -139,6 +139,12 @@ project_context=""
 if [ -f "${PLUGIN_ROOT}/lib/detect-project-state.js" ]; then
   project_state=$(GROUNDWORK_SESSION_ID="$SESSION_ID" guarded_node 3 node "${PLUGIN_ROOT}/lib/detect-project-state.js" 2>/dev/null || echo '{}')
 
+  # An invalid .groundwork.yml fails closed: surface it instead of silently
+  # proceeding on wrong (single-project) bindings.
+  if echo "$project_state" | grep -q '"configError"'; then
+    warning_message="${warning_message}\n\n<important-reminder>**Groundwork configuration error:** this repository's .groundwork.yml is invalid; project resolution is disabled until the file is fixed.</important-reminder>"
+  fi
+
   # Parse project state JSON
   is_monorepo=$(echo "$project_state" | grep -o '"isMonorepo":true' | head -1)
   project_name=$(echo "$project_state" | sed -n 's/.*"projectName":"\([^"]*\)".*/\1/p')
