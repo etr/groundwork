@@ -833,10 +833,11 @@ describe('exported project context runtime', () => {
         execFileSync('git', ['init', '-q'], { cwd: repo });
         const env = { ...process.env, [stateEnv]: path.join(root, `${target}-state`) };
 
+        // select prints the bindings JSON line, then the standalone receipt.
         const selected = JSON.parse(execFileSync(
           'node', [cli, 'select', 'web', '--harness', target],
           { cwd: repo, env, encoding: 'utf8' }
-        ));
+        ).trim().split('\n')[0]);
         assert.strictEqual(selected.project_name, 'web');
         assert.strictEqual(selected.specs_dir, path.join(repo, 'apps', 'web', 'specs'));
 
