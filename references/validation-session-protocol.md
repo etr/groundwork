@@ -9,12 +9,13 @@ Do not edit `.validation-session.json` or `active.json` directly. Write only the
 A validation session (schema version 2) is owned by a **bearer capability**, not by whoever names its run id:
 
 - `open` returns `owner_token` exactly once per successful create, authorized resume, or reclaim — the only place the raw token ever appears. Durable state stores only its SHA-256 digest, an owner `epoch`, and a monotonic `revision`.
-- Every mutating command (`checkpoint`, `begin-fixer`, `complete-fixer`, `complete`, `heartbeat-*`) requires `--owner-token`. Mutations acquire the run's mutation lock, reload state, authenticate the digest, validate the expected stage (and revision, when `--expected-revision` is passed), and write one new revision. Authorized contenders serialize on the lock; the loser rereads state and fails the stage/revision check instead of overwriting the winner.
+- **Capability transport:** the owner capability is piped on stdin (first trimmed line) to every command that needs it — `printf %s "$OWNER_TOKEN" | validation-session.js <command> ...`. It must never appear on the command line (readable by every local process via `ps(1)`/procfs) or in the environment; the CLI rejects `--owner-token` in either spelling. The module API keeps accepting the token as an in-process parameter.
+- Every mutating command (`checkpoint`, `begin-fixer`, `complete-fixer`, `complete`, `heartbeat-*`) requires the capability on stdin. Mutations acquire the run's mutation lock, reload state, authenticate the digest, validate the expected stage (and revision, when `--expected-revision` is passed), and write one new revision. Authorized contenders serialize on the lock; the loser rereads state and fails the stage/revision check instead of overwriting the winner.
 - Liveness is a **heartbeat worker**, not the brief `open` process. Start it before long gate/reviewer/fixer work and stop it through trap/finalization handling:
 
 ```text
-validation-session.js heartbeat-loop --run-dir <run_dir> --owner-token <token>
-validation-session.js heartbeat-stop --run-dir <run_dir> --owner-token <token>
+printf %s "$OWNER_TOKEN" | validation-session.js heartbeat-loop --run-dir <run_dir>
+printf %s "$OWNER_TOKEN" | validation-session.js heartbeat-stop --run-dir <run_dir>
 ```
 
 The loop registers its PID and process-start identity, emits one `{"status":"heartbeat-ready"}` line, refreshes the lease each interval (default 15 s, `GROUNDWORK_VALIDATION_BEAT_MS`), and exits when the session completes, its stop is recorded, or its capability is revoked by a successor. A session is **live** while its registered worker's last beat is inside the staleness window (default 2 h, `GROUNDWORK_VALIDATION_STALE_MS`). A just-opened or just-reclaimed session is protected by a startup grace window (default 60 s, `GROUNDWORK_VALIDATION_GRACE_MS`) until its worker registers.
@@ -33,7 +34,7 @@ Completed version-1 sessions remain replayable read-only. An incomplete version-
 Open the session before gates, reviewer dispatch, or artifact creation:
 
 ```text
-validation-session.js open --repo-root <repo> --project-root <project> --worktree <worktree> --task-id <TASK-NNN|manual-validation> --branch <branch> --base-head <sha> --protocol-version 1 [--runner-mode] [--resume-run <run_id> --owner-token <token>]
+validation-session.js open --repo-root <repo> --project-root <project> --worktree <worktree> --task-id <TASK-NNN|manual-validation> --branch <branch> --base-head <sha> --protocol-version 1 [--runner-mode] [--resume-run <run_id>]  # resume: pipe the owner capability on stdin
 ```
 
 The JSON result supplies `run_id`, `run_dir`, `findings_dir`, `stage`, `iteration`, `coordinator_file`, `owner_token` (create/resume/reclaim only), and optional recovery/completion data. A runner invocation uses `--runner-mode`; an interactive invocation does not.
@@ -93,7 +94,7 @@ gates-complete        -> review-batch-complete
 Use:
 
 ```text
-validation-session.js checkpoint --run-dir <run_dir> --expected-stage <stage> --next-stage <stage> --iteration <N> --coordinator-file <absolute-direct-child-path> --owner-token <token>
+printf %s "$OWNER_TOKEN" | validation-session.js checkpoint --run-dir <run_dir> --expected-stage <stage> --next-stage <stage> --iteration <N> --coordinator-file <absolute-direct-child-path>
 ```
 
 The coordinator file is the compact restart contract. It must contain semantic closure records, not only finding IDs.
@@ -103,13 +104,13 @@ The coordinator file is the compact restart contract. It must contain semantic c
 Write `repair-envelope-iter<N>.json` directly inside `run_dir`, then record the semantic `fixer-inflight` transition before spawning the fixer:
 
 ```text
-validation-session.js begin-fixer --run-dir <run_dir> --iteration <N> --envelope-file <absolute-direct-child-path> --owner-token <token>
+printf %s "$OWNER_TOKEN" | validation-session.js begin-fixer --run-dir <run_dir> --iteration <N> --envelope-file <absolute-direct-child-path>
 ```
 
 After the normal fixer-result validator accepts `fixer-result-iter<N>.json`, record that result:
 
 ```text
-validation-session.js complete-fixer --run-dir <run_dir> --iteration <N> --result-file <absolute-direct-child-path> --owner-token <token>
+printf %s "$OWNER_TOKEN" | validation-session.js complete-fixer --run-dir <run_dir> --iteration <N> --result-file <absolute-direct-child-path>
 ```
 
 If execution stops in `fixer-inflight`, partial changes are never treated as a completed result. After confirming the prior fixer process ended, reopening with your capability changes the stage to `fixer-prepared` and reruns the same envelope against the preserved current worktree. The replacement fixer must reconcile any partial implementation idempotently.
@@ -121,7 +122,7 @@ Never spawn a replacement fixer while the prior fixer process may still be live.
 After approval, required gates, and unworked-finding persistence are complete, record the exact reusable result (this also marks ownership terminal, which stops the heartbeat worker):
 
 ```text
-validation-session.js complete --run-dir <run_dir> --expected-stage review-batch-complete --iterations <N> --fixed <M> --unworked <K> --action <commit|none> [--commit-subject <subject> --commit-body <body>] --owner-token <token>
+printf %s "$OWNER_TOKEN" | validation-session.js complete --run-dir <run_dir> --expected-stage review-batch-complete --iterations <N> --fixed <M> --unworked <K> --action <commit|none> [--commit-subject <subject> --commit-body <body>]
 ```
 
 Retain the session directory. A completed session is intentionally replayable; cleanup is eventual maintenance, not part of validation correctness.

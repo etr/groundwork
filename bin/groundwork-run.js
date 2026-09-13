@@ -176,8 +176,10 @@ function normalizeActivity(harness, event, state = {}, now = Date.now()) {
       /\b([A-Z_][A-Z0-9_]*(?:API_KEY|TOKEN|SECRET|PASSWORD))=(?:"[^"]*"|'[^']*'|\S+)/gi,
       '$1=[redacted]'
     );
+    // --owner-token is the validation bearer capability: both spellings are
+    // redacted so it never reaches progress text, transcripts, or reports.
     command = command.replace(
-      /(--(?:api[-_]?key|token|secret|password))(=|\s+)(?:"[^"]*"|'[^']*'|\S+)/gi,
+      /(--(?:api[-_]?key|owner[-_]?token|token|secret|password))(=|\s+)(?:"[^"]*"|'[^']*'|\S+)/gi,
       (_match, flag, separator) => `${flag}${separator === '=' ? '=' : ' '}[redacted]`
     );
     return command.length > 180 ? `${command.slice(0, 179)}…` : command;

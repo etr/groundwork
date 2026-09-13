@@ -604,10 +604,21 @@ function openOperation(repo, extra = {}) {
 }
 
 function spawnHeartbeatWorker(runDir, ownerToken, env = {}) {
-  const child = spawn(process.execPath, [
-    HELPER, 'heartbeat-loop', '--run-dir', runDir, '--owner-token', ownerToken,
-  ], { env: { ...process.env, ...env }, stdio: ['ignore', 'ignore', 'inherit'] });
-  return child;
+  // The capability travels on a private inherited fd — never argv or env.
+  // It must be delivered synchronously: the test loops below block the
+  // event loop with Atomics.wait, so an async pipe write to child.stdin
+  // would never flush and the worker would starve on its blocking read.
+  const capabilityFile = path.join(os.tmpdir(), `gw-capability-${process.pid}-${Date.now()}`);
+  fs.writeFileSync(capabilityFile, `${ownerToken}\n`, { mode: 0o600 });
+  const capabilityFd = fs.openSync(capabilityFile, 'r');
+  try {
+    return spawn(process.execPath, [
+      HELPER, 'heartbeat-loop', '--run-dir', runDir,
+    ], { env: { ...process.env, ...env }, stdio: [capabilityFd, 'ignore', 'inherit'] });
+  } finally {
+    fs.closeSync(capabilityFd);
+    fs.rmSync(capabilityFile, { force: true });
+  }
 }
 
 function heartbeatState(runDir) {
@@ -1042,7 +1053,9 @@ describe('capability ownership lifecycle (multi-process)', () => {
         '--repo-root', repo.root, '--project-root', repo.root, '--worktree', repo.root,
         '--task-id', 'TASK-075', '--branch', 'task/TASK-075',
         '--base-head', repo.baseHead, '--protocol-version', '1',
-      ], { encoding: 'utf8' });
+        // stdin must close: open optionally reads the resume capability from
+        // it, and an open pipe with no writer would block the child forever.
+      ], { input: '', encoding: 'utf8' });
       assert.strictEqual(opened.status, 0, opened.stderr);
       const token = JSON.parse(opened.stdout).owner_token;
       assert.ok(token, 'open returns the capability to its caller');
@@ -1057,8 +1070,7 @@ describe('capability ownership lifecycle (multi-process)', () => {
         HELPER, 'checkpoint', '--run-dir', path.dirname(stateFile),
         '--expected-stage', 'initial-audit-pending', '--next-stage', 'review-batch-complete',
         '--iteration', '1', '--coordinator-file', coordinatorFile,
-        '--owner-token', token,
-      ], { encoding: 'utf8' });
+      ], { input: `${token}\n`, encoding: 'utf8' });
       assert.strictEqual(checkpoint.status, 0, checkpoint.stderr);
       assert.ok(!checkpoint.stdout.includes(token), 'capability leaked into mutation output');
 
@@ -1067,15 +1079,14 @@ describe('capability ownership lifecycle (multi-process)', () => {
         HELPER, 'checkpoint', '--run-dir', path.dirname(stateFile),
         '--expected-stage', 'review-batch-complete', '--next-stage', 'gates-complete',
         '--iteration', '1', '--coordinator-file', coordinatorFile,
-        '--owner-token', forged,
-      ], { encoding: 'utf8' });
+      ], { input: `${forged}\n`, encoding: 'utf8' });
       assert.notStrictEqual(failed.status, 0);
       assert.ok(!failed.stderr.includes(forged), 'capability leaked into error diagnostics');
       assert.ok(!failed.stderr.includes(token), 'capability leaked into error diagnostics');
 
       const stop = spawnSync(process.execPath, [
-        HELPER, 'heartbeat-stop', '--run-dir', path.dirname(stateFile), '--owner-token', token,
-      ], { encoding: 'utf8' });
+        HELPER, 'heartbeat-stop', '--run-dir', path.dirname(stateFile),
+      ], { input: `${token}\n`, encoding: 'utf8' });
       assert.strictEqual(stop.status, 0, stop.stderr);
       assert.ok(!stop.stdout.includes(token), 'capability leaked into heartbeat output');
 
@@ -1339,6 +1350,68 @@ describe('heartbeat lease survives lock contention (dedicated worker keeps the l
     } finally {
       fs.rmSync(repo.root, { recursive: true, force: true });
     }
+  });
+});
+
+describe('capability transport and storage hardening', () => {
+  test('the owner capability is rejected on the command line and accepted on stdin', () => {
+    const helper = require(HELPER);
+    const repo = fixture();
+    try {
+      const created = helper.openValidationSession(identity(repo));
+
+      // argv would leak the bearer capability to every ps on the host.
+      const argvLeak = spawnSync(process.execPath, [
+        HELPER, 'heartbeat-beat', '--run-dir', created.runDir, '--owner-token', created.ownerToken,
+      ], { encoding: 'utf8' });
+      assert.notStrictEqual(argvLeak.status, 0, 'a capability on the command line was accepted');
+      assert.match(argvLeak.stderr, /stdin/i, argvLeak.stderr);
+
+      const piped = spawnSync(process.execPath, [
+        HELPER, 'heartbeat-beat', '--run-dir', created.runDir,
+      ], { input: `${created.ownerToken}\n`, encoding: 'utf8' });
+      assert.strictEqual(piped.status, 0, piped.stderr);
+      assert.ok(JSON.parse(piped.stdout).status === 'heartbeat');
+
+      const sentinel = created.ownerToken;
+      // The piped form must also not echo the capability back.
+      assert.ok(!piped.stdout.includes(sentinel), 'the beat echoed the capability');
+    } finally {
+      fs.rmSync(repo.root, { recursive: true, force: true });
+    }
+  });
+
+  test('the runner capability store is re-chmodded to 0600 on every replacement', () => {
+    const helper = require(HELPER);
+    const repo = fixture();
+    try {
+      const created = helper.openValidationSession({ ...identity(repo), runnerMode: true });
+      const capabilityFile = path.join(path.dirname(created.runDir), 'runner-capability.json');
+      assert.strictEqual(fs.statSync(capabilityFile).mode & 0o777, 0o600);
+
+      // A pre-existing permissive file must be tightened again on replace.
+      fs.chmodSync(capabilityFile, 0o644);
+      const stateFile = path.join(created.runDir, '.validation-session.json');
+      const stale = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+      stale.owner.heartbeat.graceUntil = new Date(Date.now() - 60 * 1000).toISOString();
+      stale.owner.heartbeat.lastBeat = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
+      write(stateFile, JSON.stringify(stale));
+      const reclaimed = helper.openValidationSession({ ...identity(repo), runnerMode: true });
+      assert.strictEqual(reclaimed.status, 'reclaimed');
+      assert.strictEqual(
+        fs.statSync(capabilityFile).mode & 0o777,
+        0o600,
+        'a replaced capability store kept its loose mode'
+      );
+    } finally {
+      fs.rmSync(repo.root, { recursive: true, force: true });
+    }
+  });
+
+  test('the capability is never read from the environment', () => {
+    const source = fs.readFileSync(HELPER, 'utf8');
+    assert.doesNotMatch(source, /env\.[A-Z_]*OWNER/i, 'the capability must not come from env');
+    assert.doesNotMatch(source, /OWNER_TOKEN\s*=/, 'no OWNER_TOKEN environment contract is read');
   });
 });
 

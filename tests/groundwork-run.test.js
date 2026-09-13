@@ -2515,6 +2515,28 @@ for (let index = 0; index < 100000; index++) fs.writeSync(1, record);
     }, state, 1_000);
     assert.strictEqual(codex, '$ OPENAI_API_KEY=[redacted] codex exec --token [redacted] task');
 
+    // The validation owner capability must never surface in progress text,
+    // in either argument spelling.
+    const sentinel = 'a'.repeat(48);
+    const capabilityStarted = normalizeActivity('codex', {
+      type: 'item.started',
+      item: {
+        id: 'cap1',
+        type: 'command_execution',
+        command: `node validation-session.js heartbeat-beat --owner-token ${sentinel}`,
+      },
+    }, {}, 1_000);
+    assert.ok(!capabilityStarted.includes(sentinel), capabilityStarted);
+    const capabilityJoined = normalizeActivity('codex', {
+      type: 'item.started',
+      item: {
+        id: 'cap2',
+        type: 'command_execution',
+        command: `node validation-session.js checkpoint --owner-token=${sentinel} --run-dir /tmp/run`,
+      },
+    }, {}, 1_000);
+    assert.ok(!capabilityJoined.includes(sentinel), capabilityJoined);
+
     const claudeState = {};
     assert.strictEqual(normalizeActivity('claude', {
       type: 'assistant',
@@ -7189,7 +7211,7 @@ describe('runner and manual validation ownership arbitration', () => {
       '--task-id', 'TASK-075', '--branch', 'task/TASK-075',
       '--base-head', repo.baseHead, '--protocol-version', '1',
       ...extra,
-    ], { encoding: 'utf8' });
+    ], { input: '', encoding: 'utf8' });
     return { status: result.status, stdout: result.stdout, stderr: result.stderr };
   }
 
@@ -7263,10 +7285,22 @@ describe('runner and manual validation ownership arbitration', () => {
       assert.strictEqual(reclaimed.status, 'reclaimed');
       assert.strictEqual(reclaimed.owner_token !== manual.ownerToken, true);
 
-      const worker = spawn(process.execPath, [
-        SESSION_HELPER, 'heartbeat-loop',
-        '--run-dir', reclaimed.run_dir, '--owner-token', reclaimed.owner_token,
-      ], { env: { ...process.env, GROUNDWORK_VALIDATION_BEAT_MS: '100' }, stdio: 'ignore' });
+      // The capability rides an inherited private fd — the registration wait
+      // loop below blocks the event loop with Atomics.wait, so an async pipe
+      // write to child.stdin would never flush.
+      const capabilityFile = path.join(os.tmpdir(), `gw-capability-${process.pid}-${Date.now()}`);
+      fs.writeFileSync(capabilityFile, `${reclaimed.owner_token}\n`, { mode: 0o600 });
+      const capabilityFd = fs.openSync(capabilityFile, 'r');
+      let worker;
+      try {
+        worker = spawn(process.execPath, [
+          SESSION_HELPER, 'heartbeat-loop',
+          '--run-dir', reclaimed.run_dir,
+        ], { env: { ...process.env, GROUNDWORK_VALIDATION_BEAT_MS: '100' }, stdio: [capabilityFd, 'ignore', 'ignore'] });
+      } finally {
+        fs.closeSync(capabilityFd);
+        fs.rmSync(capabilityFile, { force: true });
+      }
       try {
         const deadline = Date.now() + 15000;
         for (;;) {
