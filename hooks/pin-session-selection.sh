@@ -16,15 +16,18 @@
 # The hook is command-gated: it exits before spawning node unless the executed
 # command wrote a selection via persist-project.js or project-context-cli.js.
 #
+# jq is required: without it the hook cannot reliably read the payload, and
+# guessing at the JSON with line-oriented tools could pin from the wrong chat.
+# A missing jq is therefore a clean no-op, never a mispin.
+#
 # Error Recovery: defensive error handling — never breaks sessions.
+
+command -v jq > /dev/null 2>&1 || exit 0
 
 INPUT_JSON=$(cat 2>/dev/null || echo '{}')
 
 # Extract the executed command (hook input provides tool_input.command)
 COMMAND=$(echo "$INPUT_JSON" | jq -r '.tool_input.command // empty' 2>/dev/null)
-if [ -z "$COMMAND" ]; then
-  COMMAND=$(echo "$INPUT_JSON" | sed -n 's/.*"command"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
-fi
 
 # Command gate: only selection-writing invocations matter
 case "$COMMAND" in
@@ -33,9 +36,6 @@ case "$COMMAND" in
 esac
 
 SESSION_ID=$(echo "$INPUT_JSON" | jq -r '.session_id // empty' 2>/dev/null)
-if [ -z "$SESSION_ID" ]; then
-  SESSION_ID=$(echo "$INPUT_JSON" | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
-fi
 if [ -z "$SESSION_ID" ]; then
   # ZCode injects the session id as a hook environment variable
   SESSION_ID="${CLAUDE_SESSION_ID}"

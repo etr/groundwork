@@ -3,7 +3,7 @@ import * as path from "path";
 import { registerSubagentTool } from "./subagents";
 import { detectSpecs, extractSpecSummary } from "./lib/specs";
 import {
-  resolveProjectContext,
+  applyProjectContext,
   listProjects,
   type ProjectContext,
 } from "./lib/project-context";
@@ -27,7 +27,12 @@ export default function (pi: ExtensionAPI) {
 
   // SessionStart equivalent — detect project context and specs
   pi.on("session_start", async (_event, ctx) => {
-    projectCtx = resolveProjectContext(ctx.cwd);
+    // A typed failure (invalid .groundwork.yml) keeps the previous context
+    // and surfaces one actionable message — never garbage bindings.
+    const applied = applyProjectContext(ctx.cwd, projectCtx);
+    projectCtx = applied.context;
+    if (applied.message) ctx.ui.showMessage(applied.message);
+    if (!projectCtx.specsDir) return; // retained context may be the empty initial state
     const specs = detectSpecs(projectCtx.specsDir);
     ctx.ui.setWidget("groundwork-status", [
       `Groundwork | ${projectCtx.name} | PRD: ${specs.hasPrd ? "✓" : "✗"} | Arch: ${specs.hasArch ? "✓" : "✗"} | Tasks: ${specs.hasTasks ? "✓" : "✗"}`,
@@ -78,8 +83,9 @@ export default function (pi: ExtensionAPI) {
         projects.map((p) => p.name),
       );
       if (selected) {
-        projectCtx = resolveProjectContext(ctx.cwd, selected);
-        ctx.ui.showMessage(`Switched to project: ${selected}`);
+        const applied = applyProjectContext(ctx.cwd, projectCtx, selected);
+        projectCtx = applied.context;
+        ctx.ui.showMessage(applied.message ?? `Switched to project: ${selected}`);
       }
     },
   });

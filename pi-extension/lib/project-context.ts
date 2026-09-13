@@ -18,12 +18,30 @@ export interface ProjectContext {
   bindings: Record<string, string>;
 }
 
-/** Resolve project context from the working directory (canonical semantics). */
-export function resolveProjectContext(
+const { piApply } = require("./selection-ui");
+
+/** Raw core result: resolved bindings, or a typed {ok:false, code, message} failure. */
+export type ProjectContextResult = {
+  ok: true;
+  project_root: string;
+  project_name?: string;
+  specs_dir: string;
+  plans_dir: string;
+  debug_dir: string;
+  research_dir: string;
+  selection_required: boolean;
+} | { ok: false; code?: string; reason?: string; message?: string };
+
+/** Resolve the raw core result (canonical semantics, failures included). */
+export function resolveProjectContextResult(
   cwd: string,
   selectedProject?: string,
-): ProjectContext {
-  const resolved = core.resolveProjectContext(cwd, selectedProject);
+): ProjectContextResult {
+  return core.resolveProjectContext(cwd, selectedProject);
+}
+
+/** Map a resolved core result to the extension's ProjectContext shape. */
+function toProjectContext(resolved: any): ProjectContext {
   return {
     root: resolved.project_root,
     specsDir: resolved.specs_dir,
@@ -38,6 +56,21 @@ export function resolveProjectContext(
       research_dir: resolved.research_dir,
     },
   };
+}
+
+/**
+ * Resolve and apply in one step: a typed failure keeps `previous` as the
+ * active context and returns one actionable message for the UI; a success
+ * returns the fresh context and no message.
+ */
+export function applyProjectContext(
+  cwd: string,
+  previous: ProjectContext,
+  selectedProject?: string,
+): { context: ProjectContext; message: string | null } {
+  const applied = piApply(core.resolveProjectContext(cwd, selectedProject), null);
+  if (applied.message) return { context: previous, message: applied.message };
+  return { context: toProjectContext(applied.context), message: null };
 }
 
 /** List selectable projects (canonical mapping keys) for the selector UI. */

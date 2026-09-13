@@ -107,11 +107,17 @@ function cleanEnv(home) {
 }
 
 function runCli(repo, env, ...args) {
-  return JSON.parse(execFileSync('node', [CLI, ...args], {
+  const stdout = execFileSync('node', [CLI, ...args], {
     cwd: repo,
     env,
     encoding: 'utf8',
-  }));
+  });
+  // select prints bindings JSON then the standalone receipt JSON line; other
+  // commands print one line. Parse every line and return the first (the
+  // caller-facing result), exposing the last through runCliLines when needed.
+  const parsed = stdout.trim().split('\n').filter(Boolean).map((line) => JSON.parse(line));
+  runCli.lastLine = parsed[parsed.length - 1];
+  return parsed[0];
 }
 
 describe('project context CLI', () => {
@@ -719,7 +725,8 @@ describe('selection scope capability gating (pane-less harnesses)', () => {
 
       // The chat switches to api; the PostToolUse hook fires for this
       // session's persist command, whose response carries the new receipt.
-      const receipt = runCli(repo, env, 'select', 'api', '--harness', 'codex');
+      runCli(repo, env, 'select', 'api', '--harness', 'codex');
+      const receipt = runCli.lastLine;
       const adopted = spawnSync('bash', [PIN_HOOK], {
         cwd: repo,
         env,
@@ -767,7 +774,8 @@ describe('selection scope capability gating (pane-less harnesses)', () => {
 
     try {
       // This chat selects web; the command response carries the receipt.
-      const receipt = runCli(repo, env, 'select', 'web', '--harness', 'codex');
+      runCli(repo, env, 'select', 'web', '--harness', 'codex');
+      const receipt = runCli.lastLine;
 
       // ZCode delivers the session id as a hook environment variable instead
       // of stdin JSON: the hook must still scope the pinned snapshot to the
@@ -1013,15 +1021,21 @@ describe('receipt-based pane-less pinning', () => {
     return env;
   }
 
+  // select prints bindings JSON then the standalone receipt line; receipt
+  // consumers take the last JSON line.
+  function lastJsonLine(stdout) {
+    return JSON.parse(stdout.trim().split('\n').filter(Boolean).pop());
+  }
+
   function selectBare(repo, env, project) {
-    return JSON.parse(execFileSync(
+    return lastJsonLine(execFileSync(
       'node', [CLI, 'select', project, '--harness', 'codex'],
       { cwd: repo, env, encoding: 'utf8' }
     ));
   }
 
   function selectWithSession(repo, env, sid, project) {
-    return JSON.parse(execFileSync(
+    return lastJsonLine(execFileSync(
       'node', [CLI, 'select', project, '--harness', 'codex'],
       { cwd: repo, env: { ...env, GROUNDWORK_SESSION_ID: sid }, encoding: 'utf8' }
     ));
@@ -1223,6 +1237,21 @@ describe('receipt-based pane-less pinning', () => {
         ['valid command without a receipt', {
           tool_response: { stdout: 'Switched to project web.' },
         }],
+        ['surplus key (merged bindings object)', {
+          tool_response: { stdout: JSON.stringify({ ...receipt, specs_dir: '/abs/spoofed' }) },
+        }],
+        ['missing selection_id', {
+          tool_response: { stdout: JSON.stringify(Object.fromEntries(Object.entries(receipt).filter(([k]) => k !== 'selection_id'))) },
+        }],
+        ['non-hex selection_id', {
+          tool_response: { stdout: JSON.stringify({ ...receipt, selection_id: 'ZZZZ' + 'a'.repeat(20) }) },
+        }],
+        ['uppercase-hex selection_id', {
+          tool_response: { stdout: JSON.stringify({ ...receipt, selection_id: 'A'.repeat(24) }) },
+        }],
+        ['unsafe session_id', {
+          tool_response: { stdout: JSON.stringify({ ...receipt, session_id: '../../evil' }) },
+        }],
       ];
       for (const [name, override] of cases) {
         const payload = {
@@ -1238,6 +1267,38 @@ describe('receipt-based pane-less pinning', () => {
         assert.ok(
           !fs.readdirSync(snapDir).some(f => f.startsWith('chat-x')),
           'no rejected payload form may pin a snapshot'
+        );
+      }
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  test('hook is a no-op when jq is unavailable (no sed guessing)', () => {
+    const { root: repo } = makeMultiRepo();
+    const env = panelessEnv(repo);
+    try {
+      const receipt = selectBare(repo, env, 'web');
+      // A PATH that can spawn bash but has no jq anywhere on it.
+      const jqlessBin = path.join(repo, 'empty-bin');
+      fs.mkdirSync(jqlessBin);
+      fs.symlinkSync('/bin/bash', path.join(jqlessBin, 'bash'));
+      const hooked = spawnSync('bash', [PIN_HOOK], {
+        cwd: repo,
+        env: { ...env, PATH: jqlessBin },
+        input: JSON.stringify({
+          session_id: 'chat-jq',
+          tool_input: { command: `node ${CLI} select web --harness codex` },
+          tool_response: { stdout: JSON.stringify(receipt) },
+        }),
+        encoding: 'utf8',
+      });
+      assert.strictEqual(hooked.status, 0, 'the hook must never fail a session');
+      const snapDir = path.join(path.join(repo, 'home'), '.codex', 'groundwork-state', 'chat-snapshots');
+      if (fs.existsSync(snapDir)) {
+        assert.ok(
+          !fs.readdirSync(snapDir).some((f) => f.startsWith('chat-jq')),
+          'a payload the hook cannot parse reliably must not pin'
         );
       }
     } finally {
@@ -1287,10 +1348,12 @@ describe('receipt-based pane-less pinning', () => {
     const { root: repo } = makeMultiRepo();
     const env = panelessEnv(repo);
     try {
-      const output = JSON.parse(execFileSync(
+      // persist-project prints pane metadata, then the standalone receipt line.
+      const persistOut = execFileSync(
         'node', [PERSIST, 'web'],
         { cwd: repo, env: { ...env, GROUNDWORK_SESSION_ID: 'chat-a' }, encoding: 'utf8' }
-      ));
+      );
+      const output = JSON.parse(persistOut.trim().split('\n').filter(Boolean).pop());
       assert.strictEqual(output.protocol, PROTOCOL);
       assert.strictEqual(output.status, 'selected');
       assert.strictEqual(output.project_name, 'web');
@@ -1477,6 +1540,35 @@ describe('invalid project configuration fails closed', () => {
       assert.match(plans, new RegExp(`= ${root.replace(/\//g, '\\/')}/\\.groundwork-plans$`));
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('pi selection-ui adapter (dependency-free)', () => {
+  const selectionUi = require(path.join(PLUGIN_ROOT, 'pi-extension', 'lib', 'selection-ui.js'));
+
+  test('a typed failure keeps the previous context and yields one actionable message', () => {
+    const previous = { root: '/prev', specsDir: '/prev/specs' };
+    const applied = selectionUi.piApply({ ok: false, code: 'malformed-yaml', message: 'bad mapping' }, previous);
+    assert.strictEqual(applied.context, previous, 'failure must retain the previous context object');
+    assert.match(applied.message, /malformed-yaml/);
+    assert.match(applied.message, /bad mapping/);
+    assert.match(applied.message, /previous project context is kept/);
+  });
+
+  test('a successful resolution returns the fresh context with no message', () => {
+    const fresh = { ok: true, project_root: '/repo/apps/web' };
+    const applied = selectionUi.piApply(fresh, { root: '/prev' });
+    assert.strictEqual(applied.context, fresh);
+    assert.strictEqual(applied.message, null);
+  });
+
+  test('a null/undefined result degrades to the failure shape, never garbage bindings', () => {
+    for (const result of [null, undefined]) {
+      const previous = { root: '/prev' };
+      const applied = selectionUi.piApply(result, previous);
+      assert.strictEqual(applied.context, previous);
+      assert.ok(applied.message);
     }
   });
 });
