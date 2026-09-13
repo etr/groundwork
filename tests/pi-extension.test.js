@@ -312,6 +312,7 @@ describe('Pi project context fails closed on invalid config', () => {
     ['duplicate-path-property', 'version: 1\nprojects:\n  web:\n    path: apps/web\n    path: apps/api\n'],
     ['indented-top-level-key', '  version: 1\nprojects:\n  web:\n    path: apps/web\n'],
     ['overlapping-nested-trees', 'version: 1\nprojects:\n  web:\n    path: apps\n  api:\n    path: apps/web\n'],
+    ['overlapping-nested-trees-reversed', 'version: 1\nprojects:\n  web:\n    path: apps/web\n  root:\n    path: apps\n'],
     ['duplicate-project-root', 'version: 1\nprojects:\n  web:\n    path: apps/web\n  api:\n    path: apps/web\n'],
   ]) {
     test(`${label} config resolves to a structured failure, never single-project`, () => {

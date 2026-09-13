@@ -1400,6 +1400,7 @@ describe('invalid project configuration fails closed', () => {
     'indented-top-level-key': '  version: 1\nprojects:\n  web:\n    path: apps/web\n',
     'projects-before-version': 'projects:\n  web:\n    path: apps/web\nversion: 1\n',
     'overlapping-nested-trees': 'version: 1\nprojects:\n  web:\n    path: apps\n  api:\n    path: apps/web\n',
+    'overlapping-nested-trees-reversed': 'version: 1\nprojects:\n  web:\n    path: apps/web\n  root:\n    path: apps\n',
     'duplicate-project-root': 'version: 1\nprojects:\n  web:\n    path: apps/web\n  api:\n    path: apps/web\n',
   };
 

@@ -524,12 +524,17 @@ test('exposes the durable session operations through a JSON CLI', () => {
     assert.strictEqual(parsed.status, 'created');
     assert.strictEqual(parsed.stage, 'initial-audit-pending');
     assert.ok(parsed.run_dir.endsWith(parsed.findings_dir.split(path.sep).pop()));
-    assert.ok(parsed.owner_token, 'open must return the owner capability to its caller');
+    // The raw capability is never on stdout; the non-secret store path is.
+    assert.strictEqual(parsed.owner_token, null, 'open must not echo the owner capability');
+    assert.ok(parsed.capability_file, 'open must return the capability_file path');
+    const token = JSON.parse(fs.readFileSync(parsed.capability_file, 'utf8')).ownerToken;
+    assert.ok(token, 'the runner store must carry the owner capability');
+    assert.ok(!result.stdout.includes(token), 'raw capability leaked into open output');
     // The capability is never durable public state: the session file records
     // only its digest.
     const stateFile = path.join(parsed.run_dir, '.validation-session.json');
     const state = fs.readFileSync(stateFile, 'utf8');
-    assert.ok(!state.includes(parsed.owner_token), 'raw capability leaked into session state');
+    assert.ok(!state.includes(token), 'raw capability leaked into session state');
     assert.ok(state.includes('tokenDigest'), 'session state must record the token digest');
   } finally {
     fs.rmSync(repo.root, { recursive: true, force: true });
@@ -1496,6 +1501,64 @@ describe('capability transport and storage hardening', () => {
       ], { encoding: 'utf8' });
       assert.notStrictEqual(viaLink.status, 0, 'a symlinked capability file was accepted');
       assert.match(viaLink.stderr, /symlink/);
+    } finally {
+      fs.rmSync(repo.root, { recursive: true, force: true });
+    }
+  });
+
+  test('runner-mode open never exposes the raw token; the runner store authenticates the whole flow', () => {
+    const repo = fixture();
+    try {
+      const opened = spawnSync(process.execPath, [
+        HELPER, 'open', '--runner-mode',
+        '--repo-root', repo.root, '--project-root', repo.root, '--worktree', repo.root,
+        '--task-id', 'TASK-075', '--branch', 'task/TASK-075',
+        '--base-head', repo.baseHead, '--protocol-version', '1',
+      ], { input: '', encoding: 'utf8' });
+      assert.strictEqual(opened.status, 0, opened.stderr);
+      const parsed = JSON.parse(opened.stdout);
+      // No raw token on stdout in runner mode either; the non-secret store
+      // path is returned instead.
+      assert.strictEqual(parsed.owner_token, null, 'runner-mode open echoed the raw token');
+      const store = parsed.capability_file;
+      assert.ok(store, 'runner-mode open did not return the runner store path');
+      assert.strictEqual(path.basename(store), 'runner-capability.json');
+      assert.strictEqual(fs.statSync(store).mode & 0o777, 0o600);
+      const token = JSON.parse(fs.readFileSync(store, 'utf8')).ownerToken;
+      assert.ok(token, 'runner store carries no ownerToken');
+      assert.ok(!opened.stdout.includes(token), 'the raw token leaked into runner-mode stdout');
+
+      // Heartbeat authenticates through the store.
+      const beat = spawnSync(process.execPath, [
+        HELPER, 'heartbeat-beat', '--run-dir', parsed.run_dir, '--capability-file', store,
+      ], { encoding: 'utf8' });
+      assert.strictEqual(beat.status, 0, beat.stderr);
+      assert.ok(!beat.stdout.includes(token), 'the raw token leaked into heartbeat output');
+
+      // A mutation authenticates through the store.
+      const coordinatorFile = path.join(parsed.run_dir, 'coordinator-iter1.json');
+      write(coordinatorFile, JSON.stringify(coordinatorState()));
+      const checkpoint = spawnSync(process.execPath, [
+        HELPER, 'checkpoint', '--run-dir', parsed.run_dir,
+        '--expected-stage', 'initial-audit-pending', '--next-stage', 'review-batch-complete',
+        '--iteration', '1', '--coordinator-file', coordinatorFile,
+        '--capability-file', store,
+      ], { encoding: 'utf8' });
+      assert.strictEqual(checkpoint.status, 0, checkpoint.stderr);
+
+      // Resume re-opens through the store and refreshes it.
+      const resumed = spawnSync(process.execPath, [
+        HELPER, 'open', '--runner-mode',
+        '--repo-root', repo.root, '--project-root', repo.root, '--worktree', repo.root,
+        '--task-id', 'TASK-075', '--branch', 'task/TASK-075',
+        '--base-head', repo.baseHead, '--protocol-version', '1',
+        '--resume-run', parsed.run_id, '--capability-file', store,
+      ], { input: '', encoding: 'utf8' });
+      assert.strictEqual(resumed.status, 0, resumed.stderr);
+      const resumedResult = JSON.parse(resumed.stdout);
+      assert.strictEqual(resumedResult.status, 'resumed');
+      assert.strictEqual(resumedResult.owner_token, null, 'resume echoed the raw token');
+      assert.ok(resumedResult.capability_file, 'resume did not return the refreshed store path');
     } finally {
       fs.rmSync(repo.root, { recursive: true, force: true });
     }

@@ -15,12 +15,19 @@
  *   5. Worktree/branch construction routes through the shared
  *      worktree-identity helper — never derived by hand in a skill.
  *
- * Corpus scope: rules 1-4 scan every authored surface (skills, agents,
- * references, lib, hooks, bin, pi-extension, root scripts/docs). Two rules
- * are deliberately targeted at the artifacts they govern: the invocation-
- * unique journal contract (the three journal-authoring skills) and the
- * handoff output suffix (the handoff skill). docs/developing-skills.md
- * states the same scope.
+ * Enforcement scope, per rule (docs/developing-skills.md states the same):
+ *   - R1 project-scoping/uniqueness: corpus-wide text scan over every
+ *     authored surface (skills, agents, references, lib, hooks, bin,
+ *     pi-extension, root scripts/docs), plus targeted contract checks for
+ *     the journal-authoring skills and the handoff skill.
+ *   - R2 absolute bindings: a functional contract check — the resolve CLI
+ *     must emit absolute normalized paths (one invocation covers the single
+ *     binding-emission path); it is not a corpus text scan.
+ *   - R3 fixed shared temp paths: corpus-wide text scan.
+ *   - R4 serialized fixed-state transitions: checks against the lock
+ *     primitive implementations themselves (owned-lock, lease-mutation,
+ *     atomic-write, validation-session, manifest) plus a corpus-wide
+ *     prohibition on touching shared pointers outside the approved helper.
  *
  * Run with: node tests/path-safety.test.js
  */

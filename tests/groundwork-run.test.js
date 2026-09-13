@@ -7196,6 +7196,7 @@ describe('installed standalone runner smoke', () => {
     ['duplicate path property', 'version: 1\nprojects:\n  web:\n    path: .\n    path: apps\n'],
     ['indented top-level key', '  version: 1\nprojects:\n  web:\n    path: .\n'],
     ['overlapping nested trees', 'version: 1\nprojects:\n  web:\n    path: .\n  api:\n    path: apps\n'],
+    ['overlapping nested trees (child listed first)', 'version: 1\nprojects:\n  web:\n    path: apps\n  root:\n    path: .\n'],
     ['duplicate project root', 'version: 1\nprojects:\n  web:\n    path: apps\n  api:\n    path: apps\n'],
   ]) {
     test(`source and installed runners both fail closed on ${label}`, () => {
@@ -7416,9 +7417,13 @@ describe('runner and manual validation ownership arbitration', () => {
       assert.strictEqual(first.status, 0, first.stderr);
       const opened = JSON.parse(first.stdout);
       assert.strictEqual(opened.status, 'created');
-      assert.ok(opened.owner_token);
+      // New contract: the raw token never appears on stdout; the non-secret
+      // runner store path does.
+      assert.strictEqual(opened.owner_token, null, 'runner-mode open echoed the raw token');
+      assert.ok(opened.capability_file, 'runner-mode open must return the store path');
 
       const capabilityFile = path.join(path.dirname(opened.run_dir), 'runner-capability.json');
+      assert.strictEqual(opened.capability_file, capabilityFile);
       assert.ok(fs.existsSync(capabilityFile), 'runner mode must retain its capability privately');
       const mode = fs.statSync(capabilityFile).mode & 0o777;
       assert.strictEqual(mode, 0o600, 'the retained capability must be private');
@@ -7431,7 +7436,7 @@ describe('runner and manual validation ownership arbitration', () => {
       const resumed = JSON.parse(second.stdout);
       assert.strictEqual(resumed.status, 'resumed');
       assert.strictEqual(resumed.run_id, opened.run_id);
-      assert.strictEqual(resumed.owner_token, opened.owner_token);
+      assert.strictEqual(resumed.owner_token, null, 'resume echoed the raw token');
     } finally {
       fs.rmSync(repo.root, { recursive: true, force: true });
     }
@@ -7451,23 +7456,22 @@ describe('runner and manual validation ownership arbitration', () => {
       assert.strictEqual(runner.status, 0, runner.stderr);
       const reclaimed = JSON.parse(runner.stdout);
       assert.strictEqual(reclaimed.status, 'reclaimed');
-      assert.strictEqual(reclaimed.owner_token !== manual.ownerToken, true);
+      assert.strictEqual(reclaimed.owner_token, null, 'reclaim echoed the raw token');
+      // The runner store holds a capability distinct from the manual one.
+      const storeToken = JSON.parse(fs.readFileSync(reclaimed.capability_file, 'utf8')).ownerToken;
+      assert.strictEqual(storeToken !== manual.ownerToken, true);
 
-      // The capability rides an inherited private fd — the registration wait
-      // loop below blocks the event loop with Atomics.wait, so an async pipe
-      // write to child.stdin would never flush.
-      const capabilityFile = path.join(os.tmpdir(), `gw-capability-${process.pid}-${Date.now()}`);
-      fs.writeFileSync(capabilityFile, `${reclaimed.owner_token}\n`, { mode: 0o600 });
-      const capabilityFd = fs.openSync(capabilityFile, 'r');
+      // The worker authenticates through the runner store file itself — the
+      // registration wait loop blocks the event loop with Atomics.wait, so a
+      // piped stdin write could never flush.
       let worker;
       try {
         worker = spawn(process.execPath, [
           SESSION_HELPER, 'heartbeat-loop',
-          '--run-dir', reclaimed.run_dir,
-        ], { env: { ...process.env, GROUNDWORK_VALIDATION_BEAT_MS: '100' }, stdio: [capabilityFd, 'ignore', 'ignore'] });
+          '--run-dir', reclaimed.run_dir, '--capability-file', reclaimed.capability_file,
+        ], { env: { ...process.env, GROUNDWORK_VALIDATION_BEAT_MS: '100' }, stdio: 'ignore' });
       } finally {
-        fs.closeSync(capabilityFd);
-        fs.rmSync(capabilityFile, { force: true });
+        // nothing to clean: the store is the runner's retained state
       }
       try {
         const deadline = Date.now() + 15000;

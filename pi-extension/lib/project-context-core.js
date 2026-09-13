@@ -187,35 +187,50 @@ function bindings(projectName, projectRoot) {
  * targeting overlapping trees.
  */
 function validateProjectMapping(config, repoRoot) {
+  const overlap = (message) => ({ ok: false, code: 'overlapping-project-path', message });
+  const unreadable = (message) => ({ ok: false, code: 'unreadable-project-path', message });
   const names = Object.keys(config.projects);
   const lexical = new Map(names.map((name) => [name, path.resolve(repoRoot, config.projects[name].path)]));
   const real = new Map();
-  const realRepoRoot = fs.realpathSync(repoRoot);
+  let realRepoRoot;
+  try {
+    realRepoRoot = fs.realpathSync(repoRoot);
+  } catch (error) {
+    return unreadable(`the repository root cannot be resolved: ${repoRoot} (${error.message})`);
+  }
   for (const name of names) {
     try {
       const realPath = fs.realpathSync(lexical.get(name));
       const relative = path.relative(realRepoRoot, realPath);
-      if (relative.startsWith('..' + path.sep) || relative === '..') {
-        return { ok: false, code: 'overlapping-project-path', message: `project "${name}" realpath escapes the repository: ${realPath}` };
+      if (relative.startsWith('..' + path.sep) || relative === '..' || path.isAbsolute(relative)) {
+        return overlap(`project "${name}" realpath escapes the repository: ${realPath}`);
       }
       real.set(name, realPath);
-    } catch {
-      // Not on disk yet: the lexical check below still applies.
+    } catch (error) {
+      // Only a genuinely missing path may pass unrealpathed; permission or
+      // other failures fail closed — silently skipping them could alias a
+      // readable tree through an unreadable one.
+      if (error.code !== 'ENOENT' && error.code !== 'ENOTDIR') {
+        return unreadable(`project "${name}" root cannot be resolved: ${lexical.get(name)} (${error.message})`);
+      }
     }
   }
   const aliasOf = (name) => real.get(name) || lexical.get(name);
+  // Containment is checked in BOTH directions for each pair: listing order
+  // must not decide whether an ancestor/descendant alias is detected.
+  const strictlyNested = (from, to) => {
+    const relative = path.relative(from, to);
+    return relative === '' || (!relative.startsWith('..' + path.sep) && relative !== '..' && !path.isAbsolute(relative));
+  };
   for (let i = 0; i < names.length; i++) {
     for (let j = i + 1; j < names.length; j++) {
       const a = aliasOf(names[i]);
       const b = aliasOf(names[j]);
-      const relative = path.relative(a, b);
-      const nested = relative === '' || (!relative.startsWith('..' + path.sep) && relative !== '..' && !path.isAbsolute(relative));
-      if (nested) {
-        return {
-          ok: false,
-          code: 'overlapping-project-path',
-          message: `projects "${names[i]}" (${a}) and "${names[j]}" (${b}) target overlapping trees — distinct project names must map to disjoint directories (checked lexically and after realpath)`,
-        };
+      if (strictlyNested(a, b) || strictlyNested(b, a)) {
+        return overlap(
+          `projects "${names[i]}" (${a}) and "${names[j]}" (${b}) target overlapping trees`
+            + ' — distinct project names must map to disjoint directories (checked lexically and after realpath, in both orders)'
+        );
       }
     }
   }

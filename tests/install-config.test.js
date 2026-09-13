@@ -2127,6 +2127,36 @@ describe('external runner runtime closure', () => {
       }
     }
 
+    // Template-substitution, optional-call, and fake-marker bypasses.
+    for (const [label, mutation, expect] of [
+      ['require inside a template substitution', '\nconst hidden = `${require("./undeclared-helper")}`;\n', /undeclared-helper|does not declare/],
+      ['optional-call require', '\nconst hidden = require?.("./undeclared-helper");\n', /undeclared-helper|does not declare/],
+      ['marker spelled inside a string', '\nconst note = "runtime-closure: classified"; const hidden = require(dynamicName);\n', /dynamic/],
+    ]) {
+      const root = fixtureSourceCorruption((base) => {
+        fs.writeFileSync(path.join(base, 'lib', 'undeclared-helper.js'), 'module.exports = 1;\n');
+        fs.appendFileSync(path.join(base, 'lib', 'plan-check.js'), mutation);
+      });
+      try {
+        const result = manifestResult(root);
+        assert.notStrictEqual(result.status, 0, `${label} bypassed validation`);
+        assert.match(result.stderr, expect, `${label}: ${result.stderr}`);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    }
+
+    // A REAL comment marker on the call line still classifies.
+    const commentClassified = fixtureSourceCorruption((base) => {
+      fs.appendFileSync(path.join(base, 'lib', 'plan-check.js'), '\nconst hidden = require(dynamicName); // runtime-closure: classified\n');
+    });
+    try {
+      const result = manifestResult(commentClassified);
+      assert.strictEqual(result.status, 0, result.stderr);
+    } finally {
+      fs.rmSync(commentClassified, { recursive: true, force: true });
+    }
+
     // The wrapped dynamic form still demands classification.
     const dynamic = fixtureSourceCorruption((base) => {
       fs.appendFileSync(path.join(base, 'lib', 'plan-check.js'), '\nconst hidden = (require)(someVariable);\n');
