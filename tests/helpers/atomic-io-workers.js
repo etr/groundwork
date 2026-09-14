@@ -28,7 +28,11 @@ function waitForFile(file) {
 
 const mode = process.argv[2];
 
-fs.writeFileSync(process.env.WORKER_READY, `${JSON.stringify({ ready: true, pid: process.pid })}\n`);
+// Ready/result files are consumed by the parent via existsSync-then-read, so
+// they must be published atomically (rename): name existence then implies
+// complete content. Plain fs.writeFileSync makes the inode visible at open,
+// before content is flushed — the parent would observe a torn file.
+writeJsonSyncAtomic(process.env.WORKER_READY, { ready: true, pid: process.pid });
 
 if (mode === 'writer') {
   waitForFile(process.env.WORKER_RELEASE);
@@ -44,7 +48,7 @@ if (mode === 'writer') {
     ok = false;
     error = e.message;
   }
-  fs.writeFileSync(process.env.WORKER_RESULT, `${JSON.stringify({ ok, error })}\n`);
+  writeJsonSyncAtomic(process.env.WORKER_RESULT, { ok, error });
 } else if (mode === 'reader') {
   const target = process.env.WORKER_TARGET;
   let reads = 0;
@@ -67,7 +71,7 @@ if (mode === 'writer') {
     }
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1);
   }
-  fs.writeFileSync(process.env.WORKER_RESULT, `${JSON.stringify({ reads, failures, failureSamples })}\n`);
+  writeJsonSyncAtomic(process.env.WORKER_RESULT, { reads, failures, failureSamples });
 } else {
   throw new Error(`unknown mode: ${mode}`);
 }

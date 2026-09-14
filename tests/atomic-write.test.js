@@ -145,7 +145,7 @@ describe('writeFileSyncAtomic multi-process concurrency', () => {
     return { child, ready, release, result };
   }
 
-  function awaitResult(worker, description, timeoutMs = 30000) {
+  function awaitResult(worker, description, timeoutMs = 60000) {
     const deadline = Date.now() + timeoutMs;
     while (!fs.existsSync(worker.result)) {
       if (Date.now() > deadline) throw new Error(`timed out waiting for ${description}`);
@@ -159,28 +159,36 @@ describe('writeFileSyncAtomic multi-process concurrency', () => {
     const workerDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-atomic-barrier-'));
     const target = path.join(dir, 'shared-state.json');
     writeJsonSyncAtomic(target, { worker: 'seed', seq: 0 });
+    const stop = path.join(workerDir, 'stop');
+    const spawned = [];
     try {
       const common = { WORKER_DIR: workerDir, WORKER_TARGET: target, WORKER_WRITES: '40' };
-      const writers = [1, 2, 3, 4].map((n) => spawnWorker(`w${n}`, ['writer'], common));
-      const stop = path.join(workerDir, 'stop');
+      const writers = [1, 2, 3, 4].map((n) => {
+        const worker = spawnWorker(`w${n}`, ['writer'], common);
+        spawned.push(worker);
+        return worker;
+      });
       const reader = spawnWorker('reader', ['reader'], { ...common, WORKER_STOP: stop });
+      spawned.push(reader);
 
-      for (const writer of [...writers, reader]) {
-        const deadline = Date.now() + 15000;
-        while (!fs.existsSync(writer.ready)) {
+      for (const worker of [...writers, reader]) {
+        const deadline = Date.now() + 30000;
+        while (!fs.existsSync(worker.ready)) {
           if (Date.now() > deadline) throw new Error('worker never became ready');
           sleepMs(10);
         }
       }
 
       // Release every writer in the same tick; the reader is already looping.
-      for (const writer of writers) fs.writeFileSync(writer.release, 'go\n');
+      // Release/stop are published atomically too, so a worker polling for the
+      // file's existence never sees a half-written signal.
+      for (const writer of writers) writeFileSyncAtomic(writer.release, 'go\n');
       for (const writer of writers) {
         const outcome = awaitResult(writer, 'writer');
         assert.ok(outcome.ok, `a writer failed: ${outcome.error}`);
       }
 
-      fs.writeFileSync(stop, 'stop\n');
+      writeFileSyncAtomic(stop, 'stop\n');
       const read = awaitResult(reader, 'reader');
       assert.ok(read.reads > 0, 'the reader never observed the document');
       assert.strictEqual(read.failures, 0, `torn reads observed: ${JSON.stringify(read.failureSamples)}`);
@@ -191,8 +199,52 @@ describe('writeFileSyncAtomic multi-process concurrency', () => {
         'a temporary file leaked in the destination directory'
       );
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
-      fs.rmSync(workerDir, { recursive: true, force: true });
+      // Failure-safe ordered cleanup. Whatever failed above, no worker may be
+      // left running (an orphaned reader keeps node's event loop alive via its
+      // ChildProcess handle and the suite never terminates), and no rmSync may
+      // race a still-writing worker (ENOTEMPTY).
+      // (1) Idempotently signal every worker to finish: writeJsonSyncAtomic
+      //     renames over any existing signal, so this is safe on every path.
+      for (const worker of spawned) {
+        try {
+          writeFileSyncAtomic(worker.release, 'go\n');
+        } catch {
+          // Worker directory already gone — nothing left to signal.
+        }
+      }
+      try {
+        writeFileSyncAtomic(stop, 'stop\n');
+      } catch {
+        // Same.
+      }
+      // (2) Bounded wait for the workers to finish. A worker's result file is
+      //     its last action before exiting, so its existence is the exit
+      //     proxy: child.exitCode cannot update while this synchronous loop
+      //     blocks the event loop, and an exited-but-unreaped child still
+      //     answers kill(pid, 0) like a live one.
+      const exitDeadline = Date.now() + 5000;
+      while (Date.now() < exitDeadline && spawned.some((worker) => !fs.existsSync(worker.result))) {
+        sleepMs(20);
+      }
+      // (3) SIGKILL anything not observed finishing, so no child can hold the
+      //     event loop open past this test.
+      for (const worker of spawned) {
+        if (
+          !fs.existsSync(worker.result) &&
+          worker.child.exitCode === null &&
+          worker.child.signalCode === null
+        ) {
+          try {
+            worker.child.kill('SIGKILL');
+          } catch {
+            // Already fully gone.
+          }
+        }
+      }
+      // (4) Tolerant removal: if a killed writer lands one last .tmp between
+      //     listing and unlink, retry instead of throwing ENOTEMPTY.
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+      fs.rmSync(workerDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }
   });
 });

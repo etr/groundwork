@@ -255,6 +255,60 @@ describe('module and CLI contract', () => {
     }
   });
 
+  test('a live or stale pre-sharding shared mutation queue fails closed until drained', () => {
+    const { acquireProjectLease, processStartIdentity } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-legacy-queue-'));
+    const commonDir = path.join(root, '.git');
+    const acquire = () => {
+      const release = acquireProjectLease(commonDir, { project: 'api', taskId: 'TASK-004' }, {
+        log: () => {}, now: () => 1_000,
+      });
+      release();
+    };
+    try {
+      initRepo(root);
+      const legacyTickets = path.join(
+        commonDir, 'groundwork', 'projects', '.lease-mutation', 'tickets'
+      );
+      // Absent legacy state: clean startup.
+      acquire();
+
+      // A live pre-sharding queue record: a mixed-version runner is still
+      // mutating project leases through the shared queue — refuse.
+      fs.mkdirSync(legacyTickets, { recursive: true });
+      const entry = path.join(legacyTickets, `${'a'.repeat(48)}.lock`);
+      fs.writeFileSync(entry, JSON.stringify({
+        version: 1,
+        pid: process.pid,
+        processStart: processStartIdentity(process.pid),
+        token: 'a'.repeat(48),
+        ticket: 3,
+        startedAt: 1,
+      }));
+      assert.throws(acquire, (error) => /pre-sharding runner/.test(error.message)
+        && error.message.includes(entry));
+
+      // A stale leftover record still fails closed (manual cleanup), exactly
+      // like the stale legacy runner.lock boundary.
+      fs.writeFileSync(entry, JSON.stringify({
+        version: 1,
+        pid: 424242,
+        processStart: 'gone-long-ago',
+        token: 'a'.repeat(48),
+        ticket: 3,
+        startedAt: 1,
+      }));
+      assert.throws(acquire, (error) => /legacy shared mutation queue/.test(error.message));
+
+      // Drained legacy state: clean startup again.
+      fs.rmSync(path.dirname(legacyTickets), { recursive: true, force: true });
+      fs.mkdirSync(legacyTickets, { recursive: true });
+      acquire();
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('rechecks a task after waiting for its project lease and skips a completed handoff', () => {
     const { acquireProjectLease, runTasks } = require(RUNNER);
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-task-handoff-'));

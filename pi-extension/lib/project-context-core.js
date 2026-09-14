@@ -335,4 +335,11 @@ function listProjects(cwd) {
   }
 }
 
-module.exports = { parseGroundworkYml, parseGroundworkYmlResult, findRepoRoot, resolveProjectContext, listProjects };
+module.exports = {
+  parseGroundworkYml,
+  parseGroundworkYmlResult,
+  validateProjectMapping,
+  findRepoRoot,
+  resolveProjectContext,
+  listProjects,
+};

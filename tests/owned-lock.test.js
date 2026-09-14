@@ -166,56 +166,63 @@ describe('serialized transitions (successor survival)', () => {
       const acquired = acquireOwnedLock(lockFile);
       const marker = path.join(dir, 'creator');
       fs.mkdirSync(marker, { recursive: true });
+      // The successor is a real subprocess performing the swap with its own
+      // file descriptors, exactly like a racing acquirer from outside this
+      // process. It swaps via write+rename rather than a library acquire
+      // because the swap happens while the release's mutation turn is still
+      // held — a cooperative library acquire would correctly queue behind
+      // that live ticket instead of racing the unlink.
       const creatorScript = `
-        const path = require('path');
         const fs = require('fs');
-        const { acquireOwnedLock } = require(${JSON.stringify(OWNED_LOCK)});
-        try {
-          const handle = acquireOwnedLock(${JSON.stringify(lockFile)}, { staleMs: 1 });
-          fs.writeFileSync(${JSON.stringify(path.join(marker, 'acquired'))}, handle.holder.id + '\\n');
-          process.exit(0); // holds the lock; never releases
-        } catch (error) {
-          process.exit(9);
-        }
+        const path = require('path');
+        const os = require('os');
+        const crypto = require('crypto');
+        const id = crypto.randomBytes(12).toString('hex');
+        const successor = path.join(${JSON.stringify(marker)}, 'successor.lock');
+        fs.writeFileSync(successor, JSON.stringify({
+          id,
+          pid: process.pid,
+          host: os.hostname(),
+          acquiredAt: new Date().toISOString(),
+        }) + '\\n');
+        fs.renameSync(successor, ${JSON.stringify(lockFile)});
+        fs.writeFileSync(path.join(${JSON.stringify(marker)}, 'acquired'), id + '\\n');
       `;
-      // Simulate preemption exactly between releaseOwnedLock's final identity
-      // verification and its unlink: at that point a real contender acquires
-      // the (aged-out) slot through the library in a subprocess.
-      const realUnlinkSync = fs.unlinkSync;
       let creatorResult = null;
-      try {
-        fs.unlinkSync = function patchedUnlink(target, ...rest) {
-          if (target === lockFile && creatorResult === null) {
-            creatorResult = spawnSync(
-              process.execPath,
-              ['--eval', creatorScript],
-              { encoding: 'utf8', timeout: 2_000 }
-            );
-          }
-          return realUnlinkSync.call(fs, target, ...rest);
-        };
-        releaseOwnedLock(lockFile, acquired.holder.id);
-      } finally {
-        fs.unlinkSync = realUnlinkSync;
-      }
+      const released = releaseOwnedLock(lockFile, acquired.holder.id, {
+        // Fires between release's final holder verification and its unlink:
+        // at that boundary the successor process swaps the lockfile under
+        // the releaser.
+        beforeUnlink: () => {
+          creatorResult = spawnSync(
+            process.execPath,
+            ['--eval', creatorScript],
+            { encoding: 'utf8', timeout: 10_000 }
+          );
+        },
+      });
+      assert.ok(creatorResult, 'the before-unlink boundary never ran');
+      assert.strictEqual(creatorResult.status, 0, `creator subprocess failed: ${creatorResult.stderr}`);
       const acquiredMarker = path.join(marker, 'acquired');
-      if (fs.existsSync(acquiredMarker)) {
-        const creatorId = fs.readFileSync(acquiredMarker, 'utf8').trim();
-        assert.ok(creatorId, 'creator marker is empty');
-        assert.strictEqual(
-          fs.existsSync(lockFile),
-          true,
-          'the release deleted a successor lock acquired after the final identity check'
-        );
-        assert.strictEqual(
-          JSON.parse(fs.readFileSync(lockFile, 'utf8')).id,
-          creatorId,
-          'the successor holder was clobbered'
-        );
-      }
-      // If the creator could not acquire in time (serialized behind the
-      // release's mutation turn and killed by the timeout), that is the other
-      // lawful outcome: no double ownership either way.
+      const creatorId = fs.readFileSync(acquiredMarker, 'utf8').trim();
+      assert.ok(creatorId, 'creator marker is empty');
+      // Unconditional outcome: the successor owns the slot the release last
+      // verified as its own, so the release must have refused to unlink it.
+      assert.strictEqual(
+        released,
+        false,
+        'the release reported unlinking a lock a successor swapped in after the final identity check'
+      );
+      assert.strictEqual(
+        fs.existsSync(lockFile),
+        true,
+        'the release deleted a successor lock acquired after the final identity check'
+      );
+      assert.strictEqual(
+        JSON.parse(fs.readFileSync(lockFile, 'utf8')).id,
+        creatorId,
+        'the successor holder was clobbered'
+      );
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
