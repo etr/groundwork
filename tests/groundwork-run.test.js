@@ -9,7 +9,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { execFileSync, spawn } = require('child_process');
+const { execFileSync, spawn, spawnSync } = require('child_process');
 
 const PLUGIN_ROOT = path.resolve(__dirname, '..');
 const RUNNER = path.join(PLUGIN_ROOT, 'bin', 'groundwork-run.js');
@@ -251,6 +251,60 @@ describe('module and CLI contract', () => {
       if (releaseApi) {
         try { releaseApi(); } catch {}
       }
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('a live or stale pre-sharding shared mutation queue fails closed until drained', () => {
+    const { acquireProjectLease, processStartIdentity } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-legacy-queue-'));
+    const commonDir = path.join(root, '.git');
+    const acquire = () => {
+      const release = acquireProjectLease(commonDir, { project: 'api', taskId: 'TASK-004' }, {
+        log: () => {}, now: () => 1_000,
+      });
+      release();
+    };
+    try {
+      initRepo(root);
+      const legacyTickets = path.join(
+        commonDir, 'groundwork', 'projects', '.lease-mutation', 'tickets'
+      );
+      // Absent legacy state: clean startup.
+      acquire();
+
+      // A live pre-sharding queue record: a mixed-version runner is still
+      // mutating project leases through the shared queue — refuse.
+      fs.mkdirSync(legacyTickets, { recursive: true });
+      const entry = path.join(legacyTickets, `${'a'.repeat(48)}.lock`);
+      fs.writeFileSync(entry, JSON.stringify({
+        version: 1,
+        pid: process.pid,
+        processStart: processStartIdentity(process.pid),
+        token: 'a'.repeat(48),
+        ticket: 3,
+        startedAt: 1,
+      }));
+      assert.throws(acquire, (error) => /pre-sharding runner/.test(error.message)
+        && error.message.includes(entry));
+
+      // A stale leftover record still fails closed (manual cleanup), exactly
+      // like the stale legacy runner.lock boundary.
+      fs.writeFileSync(entry, JSON.stringify({
+        version: 1,
+        pid: 424242,
+        processStart: 'gone-long-ago',
+        token: 'a'.repeat(48),
+        ticket: 3,
+        startedAt: 1,
+      }));
+      assert.throws(acquire, (error) => /legacy shared mutation queue/.test(error.message));
+
+      // Drained legacy state: clean startup again.
+      fs.rmSync(path.dirname(legacyTickets), { recursive: true, force: true });
+      fs.mkdirSync(legacyTickets, { recursive: true });
+      acquire();
+    } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
@@ -1388,6 +1442,76 @@ describe('module and CLI contract', () => {
     }
   });
 
+  test('delegates scoped and legacy peer identities to the shared worktree identity factory', () => {
+    const { activeProjectOwners, processStartIdentity } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-owner-identity-'));
+    try {
+      initRepo(root);
+      const commonDir = path.join(root, '.git');
+      const projectDirectory = path.join(commonDir, 'groundwork', 'projects');
+      const scenarios = [
+        // Scoped monorepo identity and legacy root identity must both be
+        // produced by taskWorkspaceIdentity, never reconstructed locally.
+        { project: 'api', projectPath: 'apps/api', taskId: 'TASK-004',
+          branch: 'task/api/TASK-004', worktreeName: 'api-TASK-004' },
+        { project: '.', projectPath: '.', taskId: 'TASK-007',
+          branch: 'task/TASK-007', worktreeName: 'TASK-007' },
+      ];
+      const records = scenarios.map((scenario) => {
+        const worktreePath = path.join(root, '.worktrees', scenario.worktreeName);
+        fs.mkdirSync(worktreePath, { recursive: true });
+        const projectKey = crypto.createHash('sha256').update(scenario.project).digest('hex').slice(0, 32);
+        const checkpointKey = crypto.createHash('sha256').update(scenario.projectPath).digest('hex').slice(0, 16);
+        write(path.join(projectDirectory, `${projectKey}.lock`), `${JSON.stringify({
+          version: 1,
+          pid: process.pid,
+          processStart: processStartIdentity(process.pid),
+          token: crypto.randomBytes(24).toString('hex'),
+          project: scenario.project,
+          projectPath: scenario.projectPath,
+          taskId: scenario.taskId,
+          startedAt: Date.now(),
+        })}\n`);
+        write(path.join(commonDir, 'groundwork', 'runner', checkpointKey, `${scenario.taskId}.json`), `${JSON.stringify({
+          taskId: scenario.taskId,
+          project: scenario.projectPath,
+          workspace: { branch: scenario.branch, worktreePath },
+        })}\n`);
+        return { path: fs.realpathSync(worktreePath), branch: `refs/heads/${scenario.branch}` };
+      });
+      const calls = [];
+      const owners = activeProjectOwners(commonDir, root, {
+        registeredWorktrees: () => records,
+        taskWorkspaceIdentity(repoRoot, commonDirArg, projectRoot, projectName, taskId, checkpoint) {
+          calls.push({ repoRoot, projectRoot, projectName, taskId, checkpoint });
+          if (projectName === 'api') {
+            return { branch: 'task/api/TASK-004', worktreePath: path.join(root, '.worktrees', 'api-TASK-004') };
+          }
+          return { branch: 'task/TASK-007', worktreePath: path.join(root, '.worktrees', 'TASK-007') };
+        },
+      });
+      assert.strictEqual(calls.length, 2, 'every live owner must resolve identity through the factory');
+      const apiCall = calls.find((call) => call.taskId === 'TASK-004');
+      assert.strictEqual(apiCall.projectName, 'api');
+      assert.strictEqual(apiCall.projectRoot, path.join(root, 'apps/api'));
+      const legacyCall = calls.find((call) => call.taskId === 'TASK-007');
+      assert.strictEqual(legacyCall.projectName, '');
+      assert.strictEqual(legacyCall.projectRoot, root);
+      assert.deepStrictEqual(owners.map((owner) => owner.taskId).sort(), ['TASK-004', 'TASK-007']);
+
+      // No manually reconstructed branch/path candidates remain in the runner.
+      const runnerSource = fs.readFileSync(RUNNER, 'utf8');
+      const ownersBody = runnerSource.slice(
+        runnerSource.indexOf('function activeProjectOwners'),
+        runnerSource.indexOf('function acquireRepositoryGate')
+      );
+      assert.ok(!ownersBody.includes('`task/${'), 'activeProjectOwners must not reconstruct task branches');
+      assert.ok(!ownersBody.includes(".worktrees', holder.taskId"), 'activeProjectOwners must not reconstruct worktree paths');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('serializes stale removal with successor publication at the final removal boundary', () => {
     const { acquireRepositoryGate } = require(RUNNER);
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-stale-removal-boundary-'));
@@ -2444,6 +2568,28 @@ for (let index = 0; index < 100000; index++) fs.writeSync(1, record);
       },
     }, state, 1_000);
     assert.strictEqual(codex, '$ OPENAI_API_KEY=[redacted] codex exec --token [redacted] task');
+
+    // The validation owner capability must never surface in progress text,
+    // in either argument spelling.
+    const sentinel = 'a'.repeat(48);
+    const capabilityStarted = normalizeActivity('codex', {
+      type: 'item.started',
+      item: {
+        id: 'cap1',
+        type: 'command_execution',
+        command: `node validation-session.js heartbeat-beat --owner-token ${sentinel}`,
+      },
+    }, {}, 1_000);
+    assert.ok(!capabilityStarted.includes(sentinel), capabilityStarted);
+    const capabilityJoined = normalizeActivity('codex', {
+      type: 'item.started',
+      item: {
+        id: 'cap2',
+        type: 'command_execution',
+        command: `node validation-session.js checkpoint --owner-token=${sentinel} --run-dir /tmp/run`,
+      },
+    }, {}, 1_000);
+    assert.ok(!capabilityJoined.includes(sentinel), capabilityJoined);
 
     const claudeState = {};
     assert.strictEqual(normalizeActivity('claude', {
@@ -4734,6 +4880,7 @@ describe('four-phase orchestration', () => {
                   branch: 'task/TASK-004',
                   baseHead: git(root, 'rev-parse', 'main'),
                   protocolVersion: 1,
+                  runnerMode: true,
                 };
                 const session = validationSessions.openValidationSession(identity);
                 const coordinatorFile = path.join(session.runDir, 'coordinator-iter1.json');
@@ -4754,12 +4901,14 @@ describe('four-phase orchestration', () => {
                   nextStage: 'review-batch-complete',
                   iteration: 1,
                   coordinatorFile,
+                  ownerToken: session.ownerToken,
                 });
                 const envelopeFile = path.join(session.runDir, 'repair-envelope-iter1.json');
                 write(envelopeFile, JSON.stringify({ iteration: 1 }));
                 validationSessions.beginFixerTransaction(session.runDir, {
                   iteration: 1,
                   envelopeFile,
+                  ownerToken: session.ownerToken,
                 });
                 write(path.join(worktree, 'feature.txt'), 'partial validation fix\n');
                 throw new Error('validation harness crashed');
@@ -6956,6 +7105,557 @@ describe('skill and export integration', () => {
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
       fs.rmSync(path.dirname(external), { recursive: true, force: true });
+    }
+  });
+});
+
+describe('installed standalone runner smoke', () => {
+  function installCodexRunner(sourceRoot) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-smoke-'));
+    execFileSync(
+      'bash',
+      [path.join(sourceRoot, 'install-skills.sh'), '--codex', '--project', '--force', '--source', sourceRoot],
+      { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
+    );
+    return { root, runner: path.join(root, '.codex', 'groundwork-run.js') };
+  }
+
+  function minimalFixtureRepo() {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-smoke-repo-'));
+    initRepo(repo);
+    return repo;
+  }
+
+  test('installed runner prints help and exits zero', () => {
+    const { root, runner } = installCodexRunner(PLUGIN_ROOT);
+    try {
+      assert.ok(fs.existsSync(runner), 'standalone runner was not installed');
+      const result = execFileSync('node', [runner, '--help'], { encoding: 'utf8' });
+      assert.match(result, /groundwork-run all/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('a held project-A mutation queue never delays project B (two processes)', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-shard-proc-'));
+    const crypto = require('crypto');
+    const keyOf = (project) => crypto.createHash('sha256').update(project).digest('hex').slice(0, 32);
+    const projectsDir = path.join(root, 'projects');
+    fs.mkdirSync(path.join(projectsDir, `${keyOf('api')}.queue`), { recursive: true });
+    const sleepTest = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+    try {
+      const markers = {
+        held: path.join(root, 'held'),
+        release: path.join(root, 'release'),
+        done: path.join(root, 'done'),
+      };
+      const childScript = `
+        const lm = require(${JSON.stringify(path.join(PLUGIN_ROOT, 'lib', 'lease-mutation.js'))});
+        const fs = require('fs');
+        const release = lm.acquireLeaseMutation(${JSON.stringify(path.join(projectsDir, `${keyOf('api')}.queue`))});
+        fs.writeFileSync(${JSON.stringify(markers.held)}, 'held');
+        const deadline = Date.now() + 30000;
+        while (!fs.existsSync(${JSON.stringify(markers.release)})) {
+          if (Date.now() > deadline) process.exit(2);
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+        }
+        release();
+        fs.writeFileSync(${JSON.stringify(markers.done)}, 'done');
+      `;
+      const child = spawn('node', ['-e', childScript], { stdio: 'ignore' });
+      try {
+        waitForFile(markers.held, 15000);
+
+        // Project B's queue is a different shard: acquiring it must succeed
+        // promptly while another process holds project A's queue.
+        const lm = require(path.join(PLUGIN_ROOT, 'lib', 'lease-mutation.js'));
+        const startedAt = Date.now();
+        const releaseWeb = lm.acquireLeaseMutation(path.join(projectsDir, `${keyOf('web')}.queue`));
+        const elapsed = Date.now() - startedAt;
+        releaseWeb();
+        assert.ok(elapsed < 2000, `project B waited ${elapsed}ms on project A's queue — sharding is not behavioral`);
+
+        // The same project DOES serialize: A's queue is held by the child.
+        // The contender signals completion through a file — this test blocks
+        // the event loop with Atomics.wait, so child exit events would never
+        // be observed inline.
+        const contenderDone = path.join(root, 'contender-done');
+        const blocked = spawn('node', ['-e', `
+          const lm = require(${JSON.stringify(path.join(PLUGIN_ROOT, 'lib', 'lease-mutation.js'))});
+          const release = lm.acquireLeaseMutation(${JSON.stringify(path.join(projectsDir, `${keyOf('api')}.queue`))});
+          release();
+          require('fs').writeFileSync(${JSON.stringify(contenderDone)}, 'done');
+        `], { stdio: 'ignore' });
+        try {
+          sleepTest(1000);
+          assert.strictEqual(fs.existsSync(markers.done), false,
+            'a contender entered project A\'s queue while it was held');
+          assert.strictEqual(fs.existsSync(contenderDone), false,
+            'the contender finished while the queue was held');
+          fs.writeFileSync(markers.release, 'go');
+          const deadline = Date.now() + 15000;
+          while (!fs.existsSync(contenderDone)) {
+            if (Date.now() > deadline) throw new Error('the contender did not finish after the queue was released');
+            sleepTest(20);
+          }
+        } finally {
+          try { blocked.kill('SIGKILL'); } catch {}
+        }
+      } finally {
+        fs.writeFileSync(markers.release, 'go');
+        try { child.kill('SIGKILL'); } catch {}
+      }
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('source and installed runners fail closed on a symlink-nested lexical overlap', () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-nested-link-'));
+    let installedRoot = null;
+    try {
+      initRepo(repo);
+      fs.mkdirSync(path.join(repo, 'apps'));
+      fs.mkdirSync(path.join(repo, 'packages', 'web'), { recursive: true });
+      // apps/web -> packages/web: physically disjoint, lexically nested.
+      fs.symlinkSync(path.join(repo, 'packages', 'web'), path.join(repo, 'apps', 'web'));
+      fs.writeFileSync(path.join(repo, '.groundwork.yml'),
+        'version: 1\nprojects:\n  web:\n    path: apps/web\n  root:\n    path: apps\n');
+      write(path.join(repo, 'packages', 'web', 'specs', 'tasks.md'),
+        '### TASK-004: Four\n**Status:** Not Started\n**Blocked by:** None\n');
+      git(repo, 'add', '.');
+      git(repo, 'commit', '-m', 'symlink overlap');
+
+      const shared = { encoding: 'utf8' };
+      const args = ['all', '--harness', 'codex', '--repo', repo, '--project', 'web', '--dry-run'];
+      const source = spawnSync('node', [path.join(PLUGIN_ROOT, 'bin', 'groundwork-run.js'), ...args], shared);
+      assert.notStrictEqual(source.status, 0, 'source runner accepted a lexical overlap behind a symlink');
+      assert.match(source.stderr || source.stdout, /overlapping-project-path/);
+
+      const { root, runner } = installCodexRunner(PLUGIN_ROOT);
+      installedRoot = root;
+      const installed = spawnSync('node', [runner, ...args], shared);
+      assert.notStrictEqual(installed.status, 0, 'installed runner accepted a lexical overlap behind a symlink');
+      assert.ok(!/RESULT: SUCCESS/.test(installed.stdout));
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+      if (installedRoot) fs.rmSync(installedRoot, { recursive: true, force: true });
+    }
+  });
+
+  test('project lease mutation queues are sharded per project, not shared across packages', () => {
+    const { acquireProjectLease } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-lease-shard-'));
+    let releaseWeb;
+    try {
+      initRepo(root);
+      const commonDir = path.join(root, '.git');
+      releaseWeb = acquireProjectLease(commonDir, { project: 'web', taskId: 'TASK-004' }, {
+        log: () => {}, now: () => 1_000,
+      });
+      releaseWeb();
+      releaseWeb = null;
+
+      const crypto = require('crypto');
+      const keyOf = (project) => crypto.createHash('sha256').update(project).digest('hex').slice(0, 32);
+      const projectsDir = path.join(commonDir, 'groundwork', 'projects');
+      // Each project's transitions ran in its own queue directory …
+      assert.ok(fs.existsSync(path.join(projectsDir, `${keyOf('web')}.queue`, '.lease-mutation')),
+        'the per-project mutation queue directory is missing');
+      // … and no shared projects/ queue serializes unrelated packages.
+      assert.strictEqual(fs.existsSync(path.join(projectsDir, '.lease-mutation')), false,
+        'a shared projects/ mutation queue still exists — cross-package serialization');
+      assert.notStrictEqual(keyOf('web'), keyOf('api'));
+    } finally {
+      if (releaseWeb) { try { releaseWeb(); } catch {} }
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // Parity: every .groundwork.yml rejection shape must fail the SOURCE
+  // runner and the FRESHLY INSTALLED runner identically — a config one
+  // entry point accepts and another rejects is a split-brain monorepo map.
+  for (const [label, config] of [
+    ['trailing garbage', 'version: 1\nprojects:\n  web:\n    path: .\n::: garbage\n'],
+    ['missing version', 'projects:\n  web:\n    path: .\n'],
+    ['duplicate project key', 'version: 1\nprojects:\n  web:\n    path: .\n  web:\n    path: apps\n'],
+    ['duplicate path property', 'version: 1\nprojects:\n  web:\n    path: .\n    path: apps\n'],
+    ['indented top-level key', '  version: 1\nprojects:\n  web:\n    path: .\n'],
+    ['overlapping nested trees', 'version: 1\nprojects:\n  web:\n    path: .\n  api:\n    path: apps\n'],
+    ['overlapping nested trees (child listed first)', 'version: 1\nprojects:\n  web:\n    path: apps\n  root:\n    path: .\n'],
+    ['duplicate project root', 'version: 1\nprojects:\n  web:\n    path: apps\n  api:\n    path: apps\n'],
+  ]) {
+    test(`source and installed runners both fail closed on ${label}`, () => {
+      const repo = minimalFixtureRepo();
+      let installedRoot = null;
+      try {
+        fs.writeFileSync(path.join(repo, '.groundwork.yml'), config);
+        git(repo, 'add', '.groundwork.yml');
+        git(repo, 'commit', '-m', 'invalid config');
+        const shared = { encoding: 'utf8' };
+        const args = ['all', '--harness', 'codex', '--repo', repo, '--dry-run'];
+
+        const source = spawnSync('node', [path.join(PLUGIN_ROOT, 'bin', 'groundwork-run.js'), ...args], shared);
+        assert.notStrictEqual(source.status, 0, `source runner accepted ${label}`);
+        assert.ok(/groundwork\.yml|malformed|overlapping/i.test(source.stderr || source.stdout),
+          `source runner failure does not name the config for ${label}`);
+        assert.ok(!/RESULT: SUCCESS/.test(source.stdout));
+
+        const { root, runner } = installCodexRunner(PLUGIN_ROOT);
+        installedRoot = root;
+        const installed = spawnSync('node', [runner, ...args], shared);
+        assert.notStrictEqual(installed.status, 0, `installed runner accepted ${label}`);
+        assert.ok(!/RESULT: SUCCESS/.test(installed.stdout));
+      } finally {
+        fs.rmSync(repo, { recursive: true, force: true });
+        if (installedRoot) fs.rmSync(installedRoot, { recursive: true, force: true });
+      }
+    });
+  }
+
+  test('the runner fails closed on a present-but-invalid .groundwork.yml (no private parser)', () => {
+    const { root, runner } = installCodexRunner(PLUGIN_ROOT);
+    const repo = minimalFixtureRepo();
+    try {
+      // Same shape a permissive parser silently accepted: valid mapping plus
+      // an unsupported trailing line.
+      fs.writeFileSync(path.join(repo, '.groundwork.yml'),
+        'version: 1\nprojects:\n  web:\n    path: .\n::: garbage\n');
+      git(repo, 'add', '.groundwork.yml');
+      git(repo, 'commit', '-m', 'broken config');
+      const result = spawnSync(
+        'node',
+        [runner, 'all', '--harness', 'codex', '--repo', repo, '--dry-run'],
+        { encoding: 'utf8' }
+      );
+      assert.notStrictEqual(result.status, 0, 'the runner executed tasks against an invalid config');
+      assert.match(result.stderr || result.stdout, /groundwork\.yml|malformed/i,
+        'the failure does not name the invalid config');
+      assert.ok(!/RESULT: SUCCESS/.test(result.stdout), 'a run over an invalid config reported success');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  test('installed runner previews a minimal repo through --dry-run without missing helpers', () => {
+    const { root, runner } = installCodexRunner(PLUGIN_ROOT);
+    const repo = minimalFixtureRepo();
+    try {
+      const result = execFileSync(
+        'node',
+        [runner, 'all', '--harness', 'codex', '--repo', repo, '--dry-run'],
+        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
+      );
+      assert.match(result, /TASK-004/);
+      assert.match(result, /RESULT: SUCCESS/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  test('a new required local runner dependency fails the installed smoke until the manifest covers it', () => {
+    const source = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-smoke-src-'));
+    fs.cpSync(PLUGIN_ROOT, source, {
+      recursive: true,
+      filter: (entry) => {
+        const relative = path.relative(PLUGIN_ROOT, entry);
+        return relative === '' || !/^(?:\.git|\.worktrees|dist|node_modules)(?:\/|$)/.test(relative);
+      },
+    });
+    write(
+      path.join(source, 'lib', 'fixture-runtime-helper.js'),
+      "'use strict';\nmodule.exports = { fixtureMarker: () => 'fixture-runtime' };\n"
+    );
+    const runnerPath = path.join(source, 'bin', 'groundwork-run.js');
+    const runnerSource = fs.readFileSync(runnerPath, 'utf8');
+    const anchor = "requireRuntimeHelper('validation-session.js')";
+    assert.ok(runnerSource.includes(anchor), 'runner fixture anchor is missing');
+    fs.writeFileSync(
+      runnerPath,
+      runnerSource.replace(
+        anchor,
+        `${anchor};\nrequireRuntimeHelper('fixture-runtime-helper.js')`
+      )
+    );
+
+    const installed = installCodexRunner(source);
+    try {
+      const missing = spawnSync('node', [installed.runner, '--help'], { encoding: 'utf8' });
+      assert.notStrictEqual(missing.status, 0, 'installed runner ran although a required helper was not exported');
+      assert.match(
+        missing.stderr,
+        /fixture-runtime-helper[\s\S]*reinstall/i,
+        'missing-helper diagnostic must name the helper and the reinstall remedy'
+      );
+      assert.ok(!fs.existsSync(path.join(installed.root, '.codex', 'fixture-runtime-helper.js')));
+
+      const manifestPath = path.join(source, 'lib', 'external-runner-manifest.js');
+      const manifest = fs.readFileSync(manifestPath, 'utf8');
+      const manifestAnchor = "{ source: 'lib/plan-check.js', installed: 'plan-check.js' },";
+      assert.ok(manifest.includes(manifestAnchor), 'manifest fixture anchor is missing');
+      fs.writeFileSync(
+        manifestPath,
+        manifest.replace(
+          manifestAnchor,
+          `${manifestAnchor}\n  { source: 'lib/fixture-runtime-helper.js', installed: 'fixture-runtime-helper.js' },`
+        )
+      );
+      const reinstalled = installCodexRunner(source);
+      try {
+        assert.ok(
+          fs.existsSync(path.join(reinstalled.root, '.codex', 'fixture-runtime-helper.js')),
+          'manifest-covered helper was not exported'
+        );
+        const recovered = spawnSync('node', [reinstalled.runner, '--help'], { encoding: 'utf8' });
+        assert.strictEqual(recovered.status, 0, 'installed runner still fails after the manifest covers the helper');
+      } finally {
+        fs.rmSync(reinstalled.root, { recursive: true, force: true });
+      }
+    } finally {
+      fs.rmSync(source, { recursive: true, force: true });
+      fs.rmSync(installed.root, { recursive: true, force: true });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Runner/manual validation ownership arbitration. The runner's project lease
+// never authorizes mutating a validation session: a live manual owner blocks
+// runner continuation, runner-owned continuation rides its retained private
+// capability, and a provably stale manual owner is reclaimed safely before
+// the runner starts its own heartbeat worker.
+// ---------------------------------------------------------------------------
+describe('runner and manual validation ownership arbitration', () => {
+  const SESSION_HELPER = path.join(PLUGIN_ROOT, 'lib', 'validation-session.js');
+  const helper = require(SESSION_HELPER);
+
+  function arbitrationFixture() {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-arbitration-'));
+    git(root, 'init', '-b', 'main');
+    git(root, 'config', 'user.email', 'test@example.com');
+    git(root, 'config', 'user.name', 'Test User');
+    write(path.join(root, 'specs', 'tasks.md'), '### TASK-075: Arbitration\n');
+    write(path.join(root, 'src.txt'), 'base\n');
+    git(root, 'add', '.');
+    git(root, 'commit', '-m', 'base');
+    git(root, 'switch', '-c', 'task/TASK-075');
+    write(path.join(root, 'src.txt'), 'implementation\n');
+    git(root, 'add', '.');
+    git(root, 'commit', '-m', 'implementation');
+    return {
+      root,
+      baseHead: git(root, 'rev-parse', 'main'),
+      identity: {
+        repoRoot: root,
+        projectRoot: root,
+        worktreePath: root,
+        taskId: 'TASK-075',
+        branch: 'task/TASK-075',
+        baseHead: git(root, 'rev-parse', 'main'),
+        protocolVersion: 1,
+      },
+    };
+  }
+
+  function openCli(repo, extra = []) {
+    const result = spawnSync(process.execPath, [
+      SESSION_HELPER, 'open',
+      '--repo-root', repo.root, '--project-root', repo.root, '--worktree', repo.root,
+      '--task-id', 'TASK-075', '--branch', 'task/TASK-075',
+      '--base-head', repo.baseHead, '--protocol-version', '1',
+      ...extra,
+    ], { input: '', encoding: 'utf8' });
+    return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+  }
+
+  test('a live manual session blocks runner continuation without the runner stealing it', () => {
+    const repo = arbitrationFixture();
+    try {
+      const manual = helper.openValidationSession(repo.identity);
+      assert.strictEqual(manual.status, 'created');
+
+      // The runner arrives with only its project lease (--runner-mode): no
+      // capability, no continuation proof — it must be refused, and the
+      // manual owner's epoch must be untouched.
+      const runner = openCli(repo, ['--runner-mode']);
+      assert.notStrictEqual(runner.status, 0, 'the runner stole a live manual session');
+      assert.match(runner.stderr, /already active/);
+
+      const state = JSON.parse(fs.readFileSync(
+        path.join(manual.runDir, '.validation-session.json'), 'utf8'));
+      assert.strictEqual(state.owner.epoch, manual.state.owner.epoch);
+      // No runner capability was stored for a session it does not own.
+      assert.strictEqual(
+        fs.existsSync(path.join(path.dirname(manual.runDir), 'runner-capability.json')),
+        false
+      );
+    } finally {
+      fs.rmSync(repo.root, { recursive: true, force: true });
+    }
+  });
+
+  test('runner-owned continuation resumes through its retained capability', () => {
+    const repo = arbitrationFixture();
+    try {
+      const first = openCli(repo, ['--runner-mode']);
+      assert.strictEqual(first.status, 0, first.stderr);
+      const opened = JSON.parse(first.stdout);
+      assert.strictEqual(opened.status, 'created');
+      // New contract: the raw token never appears on stdout; the non-secret
+      // runner store path does.
+      assert.strictEqual(opened.owner_token, null, 'runner-mode open echoed the raw token');
+      assert.ok(opened.capability_file, 'runner-mode open must return the store path');
+
+      const capabilityFile = path.join(path.dirname(opened.run_dir), 'runner-capability.json');
+      assert.strictEqual(opened.capability_file, capabilityFile);
+      assert.ok(fs.existsSync(capabilityFile), 'runner mode must retain its capability privately');
+      const mode = fs.statSync(capabilityFile).mode & 0o777;
+      assert.strictEqual(mode, 0o600, 'the retained capability must be private');
+
+      // A later runner invocation (fresh process, resume-run from its
+      // checkpoint, no explicit token) continues the same run through the
+      // retained capability.
+      const second = openCli(repo, ['--runner-mode', '--resume-run', opened.run_id]);
+      assert.strictEqual(second.status, 0, second.stderr);
+      const resumed = JSON.parse(second.stdout);
+      assert.strictEqual(resumed.status, 'resumed');
+      assert.strictEqual(resumed.run_id, opened.run_id);
+      assert.strictEqual(resumed.owner_token, null, 'resume echoed the raw token');
+    } finally {
+      fs.rmSync(repo.root, { recursive: true, force: true });
+    }
+  });
+
+  test('a stale manual owner is reclaimed and the runner starts a new heartbeat worker', () => {
+    const repo = arbitrationFixture();
+    try {
+      const manual = helper.openValidationSession(repo.identity);
+      const stateFile = path.join(manual.runDir, '.validation-session.json');
+      const stale = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+      stale.owner.heartbeat.graceUntil = new Date(Date.now() - 60 * 1000).toISOString();
+      stale.owner.heartbeat.lastBeat = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
+      write(stateFile, JSON.stringify(stale));
+
+      const runner = openCli(repo, ['--runner-mode']);
+      assert.strictEqual(runner.status, 0, runner.stderr);
+      const reclaimed = JSON.parse(runner.stdout);
+      assert.strictEqual(reclaimed.status, 'reclaimed');
+      assert.strictEqual(reclaimed.owner_token, null, 'reclaim echoed the raw token');
+      // The runner store holds a capability distinct from the manual one.
+      const storeToken = JSON.parse(fs.readFileSync(reclaimed.capability_file, 'utf8')).ownerToken;
+      assert.strictEqual(storeToken !== manual.ownerToken, true);
+
+      // The worker authenticates through the runner store file itself — the
+      // registration wait loop blocks the event loop with Atomics.wait, so a
+      // piped stdin write could never flush.
+      let worker;
+      try {
+        worker = spawn(process.execPath, [
+          SESSION_HELPER, 'heartbeat-loop',
+          '--run-dir', reclaimed.run_dir, '--capability-file', reclaimed.capability_file,
+        ], { env: { ...process.env, GROUNDWORK_VALIDATION_BEAT_MS: '100' }, stdio: 'ignore' });
+      } finally {
+        // nothing to clean: the store is the runner's retained state
+      }
+      try {
+        const deadline = Date.now() + 15000;
+        for (;;) {
+          const heartbeat = JSON.parse(fs.readFileSync(
+            path.join(reclaimed.run_dir, '.validation-session.json'), 'utf8')).owner.heartbeat;
+          if (heartbeat.registered && heartbeat.pid === worker.pid) break;
+          if (Date.now() > deadline) throw new Error('runner heartbeat worker never registered');
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+        }
+        // The reclaimed session is live again and manual capability is dead.
+        assert.throws(
+          () => helper.openValidationSession({ ...repo.identity, resumeRun: reclaimed.run_id, ownerToken: manual.ownerToken }),
+          /capability does not match/
+        );
+      } finally {
+        worker.kill('SIGKILL');
+      }
+    } finally {
+      fs.rmSync(repo.root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('phaseChildLeases owner validation', () => {
+  const { phaseChildLeases } = require(RUNNER);
+
+  function validOwner(overrides = {}) {
+    return {
+      version: 1,
+      pid: process.pid,
+      processStart: 'Mon Sep 14 10:00:00 2026',
+      token: 'a'.repeat(48),
+      project: 'web',
+      projectPath: '.',
+      taskId: 'TASK-001',
+      startedAt: Date.now(),
+      ...overrides,
+    };
+  }
+
+  test('accepts a well-formed owner and allocates its contained record path', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-phase-child-'));
+    try {
+      const owner = validOwner();
+      const leasePath = path.join(dir, 'project.lease');
+      const leases = phaseChildLeases({ phaseLeases: [{ leasePath, owner }] });
+      assert.strictEqual(leases.length, 1);
+      assert.strictEqual(leases[0].recordPath, path.join(dir, '.phase-children', `${owner.token}.json`));
+      assert.ok(fs.statSync(path.join(dir, '.phase-children')).isDirectory());
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('rejects malformed owners the identity guard must actually catch', () => {
+    const malformed = [
+      validOwner({ version: 2 }),
+      validOwner({ pid: 0 }),
+      validOwner({ pid: 1.5 }),
+      validOwner({ token: 'not-hex-at-all' }),
+      validOwner({ token: 'a'.repeat(47) }),
+      validOwner({ processStart: '' }),
+      validOwner({ processStart: 'x'.repeat(257) }),
+      validOwner({ startedAt: 0 }),
+      validOwner({ startedAt: Number.NaN }),
+      validOwner({ project: 'bad project!' }),
+      validOwner({ projectPath: '/absolute' }),
+      validOwner({ projectPath: '../escape' }),
+      validOwner({ taskId: 'not-a-task' }),
+    ];
+    const baseline = validOwner();
+    for (const owner of malformed) {
+      const differing = Object.keys(baseline).find((k) => baseline[k] !== owner[k]);
+      assert.throws(
+        () => phaseChildLeases({ phaseLeases: [{ leasePath: '/tmp/x.lease', owner }] }),
+        /invalid/i,
+        `owner with malformed ${differing} must be rejected`
+      );
+    }
+  });
+
+  test('still rejects structural garbage and duplicate record paths', () => {
+    assert.throws(() => phaseChildLeases({ phaseLeases: [{ leasePath: '', owner: validOwner() }] }), /Phase child lease identity is invalid/);
+    assert.throws(() => phaseChildLeases({ phaseLeases: [{ leasePath: '/tmp/a.lease' }] }), /Phase child lease identity is invalid/);
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-phase-child-dup-'));
+    try {
+      const owner = validOwner();
+      assert.throws(
+        () => phaseChildLeases({ phaseLeases: [
+          { leasePath: path.join(dir, 'a.lease'), owner },
+          { leasePath: path.join(dir, 'b.lease'), owner },
+        ] }),
+        /Phase child lease record is duplicated/
+      );
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
     }
   });
 });

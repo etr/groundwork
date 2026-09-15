@@ -39,6 +39,8 @@ Or use the installer provided with the codebase.
 
 Groundwork supports Claude Code, Codex, and ZCode (both the installer export and the managed marketplace). Exports for OpenCode, Kiro, and Pi are experimental: the installer transforms Claude Code-specific constructs for those harnesses, but hooks, invocation, and skill chaining may not behave identically.
 
+Two boundaries apply to the experimental exports. First, **source/install parity**: the installer ships every runtime helper the exported skills reference (enforced by tests), so helper behavior matches the source tree — but features that depend on Claude Code hooks (session-start bindings, template-variable resolution, commit-alignment checks) run only where the target supports an equivalent (ZCode's filtered hook events; the Pi extension's own event handlers). Second, **hookless selection limitation**: on harnesses without hooks, monorepo project selection is not pinned per chat — re-select the active project in each session before running project-scoped skills.
+
 The included installer adapts Groundwork skills and agents to each target's native format. Claude Code users should normally use the marketplace; Codex users should use the installer.
 
 #### Supported Targets
@@ -533,7 +535,7 @@ Rerunning is resumable. An existing conventional plan skips planning. An exact r
 
 In monorepos, runner-created workspaces are project-qualified (for example, `task/api/TASK-004` and `.worktrees/api-TASK-004`) so projects may reuse task numbers. The runner does not inspect or compare unrelated worktree contents. Legacy unqualified worktrees remain resumable when their project checkpoint identifies the owner.
 
-Multiple runner commands may be launched against the same repository. A project lease serializes complete tasks for one project, while different projects may execute model phases concurrently. Startup reads, model phases, and repair phases use a writer-preferred repository reader gate. Linked-worktree registration adds a short registry mutex, so another project can start while a model phase is active without exposing a half-created workspace. Publication and worktree removal remain writer-exclusive; wait diagnostics identify the holder. If another project advances the base, the stale task integrates it during finalization and continues to publication by default.
+Multiple runner commands may be launched against the same repository. A project lease serializes complete tasks for one project, while different projects may execute model phases concurrently. Startup reads and short lifecycle call sites use a writer-preferred repository reader gate; model and repair phases run under the per-task project lease. Linked-worktree registration adds a short registry mutex, so another project can start while a model phase is active without exposing a half-created workspace. Publication and worktree removal remain writer-exclusive; wait diagnostics identify the holder. If another project advances the base, the stale task integrates it during finalization and continues to publication by default.
 
 When upgrading to this parallel runner, first stop and drain every older runner process and launcher for the repository, then install and start the new version. Running the predecessor and v2 together is unsupported: v2 rejects a detected live `groundwork/runner.lock`, but that startup check cannot prevent an old launcher from starting afterward. Once the upgrade is drained, v2 runners may safely use their repository gate together.
 

@@ -229,6 +229,15 @@ describe('config <-> skills/ parity', () => {
 
 // Run the installer for a target into a temp dir and return the output root.
 // Returns null (so the caller can skip) if bash isn't available.
+function bashAvailable() {
+  try {
+    execFileSync('bash', ['-c', 'exit 0'], { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function runInstaller(target, options = {}) {
   try {
     execFileSync('bash', ['-c', 'exit 0'], { stdio: 'ignore' });
@@ -261,10 +270,6 @@ function createAgentFixture(agentMarkdown) {
   fs.mkdirSync(path.join(source, 'bin'));
   fs.writeFileSync(path.join(source, 'install-config.txt'), '');
   fs.writeFileSync(path.join(source, 'agents', 'fixture-agent', 'AGENT.md'), agentMarkdown);
-  fs.copyFileSync(
-    path.join(PLUGIN_ROOT, 'bin', 'groundwork-run.js'),
-    path.join(source, 'bin', 'groundwork-run.js')
-  );
   for (const file of [
     'transform-agents.js',
     'render-codex-agent.js',
@@ -273,11 +278,22 @@ function createAgentFixture(agentMarkdown) {
     'apply-codex-skill-policy.js',
     'model-override.js',
     'codex-model-policy.json',
-    'run-reporting.js',
-    'validation-session.js',
+    'external-runner-manifest.js',
   ]) {
     const original = path.join(PLUGIN_ROOT, 'lib', file);
     if (fs.existsSync(original)) fs.copyFileSync(original, path.join(source, 'lib', file));
+  }
+  // The runner runtime ships as the manifest closure, not a second
+  // hand-maintained list here.
+  const manifestEntries = JSON.parse(
+    execFileSync('node', [path.join(PLUGIN_ROOT, 'lib', 'external-runner-manifest.js'), '--json'], {
+      encoding: 'utf8',
+    })
+  );
+  for (const entry of manifestEntries) {
+    const destination = path.join(source, entry.source);
+    fs.mkdirSync(path.dirname(destination), { recursive: true });
+    fs.copyFileSync(path.join(PLUGIN_ROOT, entry.source), destination);
   }
   return source;
 }
@@ -808,20 +824,22 @@ describe('exported project context runtime', () => {
         assert.ok(skill.includes(`project-context-cli.js select "<selected-name>" --harness ${target}`));
         assert.ok(!skill.includes('${PLUGIN_ROOT}'));
 
-        const repo = path.join(root, `${target}-repo`);
-        fs.mkdirSync(path.join(repo, 'apps', 'web', 'specs'), { recursive: true });
+        const repoPath = path.join(root, `${target}-repo`);
+        fs.mkdirSync(path.join(repoPath, 'apps', 'web', 'specs'), { recursive: true });
+        const repo = fs.realpathSync(repoPath);
         fs.writeFileSync(path.join(repo, '.groundwork.yml'), [
           'version: 1', 'projects:', '  web:', '    path: apps/web', '',
         ].join('\n'));
         execFileSync('git', ['init', '-q'], { cwd: repo });
         const env = { ...process.env, [stateEnv]: path.join(root, `${target}-state`) };
 
+        // select prints the bindings JSON line, then the standalone receipt.
         const selected = JSON.parse(execFileSync(
           'node', [cli, 'select', 'web', '--harness', target],
           { cwd: repo, env, encoding: 'utf8' }
-        ));
+        ).trim().split('\n')[0]);
         assert.strictEqual(selected.project_name, 'web');
-        assert.strictEqual(selected.specs_dir, 'apps/web/specs');
+        assert.strictEqual(selected.specs_dir, path.join(repo, 'apps', 'web', 'specs'));
 
         const resolved = JSON.parse(execFileSync(
           'node', [cli, 'resolve', '--harness', target],
@@ -829,11 +847,38 @@ describe('exported project context runtime', () => {
         ));
         assert.strictEqual(resolved.selection_required, false);
         assert.strictEqual(resolved.project_name, 'web');
+        assert.strictEqual(resolved.project_root, path.join(repo, 'apps', 'web'));
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }
     });
   }
+
+  test('exported resolve supports no-config single-project repositories', () => {
+    const root = runInstaller('codex');
+    if (root === null) return;
+    try {
+      const skillDir = path.join(root, '.codex', 'skills', 'groundwork-select-project');
+      const cli = path.join(skillDir, 'scripts', 'project-context-cli.js');
+      const repoPath = path.join(root, 'no-config-repo');
+      fs.mkdirSync(path.join(repoPath, 'specs'), { recursive: true });
+      const repo = fs.realpathSync(repoPath);
+      execFileSync('git', ['init', '-q'], { cwd: repo });
+
+      const resolved = JSON.parse(execFileSync(
+        'node', [cli, 'resolve', '--harness', 'codex'],
+        { cwd: repo, env: process.env, encoding: 'utf8' }
+      ));
+      assert.strictEqual(resolved.selection_required, false);
+      assert.strictEqual(resolved.project_root, repo);
+      assert.strictEqual(resolved.specs_dir, path.join(repo, 'specs'));
+      assert.strictEqual(resolved.plans_dir, path.join(repo, '.groundwork-plans'));
+      assert.strictEqual(resolved.debug_dir, path.join(repo, '.debug'));
+      assert.strictEqual(resolved.research_dir, path.join(repo, '.architecture'));
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
 
   test('codex select-project command treats a metacharacter-leading name as data', () => {
     const root = runInstaller('codex');
@@ -1815,6 +1860,483 @@ describe('export degradation guard', () => {
           );
         }
       }
+    }
+  });
+});
+
+// --- External runner runtime closure ---
+// The standalone Codex runner bundle is exported from an explicit, checked
+// manifest (lib/external-runner-manifest.js). The manifest is the dependency
+// contract between three parties: the runner (which loads every startup
+// helper through a fail-closed loader), the installer (which loops over the
+// manifest instead of a hand-maintained helper list), and these tests.
+describe('external runner runtime closure', () => {
+  const MANIFEST = path.join(PLUGIN_ROOT, 'lib', 'external-runner-manifest.js');
+
+  function write(file, content) {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, content);
+  }
+
+  function manifestEntries() {
+    return JSON.parse(execFileSync('node', [MANIFEST, '--json'], { encoding: 'utf8' }));
+  }
+
+  test('manifest declares the complete standalone runner runtime', () => {
+    const entries = manifestEntries();
+    assert.ok(Array.isArray(entries) && entries.length > 0, 'manifest emitted no entries');
+    const names = entries.map((entry) => entry.installed);
+    for (const required of [
+      'groundwork-run.js',
+      'run-reporting.js',
+      'validation-session.js',
+      'atomic-write.js',
+      'worktree-identity.js',
+      'project-context.js',
+      'plan-check.js',
+    ]) {
+      assert.ok(names.includes(required), `runtime manifest does not declare ${required}`);
+    }
+  });
+
+  test('manifest entries are unique and every source is a regular local file', () => {
+    const seenInstalled = new Set();
+    const seenSource = new Set();
+    for (const entry of manifestEntries()) {
+      assert.ok(!seenInstalled.has(entry.installed), `duplicate installed name: ${entry.installed}`);
+      assert.ok(!seenSource.has(entry.source), `duplicate source: ${entry.source}`);
+      seenInstalled.add(entry.installed);
+      seenSource.add(entry.source);
+      const stat = fs.lstatSync(path.join(PLUGIN_ROOT, entry.source));
+      assert.ok(stat.isFile(), `manifest source is not a regular file: ${entry.source}`);
+    }
+  });
+
+  test('manifest validation rejects a source entry that does not exist', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-manifest-src-'));
+    try {
+      fs.mkdirSync(path.join(root, 'lib'));
+      fs.mkdirSync(path.join(root, 'bin'));
+      write(path.join(root, 'bin', 'groundwork-run.js'), '#!/usr/bin/env node\n');
+      const manifest = fs.readFileSync(MANIFEST, 'utf8');
+      // Point one declared entry at a missing source file via a fixture copy.
+      const fixtureManifest = manifest.replace(
+        /source: '([^']+)'/,
+        "source: 'lib/does-not-exist.js'"
+      );
+      assert.notStrictEqual(fixtureManifest, manifest, 'fixture did not modify the manifest source');
+      fs.writeFileSync(path.join(root, 'lib', 'external-runner-manifest.js'), fixtureManifest);
+      const result = spawnSync(
+        'node',
+        [path.join(root, 'lib', 'external-runner-manifest.js'), '--json'],
+        { encoding: 'utf8' }
+      );
+      assert.notStrictEqual(result.status, 0, 'manifest validation accepted a missing source file');
+      assert.match(result.stderr, /does-not-exist|regular local file|missing/i);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('every helper the runner loads through the fail-closed loader is declared', () => {
+    const runnerSource = fs.readFileSync(path.join(PLUGIN_ROOT, 'bin', 'groundwork-run.js'), 'utf8');
+    const loaderUses = [...runnerSource.matchAll(/requireRuntimeHelper\('([^']+)'\)/g)];
+    assert.ok(loaderUses.length >= 4, 'runner no longer loads its helpers through requireRuntimeHelper');
+    const declared = new Set(manifestEntries().map((entry) => entry.installed));
+    for (const use of loaderUses) {
+      assert.ok(
+        declared.has(use[1]),
+        `runner requires ${use[1]} but the runtime manifest does not declare it`
+      );
+    }
+  });
+
+  test('fresh --codex export installs every manifest runtime file byte-identical', () => {
+    const root = runInstaller('codex');
+    if (root === null) return; // no bash — end-to-end checks skipped
+    try {
+      for (const entry of manifestEntries()) {
+        const installed = path.join(root, '.codex', entry.installed);
+        assert.ok(fs.existsSync(installed), `--codex export is missing runtime file ${entry.installed}`);
+        assert.strictEqual(
+          fs.readFileSync(installed, 'utf8'),
+          fs.readFileSync(path.join(PLUGIN_ROOT, entry.source), 'utf8'),
+          `installed ${entry.installed} differs from ${entry.source}`
+        );
+      }
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  function fixtureSourceCorruption(mutate) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-manifest-closure-'));
+    for (const dir of ['bin', 'lib', 'skills', 'agents']) {
+      fs.mkdirSync(path.join(root, dir), { recursive: true });
+    }
+    fs.cpSync(PLUGIN_ROOT, root, { recursive: true, filter: (src) => {
+      const rel = path.relative(PLUGIN_ROOT, src);
+      return !rel.startsWith('.git') && !rel.includes('node_modules');
+    } });
+    mutate(root);
+    return root;
+  }
+
+  function manifestResult(root) {
+    return spawnSync(
+      'node',
+      [path.join(root, 'lib', 'external-runner-manifest.js'), '--json'],
+      { encoding: 'utf8' }
+    );
+  }
+
+  test('a manifested helper with an unmanifested transitive relative import fails validation', () => {
+    const root = fixtureSourceCorruption((base) => {
+      // Lazy transitive dependency: only reached at runtime, invisible to a
+      // file-list manifest check, and deliberately NOT declared.
+      fs.writeFileSync(
+        path.join(base, 'lib', 'lazy-transitive-relative-import.js'),
+        'module.exports = { lazy: true };\n'
+      );
+      fs.appendFileSync(
+        path.join(base, 'lib', 'owned-lock.js'),
+        '\nconst lazyTransitive = require("./lazy-transitive-relative-import");\n'
+      );
+    });
+    try {
+      const result = manifestResult(root);
+      assert.notStrictEqual(result.status, 0, 'validation accepted an unmanifested transitive import');
+      assert.match(result.stderr, /lazy-transitive-relative-import|unmanifested/i, result.stderr);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('an unclassified dynamic local require fails validation; a classified one passes', () => {
+    const unclassified = fixtureSourceCorruption((base) => {
+      fs.appendFileSync(
+        path.join(base, 'lib', 'plan-check.js'),
+        '\nconst dyn = require(someVariable);\n'
+      );
+    });
+    try {
+      const result = manifestResult(unclassified);
+      assert.notStrictEqual(result.status, 0, 'validation accepted an unclassified dynamic require');
+      assert.match(result.stderr, /dynamic/i, result.stderr);
+    } finally {
+      fs.rmSync(unclassified, { recursive: true, force: true });
+    }
+
+    const classified = fixtureSourceCorruption((base) => {
+      fs.appendFileSync(
+        path.join(base, 'lib', 'plan-check.js'),
+        '\nconst dyn = require(someVariable); // runtime-closure: classified\n'
+      );
+    });
+    try {
+      const result = manifestResult(classified);
+      assert.strictEqual(result.status, 0, result.stderr);
+    } finally {
+      fs.rmSync(classified, { recursive: true, force: true });
+    }
+  });
+
+  test('manifest sources must stay inside the declared runner roots (bin/ and lib/)', () => {
+    const root = fixtureSourceCorruption((base) => {
+      const manifest = fs.readFileSync(path.join(base, 'lib', 'external-runner-manifest.js'), 'utf8');
+      fs.writeFileSync(
+        path.join(base, 'lib', 'external-runner-manifest.js'),
+        manifest.replace("source: 'bin/groundwork-run.js'", "source: 'skills/groundwork-run.js'")
+      );
+    });
+    try {
+      const result = manifestResult(root);
+      assert.notStrictEqual(result.status, 0, 'validation accepted a source outside the runner roots');
+      assert.match(result.stderr, /runner root|outside/i, result.stderr);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('multiline dynamic and literal requires cannot bypass closure validation', () => {
+    // A require whose argument wraps across lines is invisible to a
+    // per-line regex — the span-aware scanner must still classify it.
+    const multilineDynamic = fixtureSourceCorruption((base) => {
+      fs.appendFileSync(
+        path.join(base, 'lib', 'plan-check.js'),
+        '\nconst dyn = require(\n  someVariable\n);\n'
+      );
+    });
+    try {
+      const result = manifestResult(multilineDynamic);
+      assert.notStrictEqual(result.status, 0, 'a multiline dynamic require bypassed validation');
+      assert.match(result.stderr, /dynamic/i, result.stderr);
+    } finally {
+      fs.rmSync(multilineDynamic, { recursive: true, force: true });
+    }
+
+    // Same bypass shape with a literal relative import of an unmanifested
+    // module.
+    const multilineLiteral = fixtureSourceCorruption((base) => {
+      fs.writeFileSync(path.join(base, 'lib', 'undeclared-helper.js'), 'module.exports = 1;\n');
+      fs.appendFileSync(
+        path.join(base, 'lib', 'plan-check.js'),
+        '\nconst lazy = require(\n  "./undeclared-helper"\n);\n'
+      );
+    });
+    try {
+      const result = manifestResult(multilineLiteral);
+      assert.notStrictEqual(result.status, 0, 'a multiline literal require bypassed validation');
+      assert.match(result.stderr, /undeclared-helper|does not declare/i, result.stderr);
+    } finally {
+      fs.rmSync(multilineLiteral, { recursive: true, force: true });
+    }
+
+    // The classified multiline form (marker on the call's line span) passes.
+    const multilineClassified = fixtureSourceCorruption((base) => {
+      fs.appendFileSync(
+        path.join(base, 'lib', 'plan-check.js'),
+        '\nconst dyn = require(\n  someVariable\n); // runtime-closure: classified\n'
+      );
+    });
+    try {
+      const result = manifestResult(multilineClassified);
+      assert.strictEqual(result.status, 0, result.stderr);
+    } finally {
+      fs.rmSync(multilineClassified, { recursive: true, force: true });
+    }
+  });
+
+  test('parenthesized and comment-obscured requires cannot bypass closure validation', () => {
+    // A lexer (not a regex) classifies these: `(require)("./x")` and
+    // `require /* c */ ("./x")` are literal requires of unmanifested files.
+    for (const [label, mutation] of [
+      ['parenthesized require', '\nconst hidden = (require)("./undeclared-helper");\n'],
+      ['comment-obscured require', '\nconst hidden = require /* comment */ ("./undeclared-helper");\n'],
+    ]) {
+      const root = fixtureSourceCorruption((base) => {
+        fs.writeFileSync(path.join(base, 'lib', 'undeclared-helper.js'), 'module.exports = 1;\n');
+        fs.appendFileSync(path.join(base, 'lib', 'plan-check.js'), mutation);
+      });
+      try {
+        const result = manifestResult(root);
+        assert.notStrictEqual(result.status, 0, `${label} bypassed validation`);
+        assert.match(result.stderr, /undeclared-helper|does not declare/i, result.stderr);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    }
+
+    // Template-substitution, optional-call, and fake-marker bypasses.
+    for (const [label, mutation, expect] of [
+      ['require inside a template substitution', '\nconst hidden = `${require("./undeclared-helper")}`;\n', /undeclared-helper|does not declare/],
+      ['optional-call require', '\nconst hidden = require?.("./undeclared-helper");\n', /undeclared-helper|does not declare/],
+      ['marker spelled inside a string', '\nconst note = "runtime-closure: classified"; const hidden = require(dynamicName);\n', /dynamic/],
+    ]) {
+      const root = fixtureSourceCorruption((base) => {
+        fs.writeFileSync(path.join(base, 'lib', 'undeclared-helper.js'), 'module.exports = 1;\n');
+        fs.appendFileSync(path.join(base, 'lib', 'plan-check.js'), mutation);
+      });
+      try {
+        const result = manifestResult(root);
+        assert.notStrictEqual(result.status, 0, `${label} bypassed validation`);
+        assert.match(result.stderr, expect, `${label}: ${result.stderr}`);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    }
+
+    // Lexically aware boundary + alias + comment-argument cases.
+    for (const [label, mutation, expect] of [
+      ['require behind a string-brace inside a template expression',
+        '\nconst hidden = `${"}"; require("./undeclared-helper")}`;\n', /undeclared-helper|does not declare/],
+      ['require behind a regex-brace inside a template expression',
+        '\nconst hidden = `${/}/; require("./undeclared-helper")}`;\n', /undeclared-helper|does not declare/],
+      ['indirect require alias',
+        '\nconst r = require; const hidden = r("./undeclared-helper");\n', /bare\/indirect|classify/],
+      ['comment inside the argument list is still a literal require',
+        '\nconst hidden = require(/* why */ "./undeclared-helper");\n', /undeclared-helper|does not declare/],
+    ]) {
+      const root = fixtureSourceCorruption((base) => {
+        fs.writeFileSync(path.join(base, 'lib', 'undeclared-helper.js'), 'module.exports = 1;\n');
+        fs.appendFileSync(path.join(base, 'lib', 'plan-check.js'), mutation);
+      });
+      try {
+        const result = manifestResult(root);
+        assert.notStrictEqual(result.status, 0, `${label} bypassed validation`);
+        assert.match(result.stderr, expect, `${label}: ${result.stderr}`);
+        // For literal-shape cases the diagnostic names the undeclared module,
+        // not the classification rule (the alias case is intentionally the
+        // classification message).
+        if (/undeclared/.test(String(expect))) {
+          assert.doesNotMatch(result.stderr, /classify it by appending/, `${label} was misread as dynamic`);
+        }
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    }
+
+    // The narrow grammar rejects every unrecognized indirect form — no
+    // alias-pattern enumeration to evade.
+    for (const [label, mutation] of [
+      ['commented alias', '\nconst r /* comment */ = require; const hidden = r("./undeclared-helper");\n'],
+      ['parenthesized alias', '\nconst r = (require); const hidden = r("./undeclared-helper");\n'],
+      ['require.call', '\nconst hidden = require.call(null, "./undeclared-helper");\n'],
+      ['Reflect.apply', '\nconst hidden = Reflect.apply(require, null, ["./undeclared-helper"]);\n'],
+    ]) {
+      const root = fixtureSourceCorruption((base) => {
+        fs.writeFileSync(path.join(base, 'lib', 'undeclared-helper.js'), 'module.exports = 1;\n');
+        fs.appendFileSync(path.join(base, 'lib', 'plan-check.js'), mutation);
+      });
+      try {
+        const result = manifestResult(root);
+        assert.notStrictEqual(result.status, 0, `${label} bypassed validation`);
+        assert.match(result.stderr, /bare\/indirect|classify/i, `${label}: ${result.stderr}`);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    }
+
+    // Explicitly classified indirection and approved require.main pass.
+    for (const [label, mutation] of [
+      ['classified alias', '\nconst r = require; // runtime-closure: classified — aliased loader, targets are manifested\nconst hidden = r("./plan-check");\n'],
+      ['require.main access', '\nconst isDirect = require.main === module;\n'],
+    ]) {
+      const root = fixtureSourceCorruption((base) => {
+        fs.appendFileSync(path.join(base, 'lib', 'plan-check.js'), mutation);
+      });
+      try {
+        const result = manifestResult(root);
+        assert.strictEqual(result.status, 0, `${label}: ${result.stderr}`);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    }
+
+    // Unterminated block comments and regex literals are unprovable.
+    for (const [label, mutation] of [
+      ['unterminated block comment', '\nconst x = 1; /* never closed\n'],
+      ['unterminated regex literal', '\nconst re = /never closed\n'],
+    ]) {
+      const root = fixtureSourceCorruption((base) => {
+        fs.appendFileSync(path.join(base, 'lib', 'plan-check.js'), mutation);
+      });
+      try {
+        const result = manifestResult(root);
+        assert.notStrictEqual(result.status, 0, `${label} passed validation`);
+        assert.match(result.stderr, /unterminated|unprovable/i, `${label}: ${result.stderr}`);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    }
+
+    // Unprovable lexing fails closed: an unterminated string makes the
+    // import closure unprovable.
+    const unterminated = fixtureSourceCorruption((base) => {
+      fs.appendFileSync(path.join(base, 'lib', 'plan-check.js'), '\nconst broken = "never closed\n');
+    });
+    try {
+      const result = manifestResult(unterminated);
+      assert.notStrictEqual(result.status, 0, 'an unlexable manifested module passed validation');
+      assert.match(result.stderr, /cannot be lexed|unprovable/i, result.stderr);
+    } finally {
+      fs.rmSync(unterminated, { recursive: true, force: true });
+    }
+
+    // A REAL comment marker on the call line still classifies.
+    const commentClassified = fixtureSourceCorruption((base) => {
+      fs.appendFileSync(path.join(base, 'lib', 'plan-check.js'), '\nconst hidden = require(dynamicName); // runtime-closure: classified\n');
+    });
+    try {
+      const result = manifestResult(commentClassified);
+      assert.strictEqual(result.status, 0, result.stderr);
+    } finally {
+      fs.rmSync(commentClassified, { recursive: true, force: true });
+    }
+
+    // The wrapped dynamic form still demands classification.
+    const dynamic = fixtureSourceCorruption((base) => {
+      fs.appendFileSync(path.join(base, 'lib', 'plan-check.js'), '\nconst hidden = (require)(someVariable);\n');
+    });
+    try {
+      const result = manifestResult(dynamic);
+      assert.notStrictEqual(result.status, 0, 'a wrapped dynamic require bypassed validation');
+      assert.match(result.stderr, /dynamic/i, result.stderr);
+    } finally {
+      fs.rmSync(dynamic, { recursive: true, force: true });
+    }
+
+    // String contents that merely mention require( are not calls.
+    const prose = fixtureSourceCorruption((base) => {
+      fs.appendFileSync(
+        path.join(base, 'lib', 'plan-check.js'),
+        '\nconst notice = "a per-line regex would flag require(./nope) in this string";\n'
+      );
+    });
+    try {
+      const result = manifestResult(prose);
+      assert.strictEqual(result.status, 0, result.stderr);
+    } finally {
+      fs.rmSync(prose, { recursive: true, force: true });
+    }
+  });
+
+  test('the installer fails the export before writing any file when the manifest closure is broken', () => {
+    if (!bashAvailable()) return;
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-install-fail-closed-'));
+    const source = fixtureSourceCorruption((base) => {
+      fs.appendFileSync(
+        path.join(base, 'lib', 'owned-lock.js'),
+        '\nconst lazyTransitive = require("./lazy-transitive-relative-import");\n'
+      );
+    });
+    try {
+      let failed = null;
+      try {
+        runInstaller('codex', { root, source });
+      } catch (error) {
+        failed = error;
+      }
+      assert.ok(failed, 'installer completed although the runtime manifest closure is broken');
+      assert.notStrictEqual(failed.status, 0);
+      const codexDir = path.join(root, '.codex');
+      const exported = fs.existsSync(codexDir) ? fs.readdirSync(codexDir) : [];
+      assert.strictEqual(exported.length, 0, 'installer wrote files before manifest validation failed');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(source, { recursive: true, force: true });
+    }
+  });
+
+  test('fresh --codex export smoke: runner --help and a dry run work from the installed bundle', () => {
+    if (!bashAvailable()) return;
+    const root = runInstaller('codex');
+    if (root === null) return;
+    try {
+      // The runner operates on a git project; give the fixture one.
+      execFileSync('git', ['init', '-q'], { cwd: root });
+      execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: root });
+      execFileSync('git', ['config', 'user.name', 'Test'], { cwd: root });
+      fs.writeFileSync(path.join(root, 'README.md'), '# fixture\n');
+      fs.mkdirSync(path.join(root, 'specs'), { recursive: true });
+      fs.writeFileSync(path.join(root, 'specs', 'tasks.md'), '# Tasks\n\n**Status:** Approved\n\n### TASK-001: fixture\n\n- [ ] item\n');
+      execFileSync('git', ['add', '.'], { cwd: root });
+      execFileSync('git', ['commit', '-q', '-m', 'init'], { cwd: root });
+
+      const runner = path.join(root, '.codex', 'groundwork-run.js');
+      const help = spawnSync('node', [runner, '--help'], { encoding: 'utf8' });
+      assert.strictEqual(help.status, 0, help.stderr);
+
+      // The installed bundle is flat: helpers sit next to the runner, so the
+      // loader must resolve them in "installed" mode (not the source tree).
+      const dry = spawnSync(
+        'node',
+        [runner, 'all', '--harness', 'codex', '--dry-run'],
+        { encoding: 'utf8', cwd: root, env: process.env }
+      );
+      assert.strictEqual(dry.status, 0, dry.stderr || dry.stdout);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
     }
   });
 });

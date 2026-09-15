@@ -9,15 +9,37 @@ const { execFileSync, spawnSync } = require('child_process');
 const { StringDecoder } = require('string_decoder');
 const { Worker } = require('worker_threads');
 
-const validationSessionModule = [
-  path.join(__dirname, '..', 'lib', 'validation-session.js'),
-  path.join(__dirname, 'validation-session.js'),
-].find((candidate) => fs.existsSync(candidate));
-const validationSessions = validationSessionModule ? require(validationSessionModule) : null;
-const runReportingModule = [
-  path.join(__dirname, '..', 'lib', 'run-reporting.js'),
-  path.join(__dirname, 'run-reporting.js'),
-].find((candidate) => fs.existsSync(candidate));
+// Runtime helper loader. The runner runs from two layouts: the source tree
+// (bin/ + lib/) and the standalone export where every helper is colocated
+// next to this script. Every startup helper is required — an export that
+// omits one is corrupted and must fail closed with a reinstall diagnostic,
+// never silently disable the feature that needs it.
+const runtimeHelperPaths = {};
+function requireRuntimeHelper(name) {
+  const candidateDirectories = [path.join(__dirname, '..', 'lib'), __dirname];
+  for (const directory of candidateDirectories) {
+    const candidate = path.join(directory, name);
+    if (fs.existsSync(candidate)) {
+      runtimeHelperPaths[name] = candidate;
+      // Candidates are exactly the manifested helpers; tests pin every
+      // requireRuntimeHelper call to the manifest.
+      return require(candidate); // runtime-closure: classified
+    }
+  }
+  throw new Error(
+    `Groundwork runner runtime is incomplete: required helper "${name}" is missing `
+    + `(looked in ${candidateDirectories.join(' and ')}). The standalone runtime is corrupted or `
+    + 'was exported by an older installer; reinstall Groundwork for this harness '
+    + '(./install-skills.sh) and retry.'
+  );
+}
+
+function runtimeHelperPath(name) {
+  if (!(name in runtimeHelperPaths)) requireRuntimeHelper(name);
+  return runtimeHelperPaths[name];
+}
+
+const validationSessions = requireRuntimeHelper('validation-session.js');
 const {
   createRunReporter,
   createTranscriptWriter,
@@ -26,22 +48,25 @@ const {
   showTaskLogs,
   showTaskStatus,
   transcriptSignalsFromEvent,
-} = runReportingModule ? require(runReportingModule) : {};
-const worktreeIdentityModule = [
-  path.join(__dirname, '..', 'lib', 'worktree-identity.js'),
-  path.join(__dirname, 'worktree-identity.js'),
-].find((candidate) => fs.existsSync(candidate));
+} = requireRuntimeHelper('run-reporting.js');
 const {
   legacyWorkspaceOwner,
   taskWorkspaceIdentity,
-} = worktreeIdentityModule
-  ? require(worktreeIdentityModule).createWorktreeIdentity({ execGit: (cwd, args) => execGit(cwd, args) })
-  : {};
-const planCheckModule = [
-  path.join(__dirname, '..', 'lib', 'plan-check.js'),
-  path.join(__dirname, 'plan-check.js'),
-].find((candidate) => fs.existsSync(candidate));
-const planBelongsToProject = planCheckModule ? require(planCheckModule).planBelongsToProject : null;
+} = requireRuntimeHelper('worktree-identity.js').createWorktreeIdentity({ execGit: (cwd, args) => execGit(cwd, args) });
+const { planBelongsToProject } = requireRuntimeHelper('plan-check.js');
+// Shared mutation protocol: the same serialized ticket queue that fences
+// owned-lock transitions (lib/owned-lock.js) fences runner lease publication,
+// reclamation, and gating. The staging-record reclaim protocol and the
+// mutation retry pause also live there, consumed here with this module's
+// lease-based liveness view.
+const {
+  acquireLeaseMutation,
+  createContainedDirectory,
+  fsyncDirectory,
+  publishRecordAtomically,
+  reclaimStaleStagingEntries,
+  waitForLeaseMutation,
+} = requireRuntimeHelper('lease-mutation.js');
 
 const TASK_ID = /^TASK-(\d{3})$/;
 const SUPPORTED_HARNESSES = ['claude', 'codex', 'zcode'];
@@ -157,8 +182,10 @@ function normalizeActivity(harness, event, state = {}, now = Date.now()) {
       /\b([A-Z_][A-Z0-9_]*(?:API_KEY|TOKEN|SECRET|PASSWORD))=(?:"[^"]*"|'[^']*'|\S+)/gi,
       '$1=[redacted]'
     );
+    // --owner-token is the validation bearer capability: both spellings are
+    // redacted so it never reaches progress text, transcripts, or reports.
     command = command.replace(
-      /(--(?:api[-_]?key|token|secret|password))(=|\s+)(?:"[^"]*"|'[^']*'|\S+)/gi,
+      /(--(?:api[-_]?key|owner[-_]?token|token|secret|password))(=|\s+)(?:"[^"]*"|'[^']*'|\S+)/gi,
       (_match, flag, separator) => `${flag}${separator === '=' ? '=' : ' '}[redacted]`
     );
     return command.length > 180 ? `${command.slice(0, 179)}…` : command;
@@ -580,35 +607,6 @@ function assertNoSymlinkComponents(parent, child, label) {
   }
 }
 
-function createContainedDirectory(parent, child, label) {
-  const parentStat = fs.lstatSync(parent);
-  if (parentStat.isSymbolicLink() || !parentStat.isDirectory()) {
-    throw new Error(`${label} parent is not a real directory: ${parent}`);
-  }
-  const relative = path.relative(parent, child);
-  if (!isContained(parent, child)) throw new Error(`${label} is outside ${parent}`);
-  let current = parent;
-  for (const component of relative.split(path.sep).filter(Boolean)) {
-    current = path.join(current, component);
-    if (fs.existsSync(current)) {
-      const stat = fs.lstatSync(current);
-      if (stat.isSymbolicLink() || !stat.isDirectory()) {
-        throw new Error(`${label} contains a non-directory or symlink: ${current}`);
-      }
-    } else {
-      try {
-        fs.mkdirSync(current, { mode: 0o700 });
-      } catch (error) {
-        if (error.code !== 'EEXIST') throw error;
-        const stat = fs.lstatSync(current);
-        if (stat.isSymbolicLink() || !stat.isDirectory()) {
-          throw new Error(`${label} contains a non-directory or symlink: ${current}`);
-        }
-      }
-    }
-  }
-}
-
 function waitForLease(dependencies) {
   const wait = dependencies.wait || ((milliseconds) => {
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
@@ -616,38 +614,15 @@ function waitForLease(dependencies) {
   wait(1_000);
 }
 
-function waitForLeaseMutation(dependencies, milliseconds = 10) {
-  const wait = dependencies.mutationWait || dependencies.wait || ((milliseconds) => {
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
-  });
-  wait(milliseconds);
-}
+// waitForLeaseMutation itself lives in lib/lease-mutation.js (the shared
+// mutationWait||wait fallback chain); the runner consumes it directly.
 
+// Single process-identity authority shared with the validation-session
+// ownership model (lib/process-identity.js) — the runner keeps only the
+// dependency-injection seam it uses for deterministic tests.
 function processStartIdentity(pid, dependencies = {}) {
   if (dependencies.processStartIdentity) return dependencies.processStartIdentity(pid);
-  const procStat = `/proc/${pid}/stat`;
-  try {
-    const fields = fs.readFileSync(procStat, 'utf8').trim().split(/\s+/);
-    if (fields.length > 21 && /^\d+$/.test(fields[21])) return `proc:${fields[21]}`;
-  } catch (error) {
-    if (!['ENOENT', 'EACCES', 'EPERM'].includes(error.code)) throw error;
-  }
-  try {
-    const value = execFileSync('ps', ['-o', 'lstart=', '-p', String(pid)], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim();
-    return value || null;
-  } catch {
-    try {
-      process.kill(pid, 0);
-      return `pid:${pid}`;
-    } catch (error) {
-      if (error.code === 'EPERM') return `pid:${pid}`;
-      if (error.code === 'ESRCH') return null;
-      throw error;
-    }
-  }
+  return requireRuntimeHelper('process-identity.js').processStartIdentity(pid);
 }
 
 function validLeaseText(value, maximum = 128) {
@@ -671,28 +646,41 @@ function normalizeLeaseOwner(owner) {
   return { project, projectPath: projectPath || '.', taskId };
 }
 
-function inspectLease(leasePath, dependencies = {}, expectedToken = null) {
-  if (dependencies.beforeLeaseInspect) dependencies.beforeLeaseInspect(leasePath);
+// The one bounded-JSON read discipline every fixed-path JSON record goes
+// through: open with O_NOFOLLOW (a symlinked record is tampering, not data),
+// bound the size before parsing, classify failures by the caller's labels.
+// Returns { parsed } or null on ENOENT; every other failure throws.
+function readBoundedJsonFile(file, { maxBytes, unsafeLabel, invalidLabel }) {
   let fd;
-  let holder;
   try {
-    fd = fs.openSync(leasePath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+    fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
     const stat = fs.fstatSync(fd);
-    if (!stat.isFile() || stat.size > 4_096) {
-      throw new Error(`Repository lease is unsafe: ${leasePath}`);
+    if (!stat.isFile() || stat.size > maxBytes) {
+      throw new Error(unsafeLabel);
     }
     try {
-      holder = JSON.parse(fs.readFileSync(fd, 'utf8'));
+      return { parsed: JSON.parse(fs.readFileSync(fd, 'utf8')) };
     } catch {
-      throw new Error(`Repository lease is invalid: ${leasePath}`);
+      throw new Error(invalidLabel);
     }
   } catch (error) {
     if (error.code === 'ENOENT') return null;
-    if (error.code === 'ELOOP') throw new Error(`Repository lease is unsafe: ${leasePath}`);
+    if (error.code === 'ELOOP') throw new Error(unsafeLabel);
     throw error;
   } finally {
     if (fd !== undefined) fs.closeSync(fd);
   }
+}
+
+function inspectLease(leasePath, dependencies = {}, expectedToken = null) {
+  if (dependencies.beforeLeaseInspect) dependencies.beforeLeaseInspect(leasePath);
+  const record = readBoundedJsonFile(leasePath, {
+    maxBytes: 4_096,
+    unsafeLabel: `Repository lease is unsafe: ${leasePath}`,
+    invalidLabel: `Repository lease is invalid: ${leasePath}`,
+  });
+  if (record === null) return null;
+  const holder = record.parsed;
   if (holder && holder.projectPath === undefined) holder.projectPath = '.';
   if (!holder || holder.version !== 1 || !Number.isInteger(holder.pid) || holder.pid < 1
       || typeof holder.token !== 'string' || !/^[0-9a-f]{48}$/.test(holder.token)
@@ -715,26 +703,13 @@ function inspectLease(leasePath, dependencies = {}, expectedToken = null) {
 }
 
 function inspectLegacyRunnerLease(leasePath) {
-  let fd;
-  let holder;
-  try {
-    fd = fs.openSync(leasePath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
-    const stat = fs.fstatSync(fd);
-    if (!stat.isFile() || stat.size > 4_096) {
-      throw new Error(`Legacy runner lease is unsafe: ${leasePath}`);
-    }
-    try {
-      holder = JSON.parse(fs.readFileSync(fd, 'utf8'));
-    } catch {
-      throw new Error(`Legacy runner lease is invalid: ${leasePath}`);
-    }
-  } catch (error) {
-    if (error.code === 'ENOENT') return null;
-    if (error.code === 'ELOOP') throw new Error(`Legacy runner lease is unsafe: ${leasePath}`);
-    throw error;
-  } finally {
-    if (fd !== undefined) fs.closeSync(fd);
-  }
+  const record = readBoundedJsonFile(leasePath, {
+    maxBytes: 4_096,
+    unsafeLabel: `Legacy runner lease is unsafe: ${leasePath}`,
+    invalidLabel: `Legacy runner lease is invalid: ${leasePath}`,
+  });
+  if (record === null) return null;
+  const holder = record.parsed;
   if (!holder || holder.version !== 1 || !Number.isInteger(holder.pid) || holder.pid < 1
       || typeof holder.token !== 'string' || !/^[0-9a-f]{48}$/.test(holder.token)
       || !validLeaseText(holder.project) || !validLeaseText(holder.taskId)
@@ -765,6 +740,58 @@ function requireDrainedLegacyRunner(commonDir) {
   );
 }
 
+// Mixed-version guard for the pre-sharding shared mutation queue: a runner
+// older than the sharding serializes project-lease mutations at
+// projects/.lease-mutation, while this runner serializes them at
+// projects/<projectKey>.queue — two racers on different queues would
+// interleave in the read-verify-unlink reap window the queue exists to close.
+// Fail closed while the legacy queue holds any record (live or stale,
+// mirroring requireDrainedLegacyRunner); pass only on drained or absent
+// legacy state.
+function requireDrainedLegacyProjectQueue(projectsDirectory, dependencies = {}) {
+  const legacyQueue = path.join(projectsDirectory, '.lease-mutation');
+  if (!fs.existsSync(legacyQueue)) return;
+  let staleRecord = null;
+  let liveRecord = null;
+  for (const queue of ['choosing', 'tickets']) {
+    const directory = path.join(legacyQueue, queue);
+    if (!fs.existsSync(directory)) continue;
+    for (const name of fs.readdirSync(directory)) {
+      if (name.startsWith('.staging-')) continue;
+      const file = path.join(directory, name);
+      const record = readBoundedJsonFile(file, {
+        maxBytes: 4_096,
+        unsafeLabel: `Legacy project mutation queue entry is unsafe: ${file}`,
+        invalidLabel: `Legacy project mutation queue entry is invalid: ${file}`,
+      });
+      if (!record) continue;
+      staleRecord = staleRecord || file;
+      const holder = record.parsed;
+      if (holder && Number.isInteger(holder.pid) && holder.pid >= 1
+          && typeof holder.processStart === 'string' && holder.processStart
+          && processStartIdentity(holder.pid, dependencies) === holder.processStart) {
+        liveRecord = liveRecord || { file, pid: holder.pid };
+      }
+    }
+    if (liveRecord) break;
+  }
+  if (liveRecord) {
+    throw new Error(
+      `Detected a live pre-sharding runner still mutating project leases (pid ${liveRecord.pid}) at ${liveRecord.file}. ` +
+      'This runner serializes project-lease mutations in per-project queues while pre-sharding runners use the shared queue; ' +
+      'mixed-version operation is unsupported — stop and drain all pre-sharding runners before upgrading, ' +
+      'exactly like the repository-gate v2 precondition.'
+    );
+  }
+  if (staleRecord) {
+    throw new Error(
+      `The legacy shared mutation queue still holds stale records: ${staleRecord}. ` +
+      'Remove the drained queue directory manually after confirming no pre-sharding runner remains; ' +
+      'it cannot be reclaimed automatically because no current runner serializes on it.'
+    );
+  }
+}
+
 function sameLeaseIdentity(left, right) {
   return Boolean(left && right
     && left.version === right.version
@@ -784,35 +811,26 @@ function phaseChildRecordPath(leasePath, holder) {
 
 function readPhaseChildRecord(leasePath, parent, dependencies = {}) {
   const recordPath = phaseChildRecordPath(leasePath, parent);
-  let fd;
-  try {
-    fd = fs.openSync(recordPath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
-    const stat = fs.fstatSync(fd);
-    if (!stat.isFile() || stat.size > 4_096) {
-      throw new Error(`Phase child record is unsafe: ${recordPath}`);
-    }
-    const child = JSON.parse(fs.readFileSync(fd, 'utf8'));
-    const startup = child && child.startup === true;
-    const startupDeadlineIsValid = startup
-      && Number.isFinite(child.startupDeadline)
-      && child.startupDeadline >= child.startedAt
-      && child.startupDeadline <= child.startedAt + PHASE_CHILD_STARTUP_MS;
-    if (!child || child.version !== 1 || !sameLeaseIdentity(child.parent, parent)
-        || !Number.isFinite(child.startedAt) || child.startedAt <= 0
-        || (startup && !startupDeadlineIsValid)
-        || (!startup && (!Number.isInteger(child.pid) || child.pid < 1
-          || typeof child.processStart !== 'string' || !child.processStart || child.processStart.length > 256))) {
-      throw new Error(`Phase child record has invalid ownership: ${recordPath}`);
-    }
-    return child;
-  } catch (error) {
-    if (error.code === 'ENOENT') return null;
-    if (error.code === 'ELOOP') throw new Error(`Phase child record is unsafe: ${recordPath}`);
-    if (error instanceof SyntaxError) throw new Error(`Phase child record is invalid: ${recordPath}`);
-    throw error;
-  } finally {
-    if (fd !== undefined) fs.closeSync(fd);
+  const record = readBoundedJsonFile(recordPath, {
+    maxBytes: 4_096,
+    unsafeLabel: `Phase child record is unsafe: ${recordPath}`,
+    invalidLabel: `Phase child record is invalid: ${recordPath}`,
+  });
+  if (record === null) return null;
+  const child = record.parsed;
+  const startup = child && child.startup === true;
+  const startupDeadlineIsValid = startup
+    && Number.isFinite(child.startupDeadline)
+    && child.startupDeadline >= child.startedAt
+    && child.startupDeadline <= child.startedAt + PHASE_CHILD_STARTUP_MS;
+  if (!child || child.version !== 1 || !sameLeaseIdentity(child.parent, parent)
+      || !Number.isFinite(child.startedAt) || child.startedAt <= 0
+      || (startup && !startupDeadlineIsValid)
+      || (!startup && (!Number.isInteger(child.pid) || child.pid < 1
+        || typeof child.processStart !== 'string' || !child.processStart || child.processStart.length > 256))) {
+    throw new Error(`Phase child record has invalid ownership: ${recordPath}`);
   }
+  return child;
 }
 
 function phaseChildIsLive(leasePath, parent, dependencies = {}) {
@@ -838,7 +856,7 @@ function phaseChildLeases(input) {
   const leases = input.phaseLeases || (input.phaseLease ? [input.phaseLease] : []);
   const paths = new Set();
   return leases.map(({ leasePath, owner }) => {
-    if (!leasePath || !owner || !sameLeaseIdentity(owner, owner)) {
+    if (!leasePath || !owner || !validLeaseOwnerIdentity(owner)) {
       throw new Error('Phase child lease identity is invalid');
     }
     const recordPath = phaseChildRecordPath(leasePath, owner);
@@ -849,244 +867,31 @@ function phaseChildLeases(input) {
   });
 }
 
-
-function fsyncDirectory(directory, dependencies = {}, finalPath = null) {
-  let fd;
+// The owner a phase-child record is published under must be a well-formed
+// lease identity: the same shape inspectLease validates for on-disk holders
+// (normalizeLeaseOwner covers project/projectPath/taskId; this adds the
+// scalar fields sameLeaseIdentity compares).
+function validLeaseOwnerIdentity(owner) {
   try {
-    if (dependencies.beforeLeaseDirectorySync) {
-      dependencies.beforeLeaseDirectorySync(finalPath, directory);
-    }
-    fd = fs.openSync(directory, fs.constants.O_RDONLY);
-    fs.fsyncSync(fd);
-  } catch (error) {
-    if (!['EINVAL', 'ENOTSUP', 'EISDIR'].includes(error.code)) throw error;
-  } finally {
-    if (fd !== undefined) fs.closeSync(fd);
+    normalizeLeaseOwner(owner);
+  } catch {
+    return false;
   }
+  return owner.version === 1
+    && Number.isInteger(owner.pid) && owner.pid >= 1
+    && typeof owner.token === 'string' && /^[0-9a-f]{48}$/.test(owner.token)
+    && typeof owner.processStart === 'string' && owner.processStart.length > 0
+    && owner.processStart.length <= 256
+    && Number.isFinite(owner.startedAt) && owner.startedAt > 0;
 }
 
-function publishRecordAtomically(finalPath, record, dependencies = {}, notify = false) {
-  const stagingPath = path.join(
-    path.dirname(finalPath),
-    `.staging-${record.token}-${crypto.randomBytes(8).toString('hex')}.tmp`
-  );
-  let fd;
-  let published = false;
-  try {
-    fd = fs.openSync(stagingPath, 'wx', 0o600);
-    if (notify && dependencies.afterLeaseStagingCreate) {
-      dependencies.afterLeaseStagingCreate(finalPath, stagingPath, fd);
-    }
-    fs.writeFileSync(fd, `${JSON.stringify(record)}\n`, 'utf8');
-    if (notify && dependencies.afterLeaseStagingWrite) {
-      dependencies.afterLeaseStagingWrite(finalPath, stagingPath, fd);
-    }
-    fs.fsyncSync(fd);
-    if (notify && dependencies.afterLeaseStagingSync) {
-      dependencies.afterLeaseStagingSync(finalPath, stagingPath, fd);
-    }
-    fs.closeSync(fd);
-    fd = undefined;
-    if (notify && dependencies.beforeLeasePublish) {
-      dependencies.beforeLeasePublish(finalPath, stagingPath);
-    }
-    fs.linkSync(stagingPath, finalPath);
-    published = true;
-    fsyncDirectory(path.dirname(finalPath), dependencies, finalPath);
-  } catch (error) {
-    if (fd !== undefined) {
-      try { fs.closeSync(fd); } catch {}
-    }
-    if (published) {
-      try { fs.unlinkSync(finalPath); } catch (cleanupError) {
-        if (cleanupError.code !== 'ENOENT') throw cleanupError;
-      }
-    }
-    try { fs.unlinkSync(stagingPath); } catch (cleanupError) {
-      if (cleanupError.code !== 'ENOENT') throw cleanupError;
-    }
-    throw error;
-  }
-  try {
-    fs.unlinkSync(stagingPath);
-    fsyncDirectory(path.dirname(finalPath), dependencies, finalPath);
-  } catch (error) {
-    // The final hard link is durable and owned by the caller.  Do not turn a
-    // recoverable staging cleanup failure into an acquisition without a release handle.
-    if (error.code !== 'ENOENT' && dependencies.onLeaseStagingCleanupError) {
-      try { dependencies.onLeaseStagingCleanupError(finalPath, stagingPath, error); } catch {}
-    }
-  }
-  return record;
-}
-
-function inspectMutationEntry(entryPath) {
-  let fd;
-  let entry;
-  try {
-    fd = fs.openSync(entryPath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
-    const stat = fs.fstatSync(fd);
-    if (!stat.isFile() || stat.size > 4_096) {
-      throw new Error(`Repository lease mutation entry is unsafe: ${entryPath}`);
-    }
-    entry = JSON.parse(fs.readFileSync(fd, 'utf8'));
-  } catch (error) {
-    if (error.code === 'ENOENT') return null;
-    if (error.code === 'ELOOP') {
-      throw new Error(`Repository lease mutation entry is unsafe: ${entryPath}`);
-    }
-    if (error instanceof SyntaxError) {
-      throw new Error(`Repository lease mutation entry is invalid: ${entryPath}`);
-    }
-    throw error;
-  } finally {
-    if (fd !== undefined) fs.closeSync(fd);
-  }
-  const expectedToken = path.basename(entryPath, '.lock');
-  if (!entry || entry.version !== 1 || !Number.isInteger(entry.pid) || entry.pid < 1
-      || entry.token !== expectedToken || !/^[0-9a-f]{48}$/.test(entry.token)
-      || !Number.isInteger(entry.ticket) || entry.ticket < 0
-      || typeof entry.processStart !== 'string' || !entry.processStart
-      || entry.processStart.length > 256) {
-    throw new Error(`Repository lease mutation entry has invalid ownership: ${entryPath}`);
-  }
-  return entry;
-}
-
-function reclaimStaleStagingEntries(directory, dependencies = {}) {
-  const reclaimAfter = dependencies.stagingReclaimMs === undefined
-    ? 5 * 60 * 1000
-    : dependencies.stagingReclaimMs;
-  const now = dependencies.now || Date.now;
-  for (const name of fs.readdirSync(directory)) {
-    const match = /^\.staging-([0-9a-f]{48})-[0-9a-f]{16}\.tmp$/.exec(name);
-    if (!match) continue;
-    const file = path.join(directory, name);
-    let initial;
-    try {
-      initial = fs.lstatSync(file);
-    } catch (error) {
-      if (error.code === 'ENOENT') continue;
-      throw error;
-    }
-    if (initial.isSymbolicLink() || !initial.isFile()) {
-      throw new Error(`Repository lease staging record is unsafe: ${file}`);
-    }
-    let stale = false;
-    try {
-      const current = inspectLease(file, dependencies, match[1]);
-      stale = Boolean(current && !current.live);
-    } catch {
-      stale = now() - initial.mtimeMs >= reclaimAfter;
-    }
-    if (!stale) continue;
-    try {
-      const current = fs.lstatSync(file);
-      if (current.isSymbolicLink() || !current.isFile()
-          || current.ino !== initial.ino || current.size !== initial.size
-          || current.mtimeMs !== initial.mtimeMs) continue;
-      fs.unlinkSync(file);
-      fsyncDirectory(directory, dependencies, file);
-    } catch (error) {
-      if (error.code !== 'ENOENT') throw error;
-    }
-  }
-}
-
-function mutationEntries(directory) {
-  const entries = [];
-  for (const name of fs.readdirSync(directory)) {
-    if (name.startsWith('.staging-')) continue;
-    if (!/^[0-9a-f]{48}\.lock$/.test(name)) {
-      throw new Error(`Repository lease mutation filename is invalid: ${path.join(directory, name)}`);
-    }
-    const file = path.join(directory, name);
-    const entry = inspectMutationEntry(file);
-    if (entry) entries.push({ file, ...entry });
-  }
-  return entries;
-}
-
-function waitForMutationEntry(entryPath, localProcessStart, dependencies = {}) {
-  let retryDelay = 10;
-  for (;;) {
-    const current = inspectMutationEntry(entryPath);
-    if (!current) return;
-    const localOwner = current.pid === process.pid && current.processStart === localProcessStart;
-    const live = localOwner || processStartIdentity(current.pid, dependencies) === current.processStart;
-    if (!live) {
-      try { fs.unlinkSync(entryPath); } catch (error) {
-        if (error.code !== 'ENOENT') throw error;
-      }
-      return;
-    }
-    waitForLeaseMutation(dependencies, retryDelay);
-    retryDelay = Math.min(retryDelay * 2, 250);
-  }
-}
-
-function acquireLeaseMutation(mutationRoot, dependencies = {}) {
-  const mutationDirectory = path.join(mutationRoot, '.lease-mutation');
-  const choosingDirectory = path.join(mutationDirectory, 'choosing');
-  const ticketsDirectory = path.join(mutationDirectory, 'tickets');
-  createContainedDirectory(path.dirname(mutationRoot), choosingDirectory, 'Repository lease mutation directory');
-  createContainedDirectory(path.dirname(mutationRoot), ticketsDirectory, 'Repository lease mutation directory');
-  const token = crypto.randomBytes(24).toString('hex');
-  const processStart = processStartIdentity(process.pid, dependencies);
-  if (!processStart) throw new Error('Cannot identify the runner process instance');
-  const baseRecord = {
-    version: 1,
-    pid: process.pid,
-    processStart,
-    token,
-    startedAt: (dependencies.now || Date.now)(),
-  };
-  const choosingPath = path.join(choosingDirectory, `${token}.lock`);
-  const ticketPath = path.join(ticketsDirectory, `${token}.lock`);
-  let ticketPublished = false;
-  try {
-    publishRecordAtomically(choosingPath, { ...baseRecord, ticket: 0 }, dependencies);
-    reclaimStaleStagingEntries(choosingDirectory, dependencies);
-    reclaimStaleStagingEntries(ticketsDirectory, dependencies);
-    const currentTickets = mutationEntries(ticketsDirectory);
-    const ticket = currentTickets.reduce((maximum, entry) => Math.max(maximum, entry.ticket), 0) + 1;
-    publishRecordAtomically(ticketPath, { ...baseRecord, ticket }, dependencies);
-    ticketPublished = true;
-    fs.unlinkSync(choosingPath);
-
-    const choosing = mutationEntries(choosingDirectory)
-      .filter((entry) => entry.token !== token);
-    for (const contender of choosing) {
-      waitForMutationEntry(contender.file, processStart, dependencies);
-    }
-
-    const predecessors = mutationEntries(ticketsDirectory)
-      .filter((entry) => entry.token !== token
-        && (entry.ticket < ticket || (entry.ticket === ticket && entry.token < token)))
-      .sort((left, right) => right.ticket - left.ticket || right.token.localeCompare(left.token));
-    for (const predecessor of predecessors) {
-      waitForMutationEntry(predecessor.file, processStart, dependencies);
-    }
-    return () => {
-      try {
-        fs.unlinkSync(ticketPath);
-      } catch (error) {
-        if (error.code !== 'ENOENT') throw error;
-      }
-    };
-  } catch (error) {
-    let cleanupError = null;
-    try { fs.unlinkSync(choosingPath); } catch (currentError) {
-      if (currentError.code !== 'ENOENT') cleanupError = currentError;
-    }
-    if (ticketPublished) {
-      try { fs.unlinkSync(ticketPath); } catch (currentError) {
-        if (currentError.code !== 'ENOENT' && !cleanupError) cleanupError = currentError;
-      }
-    }
-    if (cleanupError) throw cleanupError;
-    throw error;
-  }
+// The runner's liveness strategy for the shared staging-record reclaim
+// protocol (lib/lease-mutation.js): a staging record is dead when it parses
+// as a lease whose holder — or phase child — is no longer live. Anything
+// unparsable or unsafe defers to the protocol's age fallback.
+function stagingLeaseIsDead(file, token, dependencies) {
+  const current = inspectLease(file, dependencies, token);
+  return Boolean(current && !current.live);
 }
 
 function removeLeaseIfIdentity(leasePath, expected, dependencies = {}) {
@@ -1226,9 +1031,17 @@ function acquireProjectLease(commonDir, owner, dependencies = {}) {
   const projectKey = crypto.createHash('sha256').update(project).digest('hex').slice(0, 32);
   const directory = path.join(commonDir, 'groundwork', 'projects');
   const leasePath = path.join(directory, `${projectKey}.lock`);
-  const leaseDependencies = { ...dependencies, mutationRoot: directory };
+  // Shard the mutation queue per project: only mutators of THIS project's
+  // lease need mutual exclusion, so different packages never serialize on a
+  // shared projects/ queue. Mixed-version note: a runner older than the
+  // sharding still queues at projects/.lease-mutation — drain old runners
+  // before upgrading, exactly like the repository-gate v2 precondition.
+  const leaseDependencies = { ...dependencies, mutationRoot: path.join(directory, `${projectKey}.queue`) };
   let lastProgressAt = -Infinity;
   createContainedDirectory(commonDir, directory, 'Project lease directory');
+  // Detect the pre-sharding shared queue before any sharded mutation turn:
+  // mixed-version serialization cannot be repaired, only refused.
+  requireDrainedLegacyProjectQueue(directory, dependencies);
   for (;;) {
     try {
       return createOwnedLease(leasePath, owner, leaseDependencies);
@@ -1252,7 +1065,7 @@ function liveLeaseFiles(directory, dependencies = {}, expectedName = null) {
   if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error(`Repository gate is unsafe: ${directory}`);
   const entries = [];
   if (dependencies.beforeLeaseDirectoryScan) dependencies.beforeLeaseDirectoryScan(directory);
-  reclaimStaleStagingEntries(directory, dependencies);
+  reclaimStaleStagingEntries(directory, dependencies, stagingLeaseIsDead);
   for (const name of fs.readdirSync(directory)) {
     if (name === '.reclaim.lock' || name === '.phase-children' || name.startsWith('.staging-')) continue;
     if (!/^[0-9a-f]{48}\.lock$/.test(name)) {
@@ -1267,25 +1080,12 @@ function liveLeaseFiles(directory, dependencies = {}, expectedName = null) {
 }
 
 function readPeerCheckpoint(checkpointFile) {
-  let fd;
-  try {
-    fd = fs.openSync(checkpointFile, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
-    const stat = fs.fstatSync(fd);
-    if (!stat.isFile() || stat.size > MAX_CHECKPOINT_BYTES) {
-      throw new Error(`Runner checkpoint is invalid: ${checkpointFile}`);
-    }
-    try {
-      return JSON.parse(fs.readFileSync(fd, 'utf8'));
-    } catch {
-      throw new Error(`Runner checkpoint is not valid JSON: ${checkpointFile}`);
-    }
-  } catch (error) {
-    if (error.code === 'ENOENT') return null;
-    if (error.code === 'ELOOP') throw new Error(`Runner checkpoint is invalid: ${checkpointFile}`);
-    throw error;
-  } finally {
-    if (fd !== undefined) fs.closeSync(fd);
-  }
+  const record = readBoundedJsonFile(checkpointFile, {
+    maxBytes: MAX_CHECKPOINT_BYTES,
+    unsafeLabel: `Runner checkpoint is invalid: ${checkpointFile}`,
+    invalidLabel: `Runner checkpoint is not valid JSON: ${checkpointFile}`,
+  });
+  return record === null ? null : record.parsed;
 }
 
 function activeProjectOwners(commonDir, repoRoot, dependencies = {}) {
@@ -1296,11 +1096,14 @@ function activeProjectOwners(commonDir, repoRoot, dependencies = {}) {
     throw new Error(`Project lease directory is unsafe: ${directory}`);
   }
   const owners = [];
-  reclaimStaleStagingEntries(directory, dependencies);
+  reclaimStaleStagingEntries(directory, dependencies, stagingLeaseIsDead);
   const worktrees = (dependencies.registeredWorktrees || registeredWorktrees)(repoRoot);
   const registeredByPath = new Map(worktrees.map((entry) => [entry.path, entry]));
   for (const name of fs.readdirSync(directory)) {
-    if (name === '.reclaim.lock' || name === '.lease-mutation' || name === '.phase-children' || name.startsWith('.staging-')) continue;
+    // Skip coordination entries: shared reclaim/mutation/phase state plus
+    // the per-project sharded mutation queue directories (`<key>.queue`).
+    if (name === '.reclaim.lock' || name === '.lease-mutation' || name === '.phase-children'
+      || name.startsWith('.staging-') || /^[0-9a-f]{32}\.queue$/.test(name)) continue;
     if (!/^[0-9a-f]{32}\.lock$/.test(name)) {
       throw new Error(`Project lease filename is invalid: ${path.join(directory, name)}`);
     }
@@ -1315,18 +1118,19 @@ function activeProjectOwners(commonDir, repoRoot, dependencies = {}) {
     if (!checkpoint || checkpoint.taskId !== holder.taskId || checkpoint.project !== holder.projectPath
         || !checkpoint.workspace || typeof checkpoint.workspace.branch !== 'string'
         || typeof checkpoint.workspace.worktreePath !== 'string') continue;
-    const candidates = [{
-      branch: `task/${holder.taskId}`,
-      worktreePath: path.join(repoRoot, '.worktrees', holder.taskId),
-    }];
-    if (holder.project !== '.') {
-      candidates.push({
-        branch: `task/${holder.project}/${holder.taskId}`,
-        worktreePath: path.join(repoRoot, '.worktrees', `${holder.project}-${holder.taskId}`),
-      });
+    // Workspace identity comes from the shared factory (single source of
+    // truth, shared with the launcher) — never reconstructed here.
+    const resolveIdentity = dependencies.taskWorkspaceIdentity || taskWorkspaceIdentity;
+    const projectName = holder.project === '.' ? '' : holder.project;
+    const projectRoot = holder.project === '.' ? repoRoot : path.resolve(repoRoot, holder.projectPath);
+    let identity;
+    try {
+      identity = resolveIdentity(repoRoot, commonDir, projectRoot, projectName, holder.taskId, checkpoint);
+    } catch {
+      continue; // Checkpoint records an invalid workspace identity for this peer.
     }
-    if (!candidates.some((candidate) => candidate.branch === checkpoint.workspace.branch
-        && candidate.worktreePath === checkpoint.workspace.worktreePath)) continue;
+    if (identity.branch !== checkpoint.workspace.branch
+        || identity.worktreePath !== checkpoint.workspace.worktreePath) continue;
     let peerWorktree;
     try {
       peerWorktree = fs.realpathSync(checkpoint.workspace.worktreePath);
@@ -1346,6 +1150,17 @@ function activeProjectOwners(commonDir, repoRoot, dependencies = {}) {
   return owners;
 }
 
+// Architectural scope note: the repository read/write gate and the
+// workspace-registry lock are deliberately repository-global, NOT sharded
+// per project. The workspace registry IS Git's repository-global worktree
+// list (git worktree prune/list mutate one shared state), so any
+// per-project sharding would race exactly where Git itself cannot. The
+// repository gate guards base-checkout-wide invariants (clean tree,
+// publication, setup/cleanup) that by definition span every package in the
+// monorepo; narrowing it per package would let package A's publication
+// observe package B's half-written tree. These are the only two
+// repository-global coordination points — everything finer is project- or
+// task-scoped.
 function acquireRepositoryGate(commonDir, mode, owner, dependencies = {}) {
   if (!['read', 'write'].includes(mode)) throw new Error(`Invalid repository gate mode: ${mode}`);
   const log = dependencies.log || console.log;
@@ -1537,8 +1352,6 @@ function reportingPath(commonDir, repoRoot, projectRoot, taskId) {
 
 function validationSnapshotForStatus(input, dependencies = {}) {
   if (dependencies.validationSnapshot) return dependencies.validationSnapshot(input);
-  if (!validationSessions || !validationSessions.inspectActiveValidationSession
-      || !validationSessions.validationStatusSnapshot) return null;
   const checkpoint = loadCheckpoint(
     input.commonDir,
     input.repoRoot,
@@ -1642,15 +1455,10 @@ function saveCheckpoint(commonDir, repoRoot, projectRoot, checkpoint) {
   if (fs.existsSync(location.file) && fs.lstatSync(location.file).isSymbolicLink()) {
     throw new Error(`Runner checkpoint must not be a symlink: ${location.file}`);
   }
-  const temp = path.join(directory, `.${checkpoint.taskId}.${process.pid}.${Date.now()}.tmp`);
-  const fd = fs.openSync(temp, 'wx', 0o600);
-  try {
-    fs.writeFileSync(fd, `${JSON.stringify(checkpoint)}\n`, 'utf8');
-    fs.fsyncSync(fd);
-  } finally {
-    fs.closeSync(fd);
-  }
-  fs.renameSync(temp, location.file);
+  // Standardized collision-resistant atomic write (lib/atomic-write.js): the
+  // crypto-random temporary name cannot collide with a crashed writer's
+  // leftover, even after pid recycling within the same millisecond.
+  requireRuntimeHelper('atomic-write.js').writeJsonSyncAtomic(location.file, checkpoint);
 }
 
 function clearCheckpoint(commonDir, repoRoot, projectRoot, taskId) {
@@ -1695,29 +1503,36 @@ function refExists(repoRoot, refName) {
   }
 }
 
-function parseGroundworkConfig(content) {
-  const projects = {};
-  let current = null;
-  for (const line of content.split('\n')) {
-    const project = line.match(/^  ([A-Za-z0-9][A-Za-z0-9_-]*):\s*$/);
-    if (project) {
-      current = project[1];
-      projects[current] = {};
-      continue;
-    }
-    const property = current && line.match(/^    ([A-Za-z0-9_-]+):\s*(.+?)\s*$/);
-    if (property) projects[current][property[1]] = property[2].replace(/^['"]|['"]$/g, '');
+// The .groundwork.yml mapping is parsed by the shared, strict parser in
+// lib/project-context.js — the runner never keeps a private (necessarily
+// divergent) YAML subset. A present-but-invalid config fails closed here
+// exactly like it does in every other entry point.
+function loadProjectsMapping(repoRoot) {
+  const configPath = path.join(repoRoot, '.groundwork.yml');
+  if (!fs.existsSync(configPath)) return null;
+  const shared = requireRuntimeHelper('project-context.js');
+  const parsed = shared.parseConfigResult(fs.readFileSync(configPath, 'utf8'));
+  if (!parsed.ok) {
+    const error = new Error(`Invalid .groundwork.yml (${parsed.code}): ${parsed.message}`);
+    error.code = parsed.code;
+    throw error;
   }
-  return projects;
+  // Overlapping project trees would get distinct leases over the same
+  // directories — reject exactly like every other consumer.
+  const tree = shared.validateProjectMapping(parsed.config, repoRoot);
+  if (!tree.ok) {
+    const error = new Error(`Invalid .groundwork.yml (${tree.code}): ${tree.message}`);
+    error.code = tree.code;
+    throw error;
+  }
+  return parsed.config.projects;
 }
 
 function resolveProject(repoRoot, requestedProject, cwd = process.cwd()) {
-  const configPath = path.join(repoRoot, '.groundwork.yml');
-  if (!fs.existsSync(configPath)) {
+  const projects = loadProjectsMapping(repoRoot);
+  if (projects === null) {
     return { projectName: null, projectRoot: repoRoot, specsDir: path.join(repoRoot, 'specs') };
   }
-
-  const projects = parseGroundworkConfig(fs.readFileSync(configPath, 'utf8'));
   let projectName = requestedProject || process.env.GROUNDWORK_PROJECT || null;
   if (!projectName) {
     const absoluteCwd = path.resolve(cwd);
@@ -2122,7 +1937,7 @@ const {
   createTranscriptWriter,
   parseRunnerMarker,
   transcriptSignalsFromEvent,
-} = require(workerData.runReportingModule);
+} = require(workerData.runReportingModule); // runtime-closure: classified — the parent resolved this through the manifested fail-closed loader
 const normalizeActivity = ${normalizeActivity.toString()};
 const shared = new Int32Array(workerData.shared);
 const decoder = new StringDecoder('utf8');
@@ -2226,7 +2041,7 @@ const interval = setInterval(() => {
       harness: input.harness,
       verbose: Boolean(input.verbose),
       harnessLabel: HARNESS_LABELS[input.harness] || input.harness,
-      runReportingModule,
+      runReportingModule: runtimeHelperPath('run-reporting.js'),
       transcript,
       agentName: input.phase === 'validate'
         ? 'validation-coordinator'
@@ -2874,7 +2689,7 @@ function assertRunnerPlanFile(taskProjectRoot, baseProjectRoot, reportedPath) {
     // Legacy unscoped location: task IDs are only unique per project, so a
     // repo-root plan may belong to a different project. Verify the plan's
     // recorded project context before adopting it.
-    if (baseProjectRoot !== taskProjectRoot && planBelongsToProject) {
+    if (baseProjectRoot !== taskProjectRoot) {
       const ownership = planBelongsToProject(baseCandidate, taskProjectRoot, baseProjectRoot);
       if (!ownership.ok) {
         throw new Error(
@@ -2892,9 +2707,8 @@ function localPlanIgnoreState(repoRoot, projectRoot) {
   const gitPath = execGit(repoRoot, ['rev-parse', '--git-path', 'info/exclude']);
   const excludePath = path.resolve(repoRoot, gitPath);
   const patterns = [];
-  const configPath = path.join(repoRoot, '.groundwork.yml');
-  if (fs.existsSync(configPath) && projectRoot !== repoRoot) {
-    const projects = parseGroundworkConfig(fs.readFileSync(configPath, 'utf8'));
+  if (projectRoot !== repoRoot) {
+    const projects = loadProjectsMapping(repoRoot) || {};
     for (const project of Object.values(projects)) {
       if (project.path) patterns.push(`/${project.path.replace(/^\.\//, '').replace(/\/$/, '')}/.groundwork-plans/`);
     }
@@ -3450,21 +3264,14 @@ function runTasks(options, dependencies = {}) {
   const callPhase = dependencies.invokePhase || invokePhase;
   function invokeOnce(input) {
     if (dependencies.beforePhase) dependencies.beforePhase(input);
-    const releaseGate = acquireRepositoryGate(
-      commonDir,
-      'read',
-      leaseOwner(input.taskId),
-      leaseDependencies
-    );
-    try {
-      const phaseLeases = input.phaseLeases || (input.phaseLease ? [input.phaseLease] : []);
-      return callPhase({
-        ...input,
-        phaseLeases: [...phaseLeases, { leasePath: releaseGate.leasePath, owner: releaseGate.record }],
-      });
-    } finally {
-      releaseGate();
-    }
+    // The repository reader gate is deliberately NOT held across a phase:
+    // phases run inside their own task worktree over their own branch, so a
+    // publication in another package must not wait out this phase. Genuinely
+    // shared Git/base-checkout operations — startup, worktree setup, the
+    // workspace registry, cleanup, and publication itself — take the gate at
+    // their own call sites for exactly their duration.
+    const phaseLeases = input.phaseLeases || (input.phaseLease ? [input.phaseLease] : []);
+    return callPhase({ ...input, phaseLeases });
   }
 
   function invokeGenericRepair(input, failure) {
@@ -3570,6 +3377,126 @@ function runTasks(options, dependencies = {}) {
       });
       activePhase = null;
       activeRepairInput = null;
+    }
+    // Stage 1 of the task-attempt loop: classify what (if anything) an
+    // existing task branch/worktree already carries — accepted base
+    // integration, reusable validation, a resumable active validation
+    // session, or dirt that forces a resume-through-implement. Takes the
+    // loop-carried state explicitly and returns the classification.
+    function classifyExistingWorktree({
+      branchExists,
+      checkpoint,
+      planRecord,
+      planInvalidatedDownstream,
+      baseSha,
+      expectedBranch,
+      expectedWorktree,
+      implementation,
+    }) {
+      if (!branchExists) {
+        return {
+          implementation,
+          resumeExistingWorktree: false,
+          reusableValidation: false,
+          resumeActiveValidation: false,
+          activeValidationSession: null,
+          acceptedIntegration: null,
+        };
+      }
+      const existing = {
+        worktreePath: assertRegisteredWorktree(repoRoot, expectedWorktree, expectedBranch),
+        branch: expectedBranch,
+        baseBranch,
+      };
+      // Assign at the exact point the inline code did, so a mid-classify
+      // failure still reports the preserved worktree in the task error.
+      implementation = existing;
+      let worktreeClean = true;
+      try {
+        assertClean(existing.worktreePath, 'Existing task worktree');
+      } catch (error) {
+        if (/ is not clean:\n/.test(error.message)) worktreeClean = false;
+        else throw error;
+      }
+      const currentHead = execGit(existing.worktreePath, ['rev-parse', 'HEAD']);
+      const integrationMatches = worktreeClean
+        && checkpoint.integration
+        && checkpoint.integration.baseHead === baseSha
+        && checkpoint.integration.branch === expectedBranch
+        && checkpoint.integration.taskHead === currentHead;
+      let acceptedIntegration = null;
+      if (integrationMatches
+          && !(options.revalidateIfMergeConflicts
+            && checkpoint.integration.conflictsResolved)) {
+        acceptedIntegration = checkpoint.integration;
+      }
+      const validationIdentityMatches = worktreeClean
+        && checkpoint.validation
+        && checkpoint.validation.baseHead === baseSha
+        && checkpoint.validation.branch === expectedBranch;
+      let reusableValidation = Boolean(validationIdentityMatches
+        && checkpoint.validation.taskHead === currentHead);
+      if (validationIdentityMatches && !reusableValidation) {
+        try {
+          taskBookkeepingPaths(
+            repoRoot,
+            projectRoot,
+            taskId,
+            checkpoint.validation.taskHead,
+            currentHead
+          );
+          reusableValidation = true;
+        } catch {}
+      }
+      const implementationMatches = worktreeClean
+        && checkpoint.implementation
+        && checkpoint.implementation.planSha256 === planRecord.sha256
+        && checkpoint.implementation.branch === expectedBranch
+        && checkpoint.implementation.worktreePath === existing.worktreePath
+        && checkpoint.implementation.taskHead === currentHead;
+      const projectRelativePath = path.relative(repoRoot, projectRoot);
+      const existingTaskProject = path.join(existing.worktreePath, projectRelativePath);
+      assertNoSymlinkComponents(existing.worktreePath, existingTaskProject, 'Task project');
+      const inspectValidation = dependencies.inspectActiveValidationSession
+        || validationSessions.inspectActiveValidationSession;
+      let activeValidationSession = null;
+      let resumeActiveValidation = false;
+      if (!acceptedIntegration && inspectValidation && checkpoint.implementation
+          && checkpoint.implementation.planSha256 === planRecord.sha256
+          && checkpoint.implementation.branch === expectedBranch
+          && checkpoint.implementation.worktreePath === existing.worktreePath
+          && checkpoint.implementation.taskHead === currentHead) {
+        activeValidationSession = inspectValidation({
+          repoRoot: existing.worktreePath,
+          projectRoot: existingTaskProject,
+          worktreePath: existing.worktreePath,
+          taskId,
+          branch: expectedBranch,
+          baseHead: baseSha,
+          protocolVersion: 1,
+        });
+        resumeActiveValidation = Boolean(activeValidationSession && !reusableValidation);
+      }
+      const existingTask = parseTaskCatalog(readTasks(existingTaskProject)).get(taskId);
+      const legacyComplete = worktreeClean && !planInvalidatedDownstream && !checkpoint.implementation
+        && existingTask && ['In Progress', 'Complete'].includes(existingTask.status)
+        && currentHead !== execGit(repoRoot, ['merge-base', baseSha, currentHead]);
+      let resumeExistingWorktree = false;
+      if (resumeActiveValidation) {
+        taskLog(`[${taskId}] implement skipped — resumable validation session`);
+      } else if (acceptedIntegration || reusableValidation || implementationMatches || legacyComplete) {
+        taskLog(`[${taskId}] implement skipped — existing clean worktree`);
+      } else {
+        resumeExistingWorktree = true;
+      }
+      return {
+        implementation: existing,
+        resumeExistingWorktree,
+        reusableValidation,
+        resumeActiveValidation,
+        activeValidationSession,
+        acceptedIntegration,
+      };
     }
     try {
       taskAttempts: for (;;) {
@@ -3755,87 +3682,22 @@ function runTasks(options, dependencies = {}) {
           let resumeActiveValidation = false;
           let activeValidationSession = null;
           let acceptedIntegration = null;
-          if (branchExists) {
-            implementation = {
-              worktreePath: assertRegisteredWorktree(repoRoot, expectedWorktree, expectedBranch),
-              branch: expectedBranch,
-              baseBranch,
-            };
-            let worktreeClean = true;
-            try {
-              assertClean(implementation.worktreePath, 'Existing task worktree');
-            } catch (error) {
-              if (/ is not clean:\n/.test(error.message)) worktreeClean = false;
-              else throw error;
-            }
-            const currentHead = execGit(implementation.worktreePath, ['rev-parse', 'HEAD']);
-            const integrationMatches = worktreeClean
-              && checkpoint.integration
-              && checkpoint.integration.baseHead === baseSha
-              && checkpoint.integration.branch === expectedBranch
-              && checkpoint.integration.taskHead === currentHead;
-            if (integrationMatches
-                && !(options.revalidateIfMergeConflicts
-                  && checkpoint.integration.conflictsResolved)) {
-              acceptedIntegration = checkpoint.integration;
-            }
-            const validationIdentityMatches = worktreeClean
-              && checkpoint.validation
-              && checkpoint.validation.baseHead === baseSha
-              && checkpoint.validation.branch === expectedBranch;
-            reusableValidation = Boolean(validationIdentityMatches
-              && checkpoint.validation.taskHead === currentHead);
-            if (validationIdentityMatches && !reusableValidation) {
-              try {
-                taskBookkeepingPaths(
-                  repoRoot,
-                  projectRoot,
-                  taskId,
-                  checkpoint.validation.taskHead,
-                  currentHead
-                );
-                reusableValidation = true;
-              } catch {}
-            }
-            const implementationMatches = worktreeClean
-              && checkpoint.implementation
-              && checkpoint.implementation.planSha256 === planRecord.sha256
-              && checkpoint.implementation.branch === expectedBranch
-              && checkpoint.implementation.worktreePath === implementation.worktreePath
-              && checkpoint.implementation.taskHead === currentHead;
-            const projectRelativePath = path.relative(repoRoot, projectRoot);
-            const existingTaskProject = path.join(implementation.worktreePath, projectRelativePath);
-            assertNoSymlinkComponents(implementation.worktreePath, existingTaskProject, 'Task project');
-            const inspectValidation = dependencies.inspectActiveValidationSession
-              || (validationSessions && validationSessions.inspectActiveValidationSession);
-            if (!acceptedIntegration && inspectValidation && checkpoint.implementation
-                && checkpoint.implementation.planSha256 === planRecord.sha256
-                && checkpoint.implementation.branch === expectedBranch
-                && checkpoint.implementation.worktreePath === implementation.worktreePath
-                && checkpoint.implementation.taskHead === currentHead) {
-              activeValidationSession = inspectValidation({
-                repoRoot: implementation.worktreePath,
-                projectRoot: existingTaskProject,
-                worktreePath: implementation.worktreePath,
-                taskId,
-                branch: expectedBranch,
-                baseHead: baseSha,
-                protocolVersion: 1,
-              });
-              resumeActiveValidation = Boolean(activeValidationSession && !reusableValidation);
-            }
-            const existingTask = parseTaskCatalog(readTasks(existingTaskProject)).get(taskId);
-            const legacyComplete = worktreeClean && !planInvalidatedDownstream && !checkpoint.implementation
-              && existingTask && ['In Progress', 'Complete'].includes(existingTask.status)
-              && currentHead !== execGit(repoRoot, ['merge-base', baseSha, currentHead]);
-            if (resumeActiveValidation) {
-              taskLog(`[${taskId}] implement skipped — resumable validation session`);
-            } else if (acceptedIntegration || reusableValidation || implementationMatches || legacyComplete) {
-              taskLog(`[${taskId}] implement skipped — existing clean worktree`);
-            } else {
-              resumeExistingWorktree = true;
-            }
-          }
+          const worktreeClassification = classifyExistingWorktree({
+            branchExists,
+            checkpoint,
+            planRecord,
+            planInvalidatedDownstream,
+            baseSha,
+            expectedBranch,
+            expectedWorktree,
+            implementation,
+          });
+          implementation = worktreeClassification.implementation;
+          resumeExistingWorktree = worktreeClassification.resumeExistingWorktree;
+          reusableValidation = worktreeClassification.reusableValidation;
+          resumeActiveValidation = worktreeClassification.resumeActiveValidation;
+          activeValidationSession = worktreeClassification.activeValidationSession;
+          acceptedIntegration = worktreeClassification.acceptedIntegration;
 
           function acceptImplementationResult(parsed, expectedHead = null) {
             if (parsed.branch !== expectedBranch) {
@@ -3943,26 +3805,24 @@ function runTasks(options, dependencies = {}) {
           }
           if (activePhase) completePhase();
 
-          let validation;
-          let validationBase = baseSha;
-          let repeats = new Set();
-          let skipValidation = Boolean(acceptedIntegration);
-          let acceptedIntegrationHead = acceptedIntegration && acceptedIntegration.taskHead;
-          if (acceptedIntegration && acceptedIntegration.validation) {
-            validation = { ...acceptedIntegration.validation };
-          }
-          for (let attempt = 0; attempt < 5; attempt++) {
-            const validationRunId = attempt === 0 && !acceptedIntegration
-              ? taskCommon.validationRunId
-              : null;
-            const validateInput = {
-              ...taskCommon,
-              validationRunId,
-              baseSha: validationBase,
-              worktreePath: implementation.worktreePath,
-              branch: implementation.branch,
-              baseBranch: implementation.baseBranch,
-            };
+          // Stages 2-4 of the task-attempt loop. They capture only this
+          // iteration's immutable workspace facts (taskEnv, taskProjectRoot,
+          // taskSpecsDir, lexicalTaskProject, pluginRoot, implementationHead)
+          // and the per-task infrastructure closures; every loop-carried
+          // mutable — validation, validatedHead, skipValidation,
+          // reusableValidation, acceptedIntegrationHead, validationBase,
+          // checkpoint, implementation — is passed in explicitly and returned
+          // explicitly.
+          function runValidationAttempt({
+            attempt,
+            acceptedIntegrationHead,
+            checkpoint,
+            validateInput,
+            implementation,
+            validation,
+            skipValidation,
+            reusableValidation,
+          }) {
             let validatedHead;
             if (skipValidation) {
               if (!validation || !acceptedIntegrationHead) {
@@ -3985,7 +3845,7 @@ function runTasks(options, dependencies = {}) {
               let validationStartHead;
               const validationReceiptToken = crypto.randomBytes(24).toString('hex');
               const validationEnv = { ...taskEnv };
-              if (!validationRunId) delete validationEnv.GROUNDWORK_VALIDATION_RUN_ID;
+              if (!validateInput.validationRunId) delete validationEnv.GROUNDWORK_VALIDATION_RUN_ID;
               const validationPhaseInput = {
                 ...validateInput,
                 phase: 'validate',
@@ -4024,7 +3884,7 @@ function runTasks(options, dependencies = {}) {
                 assertNoSymlinkComponents(implementation.worktreePath, lexicalTaskProject, 'Task project');
                 assertNoSymlinkComponents(taskProjectRoot, taskSpecsDir, 'Task specs');
                 checkpoint.validation = {
-                  baseHead: validationBase,
+                  baseHead: validateInput.baseSha,
                   taskHead: committedHead,
                   branch: implementation.branch,
                   iterations: parsed.iterations,
@@ -4041,7 +3901,10 @@ function runTasks(options, dependencies = {}) {
               validatedHead = validated.validatedHead;
               completePhase();
             }
+            return { validation, validatedHead, skipValidation };
+          }
 
+          function runFinalize({ validateInput, validatedHead, implementation }) {
             beginPhase('finalize');
             let finalizeStartHead;
             const finalizeInput = {
@@ -4058,7 +3921,7 @@ function runTasks(options, dependencies = {}) {
               prompt: phasePrompt('finalize', finalizeInput),
             };
             activeRepairInput = finalizationPhaseInput;
-            let finalization = invokeChecked(finalizationPhaseInput, (output) => {
+            return invokeChecked(finalizationPhaseInput, (output) => {
               const parsed = parseFinalizeResult(output, {
                 token: finalizeInput.receiptToken,
                 taskId,
@@ -4118,7 +3981,22 @@ function runTasks(options, dependencies = {}) {
             }, () => {
               finalizeStartHead = execGit(implementation.worktreePath, ['rev-parse', 'HEAD']);
             });
+          }
 
+          // Publication when finalize reports ready, otherwise the revalidate
+          // bookkeeping that prepares the next attempt. Returns
+          // { published: true, validationSummary } after a verified merge,
+          // or { published: false, ... } with the next attempt's loop-carried
+          // state.
+          function publishOrRetry({
+            finalization,
+            validation,
+            validatedHead,
+            implementation,
+            attempt,
+            repeats,
+            checkpoint,
+          }) {
             if (finalization.outcome === 'ready') {
               if (dependencies.beforePublication) dependencies.beforePublication(finalization);
               const releasePublicationGate = acquireRepositoryGate(
@@ -4166,9 +4044,7 @@ function runTasks(options, dependencies = {}) {
                   receipt: _receipt,
                   ...validationSummary
                 } = validation;
-                completed.push({ taskId, validation: validationSummary });
-                implementation = null;
-                break;
+                return { published: true, validationSummary };
               }
             }
 
@@ -4189,7 +4065,6 @@ function runTasks(options, dependencies = {}) {
             const shouldRevalidate = Boolean(options.revalidateIfMergeConflicts)
               && (finalization.outcome === 'revalidate'
                 || (finalization.outcome === 'integrated' && finalization.conflictsResolved));
-            validationBase = actualBaseHead;
             checkpoint.implementation = {
               ...checkpoint.implementation,
               baseHead: actualBaseHead,
@@ -4212,12 +4087,74 @@ function runTasks(options, dependencies = {}) {
               };
             }
             saveCheckpoint(commonDir, repoRoot, projectRoot, checkpoint);
-            reusableValidation = false;
-            skipValidation = !shouldRevalidate;
-            acceptedIntegrationHead = actualTaskHead;
-
             if (attempt === 4) throw new Error('Base kept moving; finalization exceeded 5 revalidation attempts');
             completePhase();
+            return {
+              published: false,
+              validationBase: actualBaseHead,
+              skipValidation: !shouldRevalidate,
+              reusableValidation: false,
+              acceptedIntegrationHead: actualTaskHead,
+            };
+          }
+
+          let validation;
+          let validationBase = baseSha;
+          let repeats = new Set();
+          let skipValidation = Boolean(acceptedIntegration);
+          let acceptedIntegrationHead = acceptedIntegration && acceptedIntegration.taskHead;
+          if (acceptedIntegration && acceptedIntegration.validation) {
+            validation = { ...acceptedIntegration.validation };
+          }
+          for (let attempt = 0; attempt < 5; attempt++) {
+            const validationRunId = attempt === 0 && !acceptedIntegration
+              ? taskCommon.validationRunId
+              : null;
+            const validateInput = {
+              ...taskCommon,
+              validationRunId,
+              baseSha: validationBase,
+              worktreePath: implementation.worktreePath,
+              branch: implementation.branch,
+              baseBranch: implementation.baseBranch,
+            };
+            const validated = runValidationAttempt({
+              attempt,
+              acceptedIntegrationHead,
+              checkpoint,
+              validateInput,
+              implementation,
+              validation,
+              skipValidation,
+              reusableValidation,
+            });
+            validation = validated.validation;
+            skipValidation = validated.skipValidation;
+
+            const finalization = runFinalize({
+              validateInput,
+              validatedHead: validated.validatedHead,
+              implementation,
+            });
+
+            const publication = publishOrRetry({
+              finalization,
+              validation,
+              validatedHead: validated.validatedHead,
+              implementation,
+              attempt,
+              repeats,
+              checkpoint,
+            });
+            if (publication.published) {
+              completed.push({ taskId, validation: publication.validationSummary });
+              implementation = null;
+              break;
+            }
+            validationBase = publication.validationBase;
+            skipValidation = publication.skipValidation;
+            reusableValidation = publication.reusableValidation;
+            acceptedIntegrationHead = publication.acceptedIntegrationHead;
           }
           break taskAttempts;
         } catch (error) {
@@ -4362,6 +4299,7 @@ module.exports = {
   acquireProjectLease,
   acquireRepositoryGate,
   activeProjectOwners,
+  phaseChildLeases,
   processStartIdentity,
   resolveProject,
   runTasks,

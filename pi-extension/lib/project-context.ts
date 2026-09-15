@@ -1,145 +1,79 @@
-import * as fs from "fs";
 import * as path from "path";
+
+// The canonical, tested implementation lives in the dependency-free JS core
+// (project-context-core.js). This wrapper only adapts it to the extension's
+// TypeScript surface; all schema, containment, and binding semantics —
+// including selection_required — come from the core so Pi matches the
+// canonical lib/project-context.js behavior.
+const core = require("./project-context-core");
 
 /** Project context resolved from the working directory */
 export interface ProjectContext {
   root: string;
   specsDir: string;
   name: string;
+  /** True when a configured monorepo has no verified project selection */
+  selectionRequired: boolean;
+  /** Absolute bindings used for lowercase template variable substitution */
+  bindings: Record<string, string>;
+}
+
+const { piApply } = require("./selection-ui");
+
+/** Raw core result: resolved bindings, or a typed {ok:false, code, message} failure. */
+export type ProjectContextResult = {
+  ok: true;
+  project_root: string;
+  project_name?: string;
+  specs_dir: string;
+  plans_dir: string;
+  debug_dir: string;
+  research_dir: string;
+  selection_required: boolean;
+} | { ok: false; code?: string; reason?: string; message?: string };
+
+/** Resolve the raw core result (canonical semantics, failures included). */
+export function resolveProjectContextResult(
+  cwd: string,
+  selectedProject?: string,
+): ProjectContextResult {
+  return core.resolveProjectContext(cwd, selectedProject);
+}
+
+/** Map a resolved core result to the extension's ProjectContext shape. */
+function toProjectContext(resolved: any): ProjectContext {
+  return {
+    root: resolved.project_root,
+    specsDir: resolved.specs_dir,
+    name: resolved.project_name || path.basename(resolved.project_root),
+    selectionRequired: Boolean(resolved.selection_required),
+    bindings: {
+      project_root: resolved.project_root,
+      project_name: resolved.project_name || path.basename(resolved.project_root),
+      specs_dir: resolved.specs_dir,
+      plans_dir: resolved.plans_dir,
+      debug_dir: resolved.debug_dir,
+      research_dir: resolved.research_dir,
+    },
+  };
 }
 
 /**
- * Resolve project context from the working directory.
- * Supports monorepo setups via .groundwork.yml.
- *
- * @param cwd - Current working directory
- * @param selectedProject - Optional project name for monorepo selection
+ * Resolve and apply in one step: a typed failure keeps `previous` as the
+ * active context and returns one actionable message for the UI; a success
+ * returns the fresh context and no message.
  */
-export function resolveProjectContext(
+export function applyProjectContext(
   cwd: string,
+  previous: ProjectContext,
   selectedProject?: string,
-): ProjectContext {
-  const root = findProjectRoot(cwd);
-  if (!root) {
-    return { root: cwd, specsDir: "", name: path.basename(cwd) };
-  }
-
-  const config = loadGroundworkConfig(root);
-  if (!config) {
-    // Single-project mode
-    const specsDir = findSpecsDir(root);
-    return { root, specsDir, name: path.basename(root) };
-  }
-
-  // Monorepo mode — resolve the selected or default project
-  const project = selectedProject
-    ? config.projects.find((p) => p.name === selectedProject)
-    : config.projects.find((p) => p.default) || config.projects[0];
-
-  if (!project) {
-    return { root, specsDir: "", name: path.basename(root) };
-  }
-
-  const projectRoot = path.resolve(root, project.path || ".");
-  const specsDir = project.specsDir
-    ? path.resolve(projectRoot, project.specsDir)
-    : findSpecsDir(projectRoot);
-
-  return { root: projectRoot, specsDir, name: project.name };
+): { context: ProjectContext; message: string | null } {
+  const applied = piApply(core.resolveProjectContext(cwd, selectedProject), null);
+  if (applied.message) return { context: previous, message: applied.message };
+  return { context: toProjectContext(applied.context), message: null };
 }
 
-/** Find the project root by walking up from cwd looking for markers */
-function findProjectRoot(cwd: string): string | null {
-  let dir = path.resolve(cwd);
-  const root = path.parse(dir).root;
-
-  while (dir !== root) {
-    if (
-      fs.existsSync(path.join(dir, ".groundwork.yml")) ||
-      fs.existsSync(path.join(dir, ".git")) ||
-      fs.existsSync(path.join(dir, "product_specs"))
-    ) {
-      return dir;
-    }
-    dir = path.dirname(dir);
-  }
-  return null;
-}
-
-/** Find the specs directory within a project root */
-function findSpecsDir(root: string): string {
-  const candidates = [
-    "product_specs",
-    "product-specs",
-    "specs",
-    ".groundwork/specs",
-  ];
-  for (const candidate of candidates) {
-    const full = path.join(root, candidate);
-    if (fs.existsSync(full) && fs.statSync(full).isDirectory()) {
-      return full;
-    }
-  }
-  return "";
-}
-
-/** Parsed .groundwork.yml configuration */
-interface GroundworkConfig {
-  projects: Array<{
-    name: string;
-    path?: string;
-    specsDir?: string;
-    default?: boolean;
-  }>;
-}
-
-/** Load and parse .groundwork.yml (minimal YAML parser for known structure) */
-function loadGroundworkConfig(root: string): GroundworkConfig | null {
-  const configPath = path.join(root, ".groundwork.yml");
-  if (!fs.existsSync(configPath)) return null;
-
-  const content = fs.readFileSync(configPath, "utf-8");
-  const projects: GroundworkConfig["projects"] = [];
-  const lines = content.split("\n");
-
-  let inProjects = false;
-  let current: (typeof projects)[0] | null = null;
-
-  for (const line of lines) {
-    if (/^projects:/.test(line)) {
-      inProjects = true;
-      continue;
-    }
-    if (!inProjects) continue;
-    if (/^\S/.test(line) && !/^\s*#/.test(line)) break; // End of projects block
-
-    const nameMatch = line.match(/^\s+-\s+name:\s*(.+)/);
-    if (nameMatch) {
-      if (current) projects.push(current);
-      current = { name: nameMatch[1].trim() };
-      continue;
-    }
-
-    if (!current) continue;
-
-    const pathMatch = line.match(/^\s+path:\s*(.+)/);
-    if (pathMatch) {
-      current.path = pathMatch[1].trim();
-      continue;
-    }
-
-    const specsDirMatch = line.match(/^\s+specs[-_]?dir:\s*(.+)/);
-    if (specsDirMatch) {
-      current.specsDir = specsDirMatch[1].trim();
-      continue;
-    }
-
-    const defaultMatch = line.match(/^\s+default:\s*(true|yes)/i);
-    if (defaultMatch) {
-      current.default = true;
-    }
-  }
-
-  if (current) projects.push(current);
-  return projects.length > 0 ? { projects } : null;
+/** List selectable projects (canonical mapping keys) for the selector UI. */
+export function listProjects(cwd: string): Array<{ name: string; path: string }> {
+  return core.listProjects(cwd);
 }

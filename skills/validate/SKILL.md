@@ -113,11 +113,13 @@ A new file per iteration preserves history across the fix-and-retry loop, so the
   "score": 85,
   "verdict": "approve",
   "findings": [
-    {"id": 1, "severity": "major", "category": "...", "file": "...", "line": 42, "finding": "...", "recommendation": "..."},
-    {"id": 2, "severity": "minor", "category": "...", "file": "...", "line": 10, "finding": "...", "recommendation": "..."}
+    {"id": 1, "severity": "major", "category": "...", "file": "...", "line": 42, "finding": "...", "recommendation": "...", "disposition": "actionable"},
+    {"id": 2, "severity": "minor", "category": "...", "file": "...", "line": 10, "finding": "...", "recommendation": "...", "disposition": "actionable"}
   ]
 }
 ```
+
+Every finding carries a `disposition`: `"actionable"` while it demands work, or the closure outcome (`"resolved"`, `"approved"`, `"fixed"`, `"closure-observation"`) once it no longer does. A prior finding you re-checked and found already addressed is `"resolved"` (or `"closure-observation"` when it never demanded work) — never re-listed as actionable. The unworked-findings report persists only actionable items: fixed IDs and every closed disposition are dropped, so a stale "resolved" entry must not survive into the ledger.
 
 The **stable global ID** of a finding is `{agent_name}-iter{N}-{id}` (e.g. `code-quality-reviewer-iter1-2`). Use these IDs anywhere you need to reference a finding across iterations (fix-agent prompts, stuck detection, unworked_review_issues).
 
@@ -173,17 +175,30 @@ node ${CLAUDE_PLUGIN_ROOT}/lib/validation-session.js open \
   --base-head "<base_sha>" \
   --protocol-version 1 \
   <optional --runner-mode> \
-  <optional --resume-run "<run_id>" — include on every re-open within this validation when you already hold the run_id from a prior open or your tracking notes. In runner mode, the phase prompt supplies RESUME VALIDATION SESSION=<run_id> (environment GROUNDWORK_VALIDATION_RUN_ID): pass that value here verbatim>
+  <optional --resume-run "<run_id>" --capability-file "<capability_file>" — resume from the capability file a prior open persisted (the non-secret `capability_file` path in its result). Include both on every re-open within this validation. The capability never appears on the command line, in the environment, in the transcript, or in session state. In runner mode, the phase prompt supplies RESUME VALIDATION SESSION=<run_id> (environment GROUNDWORK_VALIDATION_RUN_ID): pass that value here verbatim; the runner's retained capability is applied automatically>
 ```
 
-Parse only the returned one-line JSON. Save `run_id`, `run_dir`, `findings_dir`, `stage`, `iteration`, and `coordinator_file`.
+Parse only the returned one-line JSON. Save `run_id`, `run_dir`, `findings_dir`, `stage`, `iteration`, `coordinator_file`, and `capability_file` (the non-secret path to the persisted capability, returned by `created`, `resumed`, and `reclaimed`; there is never an `owner_token` to save — the raw token exists only inside its 0600 file).
 
-- `created`: initialize iteration 1, freeze the baseline, and run the initial audit.
-- `resumed`: read the recorded coordinator file and continue from its recorded stage. Do not restart the initial audit or discard carried approvals.
+**Capability handling:** every `open` persists the bearer capability itself to an owner-only (0600) file beside the run directory — `manual-capability-<run_id>.json` for manual runs, the runner's `runner-capability.json` in runner mode — and returns its NON-SECRET path as `capability_file`. The raw token never appears on stdout, argv, the environment, the transcript, or durable session state (which stores only its digest); both file shapes are accepted by `--capability-file`. Save that literal `capability_file` path and pass `--capability-file "<capability_file>"` to every mutating command, including heartbeat-loop/stop and every re-open with `--resume-run` (a resumed or reclaimed open refreshes the same file and returns it again). If the file is lost, the session cannot be mutated until its heartbeat is provably stale; re-open then to reclaim a successor capability.
+
+**Heartbeat worker (start immediately after a successful open):** the session's liveness is this worker, not your process. Run it in the background for the whole validation and stop it in every exit path (completion, failure, or trap) — both commands authenticate through the capability file returned by `open`:
+
+```bash
+node ${CLAUDE_PLUGIN_ROOT}/lib/validation-session.js heartbeat-loop \
+  --run-dir "<run_dir>" --capability-file "<capability_file>" &
+# on completion or failure:
+node ${CLAUDE_PLUGIN_ROOT}/lib/validation-session.js heartbeat-stop \
+  --run-dir "<run_dir>" --capability-file "<capability_file>"
+```
+
+- `created`: initialize iteration 1, freeze the baseline, start the heartbeat worker, and run the initial audit.
+- `resumed`: your capability was accepted. Restart the heartbeat worker if it is not running, read the recorded coordinator file, and continue from its recorded stage. Do not restart the initial audit or discard carried approvals.
+- `reclaimed`: the prior owner was provably stale and you now hold a successor capability and epoch. Start the heartbeat worker before continuing.
 - `recovered`: confirm the prior fixer is no longer running, preserve the current worktree, read the recorded repair envelope, and rerun it. A `fixer-prepared` session resumes the same fixer scope without worktree comparison or restoration.
 - `completed`: replay the stored validation metrics and exact action/commit receipt, emit the normal final result, and stop without gates, reviewers, or fixers.
 
-**Ownership refusal:** if `open` fails with "already active", another orchestration holds a fresh session for this task/branch. Do not work around it: report `RESULT: FAILURE` with the helper's message (it names the holder's heartbeat and the exact `abandon --force` command). Only run `abandon --force` when the user confirms the other session is dead.
+**Ownership refusal:** if `open` fails with "already active", another orchestration holds a live session for this task/branch. Do not work around it: report `RESULT: FAILURE` with the helper's message (it names the holder's heartbeat and the exact `abandon --force` command). Only run `abandon --force` when the user confirms the session is dead — and note that a live owner (fresh heartbeat or startup grace) can never be force-abandoned; wait out its staleness window and reclaim instead.
 
 An incomplete reviewer batch has no checkpoint. Rerun only the pending batch for the recorded stage and iteration, using the same assigned artifact names. You will pass `{findings_dir}/findings-{agent}-iter{N}.json` to every agent invocation and reference these files in step 4.2 and step 5.5. Retain the directory after completion.
 
@@ -338,7 +353,8 @@ node ${CLAUDE_PLUGIN_ROOT}/lib/validation-session.js checkpoint \
   --expected-stage "<initial-audit-pending|gates-complete>" \
   --next-stage "review-batch-complete" \
   --iteration "<N>" \
-  --coordinator-file "<run_dir>/coordinator-iter<N>.json"
+  --coordinator-file "<run_dir>/coordinator-iter<N>.json" \
+  --capability-file "<capability_file>"
 ```
 
 Only this successful checkpoint makes the reviewer batch durable. If execution stops earlier, rerun that exact pending batch on resume.
@@ -375,7 +391,8 @@ Continue until every valid baseline finding is closed and all impacted reviewers
    node ${CLAUDE_PLUGIN_ROOT}/lib/validation-session.js begin-fixer \
      --run-dir "<run_dir>" \
      --iteration "<N>" \
-     --envelope-file "<run_dir>/repair-envelope-iter<N>.json"
+     --envelope-file "<run_dir>/repair-envelope-iter<N>.json" \
+     --capability-file "<capability_file>"
    ```
 
    Then spawn the fixer, even when the repair requires substantial restructuring. Do not ask the fixer to discover its own scope.
@@ -412,7 +429,8 @@ Continue until every valid baseline finding is closed and all impacted reviewers
    node ${CLAUDE_PLUGIN_ROOT}/lib/validation-session.js complete-fixer \
      --run-dir "<run_dir>" \
      --iteration "<N>" \
-     --result-file "<run_dir>/fixer-result-iter<N>.json"
+     --result-file "<run_dir>/fixer-result-iter<N>.json" \
+     --capability-file "<capability_file>"
    ```
 
    If the process stops before this succeeds, resume the `fixer-inflight` transaction through the recovery rules; never adopt partial source mutations as an implicit fixer result.
@@ -537,7 +555,8 @@ node ${CLAUDE_PLUGIN_ROOT}/lib/validation-session.js complete \
   --iterations "<N>" \
   --fixed "<M>" \
   --unworked "<K>" \
-  --action "none"
+  --action "none" \
+  --capability-file "<capability_file>"
 ```
 
 For `action: "commit"`, use the same command with `--action "commit" --commit-subject "<subject>" --commit-body "<body>"`. Only a successful `complete` transition authorizes PASS. Retain `run_dir`; it is the restart record, not temporary cleanup.

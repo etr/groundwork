@@ -91,7 +91,7 @@ describe('getPlansDir', () => {
     try {
       const env = cleanEnv(home);
       env.GROUNDWORK_PROJECT_ROOT = path.join(repo, 'apps', 'web');
-      assert.strictEqual(plansDirFor(repo, env), 'apps/web/.groundwork-plans');
+      assert.strictEqual(plansDirFor(repo, env), path.join(repo, 'apps', 'web', '.groundwork-plans'));
     } finally {
       fs.rmSync(repo, { recursive: true, force: true });
     }
@@ -109,15 +109,15 @@ describe('getPlansDir', () => {
       api.GROUNDWORK_PROJECT_ROOT = path.join(repo, 'apps', 'api');
       const webPlans = plansDirFor(repo, web);
       const apiPlans = plansDirFor(repo, api);
-      assert.strictEqual(webPlans, 'apps/web/.groundwork-plans');
-      assert.strictEqual(apiPlans, 'apps/api/.groundwork-plans');
+      assert.strictEqual(webPlans, path.join(repo, 'apps', 'web', '.groundwork-plans'));
+      assert.strictEqual(apiPlans, path.join(repo, 'apps', 'api', '.groundwork-plans'));
       assert.notStrictEqual(webPlans, apiPlans);
     } finally {
       fs.rmSync(repo, { recursive: true, force: true });
     }
   });
 
-  test('collapses to .groundwork-plans when CWD is the project root (runner mode)', () => {
+  test('the absolute plans dir is invariant when CWD is the project root (runner mode)', () => {
     const repo = makeMonorepo(['apps/web']);
     const home = path.join(repo, 'home');
     fs.mkdirSync(home);
@@ -125,7 +125,9 @@ describe('getPlansDir', () => {
     try {
       const env = cleanEnv(home);
       env.GROUNDWORK_PROJECT_ROOT = path.join(repo, 'apps', 'web');
-      assert.strictEqual(plansDirFor(path.join(repo, 'apps', 'web'), env), '.groundwork-plans');
+      const expected = path.join(repo, 'apps', 'web', '.groundwork-plans');
+      assert.strictEqual(plansDirFor(path.join(repo, 'apps', 'web'), env), expected);
+      assert.strictEqual(plansDirFor(repo, env), expected);
     } finally {
       fs.rmSync(repo, { recursive: true, force: true });
     }
@@ -137,7 +139,23 @@ describe('getPlansDir', () => {
     fs.mkdirSync(home);
 
     try {
-      assert.strictEqual(plansDirFor(repo, cleanEnv(home)), '.groundwork-plans');
+      assert.strictEqual(plansDirFor(repo, cleanEnv(home)), path.join(repo, '.groundwork-plans'));
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  test('no-config repos walk up from a subdirectory to the repo-root plans dir', () => {
+    const repo = makeSingleProjectRepo();
+    const home = path.join(repo, 'home');
+    fs.mkdirSync(home);
+    fs.mkdirSync(path.join(repo, 'packages', 'core'), { recursive: true });
+
+    try {
+      assert.strictEqual(
+        plansDirFor(path.join(repo, 'packages', 'core'), cleanEnv(home)),
+        path.join(repo, '.groundwork-plans')
+      );
     } finally {
       fs.rmSync(repo, { recursive: true, force: true });
     }
@@ -161,8 +179,13 @@ describe('template variable wiring', () => {
       });
       assert.strictEqual(result.status, 0, result.stderr);
       const payload = JSON.parse(result.stdout);
+      const expectedPlans = path.join(repo, 'apps', 'web', '.groundwork-plans');
       assert.ok(
-        payload.hookSpecificOutput.additionalContext.includes('- {{plans_dir}} = apps/web/.groundwork-plans'),
+        payload.hookSpecificOutput.additionalContext.includes(`- {{plans_dir}} = ${expectedPlans}`),
+        payload.hookSpecificOutput.additionalContext
+      );
+      assert.ok(
+        payload.hookSpecificOutput.additionalContext.includes(`- {{project_root}} = ${path.join(repo, 'apps', 'web')}`),
         payload.hookSpecificOutput.additionalContext
       );
     } finally {

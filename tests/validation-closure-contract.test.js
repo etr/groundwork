@@ -41,6 +41,21 @@ function test(name, fn) {
 
 console.log('\nvalidation-closure-contract');
 
+test('the findings-file example in the skill is valid JSON', () => {
+  // The example defines the reviewer artifact contract; prose inside the
+  // array would propagate malformed artifacts into real validation runs.
+  const heading = validate.indexOf('**Full review file format**');
+  assert.ok(heading !== -1, 'full review file format heading not found');
+  const block = validate.slice(heading).match(/```json\n([\s\S]*?)\n```/);
+  assert.ok(block, 'findings-file JSON example not found');
+  const parsed = JSON.parse(block[1]);
+  assert.ok(Array.isArray(parsed.findings));
+  assert.ok(parsed.findings.length >= 2);
+  for (const finding of parsed.findings) {
+    assert.ok(finding.disposition, 'every example finding must carry a disposition');
+  }
+});
+
 test('defines one shared initial-audit and closure-review protocol', () => {
   assert.ok(fs.existsSync(protocolPath), 'missing shared validation review protocol');
   const protocol = fs.readFileSync(protocolPath, 'utf8');

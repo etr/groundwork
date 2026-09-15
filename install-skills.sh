@@ -968,10 +968,12 @@ $new_body"
                 write_codex_agent "$session_dir/persist-unworked-findings.js" "$(<"$SOURCE_DIR/lib/persist-unworked-findings.js")" "unworked findings persistence helper" "$dest_base"
                 write_codex_agent "$session_dir/validation-session.js" "$(<"$SOURCE_DIR/lib/validation-session.js")" "validation session helper" "$dest_base"
                 write_codex_agent "$session_dir/atomic-write.js" "$(<"$SOURCE_DIR/lib/atomic-write.js")" "validation session helper" "$dest_base"
+                write_codex_agent "$session_dir/redact.js" "$(<"$SOURCE_DIR/lib/redact.js")" "validation session helper" "$dest_base"
             else
                 write_file "$session_dir/persist-unworked-findings.js" "$(<"$SOURCE_DIR/lib/persist-unworked-findings.js")" "unworked findings persistence helper"
                 write_file "$session_dir/validation-session.js" "$(<"$SOURCE_DIR/lib/validation-session.js")" "validation session helper"
                 write_file "$session_dir/atomic-write.js" "$(<"$SOURCE_DIR/lib/atomic-write.js")" "validation session helper"
+                write_file "$session_dir/redact.js" "$(<"$SOURCE_DIR/lib/redact.js")" "validation session helper"
             fi
         fi
         if [[ "$needs_worktree_identity" == true ]]; then
@@ -997,10 +999,26 @@ install_external_runner() {
 
     local dest_base
     dest_base=$(get_dest_base "$target")
-    write_codex_agent "$dest_base/groundwork-run.js" "$(<"$SOURCE_DIR/bin/groundwork-run.js")" "external task runner" "$dest_base"
+
+    # The standalone runner bundle is exported from the checked runtime
+    # manifest (lib/external-runner-manifest.js) — never a hand-maintained
+    # helper list. The manifest validates its own closure and exits non-zero
+    # on any drift, which fails the install under set -e before any file is
+    # written.
+    local manifest_tsv
+    manifest_tsv=$(node "$SOURCE_DIR/lib/external-runner-manifest.js" --tsv)
+
+    local source_rel installed_name label
+    while IFS=$'\t' read -r source_rel installed_name; do
+        [[ -z "$source_rel" ]] && continue
+        if [[ "$installed_name" == "groundwork-run.js" ]]; then
+            label="external task runner"
+        else
+            label="external runner runtime helper"
+        fi
+        write_codex_agent "$dest_base/$installed_name" "$(<"$SOURCE_DIR/$source_rel")" "$label" "$dest_base"
+    done <<< "$manifest_tsv"
     remove_legacy_codex_runner_memory "$dest_base"
-    write_codex_agent "$dest_base/run-reporting.js" "$(<"$SOURCE_DIR/lib/run-reporting.js")" "external runner reporting helper" "$dest_base"
-    write_codex_agent "$dest_base/validation-session.js" "$(<"$SOURCE_DIR/lib/validation-session.js")" "external validation session helper" "$dest_base"
 }
 
 # ============================================================
@@ -1187,6 +1205,8 @@ install_pi_extension() {
         mkdir -p "$ext_dir/lib"
         cp "$SOURCE_DIR/pi-extension/"*.ts "$ext_dir/" 2>/dev/null || true
         cp "$SOURCE_DIR/pi-extension/lib/"*.ts "$ext_dir/lib/" 2>/dev/null || true
+        # Dependency-free JS runtime helpers the TypeScript sources delegate to
+        cp "$SOURCE_DIR/pi-extension/lib/"*.js "$ext_dir/lib/" 2>/dev/null || true
         echo "  [wrote] $ext_dir/ (Pi extension)"
     else
         echo "  [warn] Pi extension source not found at $SOURCE_DIR/pi-extension"
@@ -1221,6 +1241,11 @@ main() {
     load_config
     load_model_override
     preflight_model_override_replacements
+
+    # Fail the whole export before any file is written if the external
+    # runner runtime closure is inconsistent (unmanifested transitive
+    # imports, unclassified dynamic requires, sources outside bin//lib/).
+    node "$SOURCE_DIR/lib/external-runner-manifest.js" --tsv > /dev/null
 
     echo "Groundwork Installer"
     echo "  Source: $SOURCE_DIR"

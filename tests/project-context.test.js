@@ -36,8 +36,11 @@ function describe(name, fn) {
   fn();
 }
 
+// realpath: git resolves macOS symlinked temp dirs (/tmp → /private/tmp) and
+// reports the resolved toplevel, so absolute-binding assertions must compare
+// against the resolved repository path.
 function makeMonorepo() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-context-'));
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'gw-context-')));
   fs.mkdirSync(path.join(root, 'apps', 'web', 'specs'), { recursive: true });
   fs.writeFileSync(path.join(root, '.groundwork.yml'), [
     'version: 1',
@@ -50,9 +53,17 @@ function makeMonorepo() {
   return root;
 }
 
+// A single-project repository with no .groundwork.yml at all.
+function makeSingleProjectRepo() {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'gw-context-single-')));
+  fs.mkdirSync(path.join(root, 'specs'), { recursive: true });
+  execFileSync('git', ['init', '-q'], { cwd: root });
+  return root;
+}
+
 // Monorepo with several named projects (entries: [name, relative path]).
 function makeMultiMonorepo(...entries) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-context-'));
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'gw-context-')));
   const lines = ['version: 1', 'projects:'];
   const paths = {};
   for (const [name, rel] of entries) {
@@ -96,11 +107,17 @@ function cleanEnv(home) {
 }
 
 function runCli(repo, env, ...args) {
-  return JSON.parse(execFileSync('node', [CLI, ...args], {
+  const stdout = execFileSync('node', [CLI, ...args], {
     cwd: repo,
     env,
     encoding: 'utf8',
-  }));
+  });
+  // select prints bindings JSON then the standalone receipt JSON line; other
+  // commands print one line. Parse every line and return the first (the
+  // caller-facing result), exposing the last through runCliLines when needed.
+  const parsed = stdout.trim().split('\n').filter(Boolean).map((line) => JSON.parse(line));
+  runCli.lastLine = parsed[parsed.length - 1];
+  return parsed[0];
 }
 
 describe('project context CLI', () => {
@@ -126,18 +143,21 @@ describe('project context CLI', () => {
         const selected = runCli(repo, env, 'select', 'web', '--harness', harness);
         assert.strictEqual(selected.harness, harness);
         assert.strictEqual(selected.project_name, 'web');
-        assert.strictEqual(selected.project_root, 'apps/web');
-        assert.strictEqual(selected.specs_dir, 'apps/web/specs');
-        assert.strictEqual(selected.plans_dir, 'apps/web/.groundwork-plans');
+        assert.strictEqual(selected.project_root, path.join(repo, 'apps', 'web'));
+        assert.strictEqual(selected.specs_dir, path.join(repo, 'apps', 'web', 'specs'));
+        assert.strictEqual(selected.plans_dir, path.join(repo, 'apps', 'web', '.groundwork-plans'));
+        assert.strictEqual(selected.debug_dir, path.join(repo, 'apps', 'web', '.debug'));
+        assert.strictEqual(selected.research_dir, path.join(repo, 'apps', 'web', '.architecture'));
+        assert.ok(path.isAbsolute(selected.project_root), 'project_root must be absolute');
         assert.ok(selected.state_file.startsWith(path.join(override, 'groundwork-state')));
         assert.ok(fs.existsSync(selected.state_file));
 
         const resolved = runCli(repo, env, 'resolve', '--harness', harness);
         assert.strictEqual(resolved.selection_required, false);
         assert.strictEqual(resolved.project_name, 'web');
-        assert.strictEqual(resolved.project_root, 'apps/web');
-        assert.strictEqual(resolved.specs_dir, 'apps/web/specs');
-        assert.strictEqual(resolved.plans_dir, 'apps/web/.groundwork-plans');
+        assert.strictEqual(resolved.project_root, path.join(repo, 'apps', 'web'));
+        assert.strictEqual(resolved.specs_dir, path.join(repo, 'apps', 'web', 'specs'));
+        assert.strictEqual(resolved.plans_dir, path.join(repo, 'apps', 'web', '.groundwork-plans'));
       } finally {
         fs.rmSync(repo, { recursive: true, force: true });
       }
@@ -223,8 +243,41 @@ describe('project context CLI', () => {
 
       assert.strictEqual(resolved.selection_required, false);
       assert.strictEqual(resolved.project_name, 'web');
-      assert.strictEqual(resolved.project_root, 'apps/web');
+      assert.strictEqual(resolved.project_root, path.join(repo, 'apps', 'web'));
       assert.strictEqual(resolved.state_file, selected.state_file);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  test('selected monorepo bindings are absolute and invariant to the caller cwd', () => {
+    const repo = makeMonorepo();
+    const home = path.join(repo, 'home');
+    fs.mkdirSync(home);
+    const env = cleanEnv(home);
+    env.TMUX = '/tmp/tmux-test/default,123,0';
+    env.TMUX_PANE = '%1';
+
+    try {
+      runCli(repo, env, 'select', 'web', '--harness', 'codex');
+      const expectedRoot = path.join(repo, 'apps', 'web');
+      const cwds = [
+        repo,
+        path.join(repo, 'apps', 'web'),
+        path.join(repo, 'apps', 'web', 'specs'),
+      ];
+      for (const cwd of cwds) {
+        const resolved = runCli(cwd, env, 'resolve', '--harness', 'codex');
+        assert.strictEqual(resolved.selection_required, false, `from ${cwd}`);
+        assert.strictEqual(resolved.project_root, expectedRoot, `project_root from ${cwd}`);
+        assert.strictEqual(resolved.specs_dir, path.join(expectedRoot, 'specs'), `specs_dir from ${cwd}`);
+        assert.strictEqual(resolved.plans_dir, path.join(expectedRoot, '.groundwork-plans'), `plans_dir from ${cwd}`);
+        assert.strictEqual(resolved.debug_dir, path.join(expectedRoot, '.debug'), `debug_dir from ${cwd}`);
+        assert.strictEqual(resolved.research_dir, path.join(expectedRoot, '.architecture'), `research_dir from ${cwd}`);
+        // A duplicated project segment means a relative binding was resolved
+        // against the project directory itself.
+        assert.ok(!resolved.specs_dir.includes('apps/web/apps/web'), resolved.specs_dir);
+      }
     } finally {
       fs.rmSync(repo, { recursive: true, force: true });
     }
@@ -264,16 +317,67 @@ describe('project context CLI', () => {
         project_root: resolved.project_root,
         specs_dir: resolved.specs_dir,
         plans_dir: resolved.plans_dir,
+        debug_dir: resolved.debug_dir,
+        research_dir: resolved.research_dir,
         selection_required: resolved.selection_required,
       }, {
         harness: 'codex',
         project_name: '',
-        project_root: '.',
-        specs_dir: 'specs',
-        plans_dir: '.groundwork-plans',
+        project_root: repo,
+        specs_dir: path.join(repo, 'specs'),
+        plans_dir: path.join(repo, '.groundwork-plans'),
+        debug_dir: path.join(repo, '.debug'),
+        research_dir: path.join(repo, '.architecture'),
         selection_required: true,
       });
       assert.ok(resolved.state_file.startsWith(path.join(home, '.codex', 'groundwork-state')));
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  test('resolve succeeds in a no-config single-project repository with absolute bindings', () => {
+    const repo = makeSingleProjectRepo();
+    const home = path.join(repo, 'home');
+    fs.mkdirSync(home);
+
+    try {
+      const resolved = runCli(repo, cleanEnv(home), 'resolve', '--harness', 'codex');
+      assert.deepStrictEqual({
+        harness: resolved.harness,
+        project_name: resolved.project_name,
+        project_root: resolved.project_root,
+        specs_dir: resolved.specs_dir,
+        plans_dir: resolved.plans_dir,
+        debug_dir: resolved.debug_dir,
+        research_dir: resolved.research_dir,
+        selection_required: resolved.selection_required,
+      }, {
+        harness: 'codex',
+        project_name: '',
+        project_root: repo,
+        specs_dir: path.join(repo, 'specs'),
+        plans_dir: path.join(repo, '.groundwork-plans'),
+        debug_dir: path.join(repo, '.debug'),
+        research_dir: path.join(repo, '.architecture'),
+        selection_required: false,
+      });
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  test('no-config resolve walks up from a project subdirectory to the repository root', () => {
+    const repo = makeSingleProjectRepo();
+    const home = path.join(repo, 'home');
+    fs.mkdirSync(home);
+    fs.mkdirSync(path.join(repo, 'src'));
+
+    try {
+      const resolved = runCli(path.join(repo, 'src'), cleanEnv(home), 'resolve', '--harness', 'codex');
+      assert.strictEqual(resolved.selection_required, false);
+      assert.strictEqual(resolved.project_root, repo);
+      assert.strictEqual(resolved.specs_dir, path.join(repo, 'specs'));
     } finally {
       fs.rmSync(repo, { recursive: true, force: true });
     }
@@ -377,14 +481,14 @@ describe('project context CLI', () => {
     }
   });
 
-  test('rejects a repository without .groundwork.yml', () => {
+  test('select without .groundwork.yml is rejected; only resolve supports no-config repos', () => {
     const repo = makeMonorepo();
     const home = path.join(repo, 'home');
     fs.mkdirSync(home);
     fs.unlinkSync(path.join(repo, '.groundwork.yml'));
 
     try {
-      const result = spawnSync('node', [CLI, 'resolve', '--harness', 'codex'], {
+      const result = spawnSync('node', [CLI, 'select', 'web', '--harness', 'codex'], {
         cwd: repo, env: cleanEnv(home), encoding: 'utf8',
       });
       assert.notStrictEqual(result.status, 0);
@@ -407,7 +511,10 @@ describe('project context CLI', () => {
         cwd: repo, env: cleanEnv(home), encoding: 'utf8',
       });
       assert.notStrictEqual(result.status, 0);
-      assert.ok(result.stderr.includes('No .groundwork.yml found'), result.stderr);
+      // The unsafe name yields no canonical mapping: the config itself is
+      // rejected as invalid rather than degrading to "no config found".
+      assert.ok(result.stderr.includes('.groundwork.yml'), result.stderr);
+      assert.ok(result.stderr.includes('malformed-yaml'), result.stderr);
     } finally {
       fs.rmSync(repo, { recursive: true, force: true });
     }
@@ -604,7 +711,7 @@ describe('selection scope capability gating (pane-less harnesses)', () => {
     }
   });
 
-  test('PostToolUse hook adopts an in-chat selection into the session snapshot', () => {
+  test('PostToolUse hook adopts an in-chat selection from its receipt', () => {
     const { root: repo, paths } = makeMultiMonorepo(['web', 'apps/web'], ['api', 'services/api']);
     const home = path.join(repo, 'home');
     fs.mkdirSync(home);
@@ -617,14 +724,16 @@ describe('selection scope capability gating (pane-less harnesses)', () => {
       execFileSync('node', ['-e', pinSnippet('chat-a', 'web', paths.web)], { cwd: repo, env });
 
       // The chat switches to api; the PostToolUse hook fires for this
-      // session's persist command and must adopt the new selection.
+      // session's persist command, whose response carries the new receipt.
       runCli(repo, env, 'select', 'api', '--harness', 'codex');
+      const receipt = runCli.lastLine;
       const adopted = spawnSync('bash', [PIN_HOOK], {
         cwd: repo,
         env,
         input: JSON.stringify({
           session_id: 'chat-a',
           tool_input: { command: `node ${CLI} select api --harness codex` },
+          tool_response: { stdout: JSON.stringify(receipt) },
         }),
         encoding: 'utf8',
       });
@@ -634,14 +743,16 @@ describe('selection scope capability gating (pane-less harnesses)', () => {
       assert.strictEqual(restored.projectName, 'api');
       assert.strictEqual(restored.source, 'session');
 
-      // The command gate leaves unrelated Bash commands (and failures) alone:
-      // a foreign command must not overwrite the snapshot with stale pane data.
+      // The command gate leaves unrelated Bash commands alone: a foreign
+      // command must not touch the snapshot even if its output looks like a
+      // receipt.
       const untouched = spawnSync('bash', [PIN_HOOK], {
         cwd: repo,
         env,
         input: JSON.stringify({
           session_id: 'chat-a',
           tool_input: { command: 'git status --short' },
+          tool_response: { stdout: JSON.stringify(receipt) },
         }),
         encoding: 'utf8',
       });
@@ -662,17 +773,19 @@ describe('selection scope capability gating (pane-less harnesses)', () => {
     env.GROUNDWORK_HARNESS = 'codex';
 
     try {
-      // This chat selects web; the pane file records the shared selection.
+      // This chat selects web; the command response carries the receipt.
       runCli(repo, env, 'select', 'web', '--harness', 'codex');
+      const receipt = runCli.lastLine;
 
       // ZCode delivers the session id as a hook environment variable instead
-      // of stdin JSON: the hook must still scope the adopted snapshot to the
+      // of stdin JSON: the hook must still scope the pinned snapshot to the
       // right chat through the CLAUDE_SESSION_ID fallback.
       const adopted = spawnSync('bash', [PIN_HOOK], {
         cwd: repo,
         env: { ...env, CLAUDE_SESSION_ID: 'chat-env' },
         input: JSON.stringify({
           tool_input: { command: `node ${CLI} select web --harness codex` },
+          tool_response: { stdout: JSON.stringify(receipt) },
         }),
         encoding: 'utf8',
       });
@@ -840,6 +953,681 @@ describe('selection scope capability gating (pane-less harnesses)', () => {
       assert.ok(!remaining.some(f => f.startsWith('old-chat')), 'stale snapshot must be pruned');
     } finally {
       fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('library directory bindings are absolute', () => {
+  const DIRS_SNIPPET = `const pc = require(${JSON.stringify(LIB)}); console.log(JSON.stringify({
+    projectRoot: pc.getProjectRoot(),
+    specs: pc.getSpecsDir(),
+    plans: pc.getPlansDir(),
+    debug: pc.getDebugDir(),
+    research: pc.getResearchDir()
+  }))`;
+
+  test('directory getters return absolute paths rooted at the project root', () => {
+    const { root: repo, paths } = makeMultiMonorepo(['web', 'apps/web'], ['api', 'services/api']);
+    const home = path.join(repo, 'home');
+    fs.mkdirSync(home);
+    const env = cleanEnv(home);
+    env.GROUNDWORK_PROJECT_ROOT = paths.web;
+
+    try {
+      const dirs = nodeJson(repo, env, DIRS_SNIPPET);
+      assert.strictEqual(dirs.specs, path.join(paths.web, 'specs'));
+      assert.strictEqual(dirs.plans, path.join(paths.web, '.groundwork-plans'));
+      assert.strictEqual(dirs.debug, path.join(paths.web, '.debug'));
+      assert.strictEqual(dirs.research, path.join(paths.web, '.architecture'));
+      for (const value of Object.values(dirs)) {
+        assert.ok(path.isAbsolute(value), `binding must be absolute: ${value}`);
+      }
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  test('directory getters stay absolute when invoked from inside the project', () => {
+    const { root: repo, paths } = makeMultiMonorepo(['web', 'apps/web']);
+    const home = path.join(repo, 'home');
+    fs.mkdirSync(home);
+    const env = cleanEnv(home);
+    env.GROUNDWORK_PROJECT_ROOT = paths.web;
+
+    try {
+      const dirs = nodeJson(paths.web, env, DIRS_SNIPPET);
+      assert.strictEqual(dirs.specs, path.join(paths.web, 'specs'));
+      assert.strictEqual(dirs.plans, path.join(paths.web, '.groundwork-plans'));
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('receipt-based pane-less pinning', () => {
+  const PROTOCOL = 'groundwork-project-selection-v1';
+  const PERSIST = path.join(PLUGIN_ROOT, 'lib', 'persist-project.js');
+
+  function restoreSnippet(sid) {
+    return `const pc = require(${JSON.stringify(LIB)}); console.log(JSON.stringify(pc.restoreSelection(${JSON.stringify(sid)})))`;
+  }
+
+  function panelessEnv(repo) {
+    const home = path.join(repo, 'home');
+    fs.mkdirSync(home);
+    const env = cleanEnv(home);
+    env.PATH = `${psShim(repo, '??')}${path.delimiter}${env.PATH}`;
+    env.GROUNDWORK_HARNESS = 'codex';
+    return env;
+  }
+
+  // select prints bindings JSON then the standalone receipt line; receipt
+  // consumers take the last JSON line.
+  function lastJsonLine(stdout) {
+    return JSON.parse(stdout.trim().split('\n').filter(Boolean).pop());
+  }
+
+  function selectBare(repo, env, project) {
+    return lastJsonLine(execFileSync(
+      'node', [CLI, 'select', project, '--harness', 'codex'],
+      { cwd: repo, env, encoding: 'utf8' }
+    ));
+  }
+
+  function selectWithSession(repo, env, sid, project) {
+    return lastJsonLine(execFileSync(
+      'node', [CLI, 'select', project, '--harness', 'codex'],
+      { cwd: repo, env: { ...env, GROUNDWORK_SESSION_ID: sid }, encoding: 'utf8' }
+    ));
+  }
+
+  function runPinHook(repo, env, payload) {
+    return spawnSync('bash', [PIN_HOOK], {
+      cwd: repo,
+      env,
+      input: JSON.stringify(payload),
+      encoding: 'utf8',
+    });
+  }
+
+  function receiptPayload(sessionId, receipt, responseField = 'stdout') {
+    return {
+      session_id: sessionId,
+      tool_input: { command: `node ${CLI} select ${receipt.project_name} --harness codex` },
+      tool_response: { [responseField]: typeof receipt === 'string' ? receipt : JSON.stringify(receipt) },
+    };
+  }
+
+  function makeMultiRepo() {
+    return makeMultiMonorepo(['web', 'apps/web'], ['api', 'services/api']);
+  }
+
+  test('selector emits a v1 selection receipt', () => {
+    const { root: repo, paths } = makeMultiRepo();
+    const env = panelessEnv(repo);
+    try {
+      const selected = selectBare(repo, env, 'web');
+      assert.strictEqual(selected.protocol, PROTOCOL);
+      assert.strictEqual(selected.status, 'selected');
+      assert.strictEqual(selected.project_name, 'web');
+      assert.strictEqual(selected.project_root, paths.web);
+      assert.strictEqual(selected.repo_root, repo);
+      assert.ok(selected.selection_id, 'receipt must carry a selection_id');
+      assert.strictEqual(selected.project_root, path.resolve(selected.project_root));
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  test('direct selector with a stable session id pins the session snapshot', () => {
+    const { root: repo, paths } = makeMultiRepo();
+    const env = panelessEnv(repo);
+    try {
+      selectWithSession(repo, env, 'chat-a', 'web');
+      selectWithSession(repo, env, 'chat-b', 'api');
+
+      const a = nodeJson(repo, env, restoreSnippet('chat-a'));
+      assert.strictEqual(a.projectName, 'web');
+      assert.strictEqual(a.source, 'session');
+
+      const b = nodeJson(repo, env, restoreSnippet('chat-b'));
+      assert.strictEqual(b.projectName, 'api');
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  test('hook pins from this chat receipt even after a foreign chat rewrote the pane default', () => {
+    const { root: repo } = makeMultiRepo();
+    const env = panelessEnv(repo);
+    try {
+      // Chat A's selector completes without a session id (bare Bash run):
+      // the pane default becomes web and the command prints A's receipt.
+      const receipt = selectBare(repo, env, 'web');
+
+      // Chat B's selector rewrites the shared workspace default afterwards.
+      selectBare(repo, env, 'api');
+
+      // A's PostToolUse hook fires last; it must pin A's chat from A's own
+      // receipt, never from B's newer pane state.
+      const hooked = runPinHook(repo, env, receiptPayload('chat-a', receipt));
+      assert.strictEqual(hooked.status, 0, hooked.stderr);
+
+      const a = nodeJson(repo, env, restoreSnippet('chat-a'));
+      assert.strictEqual(a.projectName, 'web');
+      assert.strictEqual(a.source, 'session');
+
+      // The workspace default remains B's api selection.
+      const shared = nodeJson(repo, env, restoreSnippet(null));
+      assert.strictEqual(shared.projectName, 'api');
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  test('same-second pane and snapshot writes never arbitrate by timestamp', () => {
+    const { root: repo } = makeMultiRepo();
+    const env = panelessEnv(repo);
+    try {
+      const receipt = selectBare(repo, env, 'web');
+      selectBare(repo, env, 'api');
+
+      const hooked = runPinHook(repo, env, receiptPayload('chat-a', receipt));
+      assert.strictEqual(hooked.status, 0, hooked.stderr);
+
+      // Force the pane write onto the exact same second as the snapshot, with
+      // the foreign project: a >= timestamp comparison would let api win.
+      const stateDir = path.join(path.join(repo, 'home'), '.codex', 'groundwork-state', 'panes');
+      const snapDir = path.join(path.join(repo, 'home'), '.codex', 'groundwork-state', 'chat-snapshots');
+      const snapFile = fs.readdirSync(snapDir).find(f => f.startsWith('chat-a'));
+      const snapshot = JSON.parse(fs.readFileSync(path.join(snapDir, snapFile), 'utf8'));
+      const paneFile = fs.readdirSync(stateDir).find(f => f.startsWith('repo-'));
+      const pane = JSON.parse(fs.readFileSync(path.join(stateDir, paneFile), 'utf8'));
+      pane.timestamp = snapshot.timestamp;
+      pane.project = 'api';
+      fs.writeFileSync(path.join(stateDir, paneFile), JSON.stringify(pane));
+
+      const a = nodeJson(repo, env, restoreSnippet('chat-a'));
+      assert.strictEqual(a.projectName, 'web', 'session snapshot must be authoritative without timestamp arbitration');
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  test('a failed selection writes neither workspace default nor snapshot', () => {
+    const { root: repo } = makeMultiRepo();
+    const env = panelessEnv(repo);
+    try {
+      selectBare(repo, env, 'web');
+      const failed = spawnSync(
+        'node', [CLI, 'select', 'unknown', '--harness', 'codex'],
+        { cwd: repo, env: { ...env, GROUNDWORK_SESSION_ID: 'chat-a' }, encoding: 'utf8' }
+      );
+      assert.notStrictEqual(failed.status, 0);
+      assert.strictEqual(failed.stdout, '', 'a failed selection must not print a receipt');
+
+      const shared = nodeJson(repo, env, restoreSnippet(null));
+      assert.strictEqual(shared.projectName, 'web', 'failed selection must not touch the workspace default');
+
+      // A later hook invocation for that chat has no receipt to trust: no-op.
+      const hooked = runPinHook(repo, env, {
+        session_id: 'chat-a',
+        tool_input: { command: `node ${CLI} select unknown --harness codex` },
+        tool_response: { stdout: failed.stdout },
+      });
+      assert.strictEqual(hooked.status, 0, hooked.stderr);
+      const snapDir = path.join(path.join(repo, 'home'), '.codex', 'groundwork-state', 'chat-snapshots');
+      if (fs.existsSync(snapDir)) {
+        assert.ok(
+          !fs.readdirSync(snapDir).some(f => f.startsWith('chat-a')),
+          'no snapshot may exist for the failed session'
+        );
+      }
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  test('hook accepts an exact receipt from supported payload forms', () => {
+    const { root: repo } = makeMultiRepo();
+    const env = panelessEnv(repo);
+    try {
+      for (const field of ['stdout', 'output']) {
+        const receipt = selectBare(repo, env, 'web');
+        selectBare(repo, env, 'api');
+        const hooked = runPinHook(repo, env, receiptPayload(`chat-${field}`, receipt, field));
+        assert.strictEqual(hooked.status, 0, hooked.stderr);
+        const restored = nodeJson(repo, env, restoreSnippet(`chat-${field}`));
+        assert.strictEqual(restored.projectName, 'web', `receipt via tool_response.${field} must pin`);
+        assert.strictEqual(restored.source, 'session');
+      }
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  test('hook ignores malformed, ambiguous, failure, mismatched, and absent responses', () => {
+    const { root: repo } = makeMultiRepo();
+    const env = panelessEnv(repo);
+    try {
+      const receipt = selectBare(repo, env, 'web');
+      const cases = [
+        ['malformed JSON', { tool_response: { stdout: 'not json {' } }],
+        ['missing tool_response', {}],
+        ['missing result field', { tool_response: {} }],
+        ['two receipt candidates', {
+          tool_response: { stdout: `${JSON.stringify(receipt)}\n${JSON.stringify({ ...receipt, project_name: 'api' })}` },
+        }],
+        ['failure receipt', {
+          tool_response: { stdout: JSON.stringify({ ...receipt, status: 'error' }) },
+        }],
+        ['session mismatch', {
+          session_id: 'chat-a',
+          tool_response: { stdout: JSON.stringify({ ...receipt, session_id: 'someone-else' }) },
+        }],
+        ['non-absolute project root', {
+          tool_response: { stdout: JSON.stringify({ ...receipt, project_root: 'apps/web' }) },
+        }],
+        ['unsafe project name', {
+          tool_response: { stdout: JSON.stringify({ ...receipt, project_name: '../escape' }) },
+        }],
+        ['foreign repo root', {
+          tool_response: { stdout: JSON.stringify({ ...receipt, repo_root: '/definitely/elsewhere' }) },
+        }],
+        ['valid command without a receipt', {
+          tool_response: { stdout: 'Switched to project web.' },
+        }],
+        ['surplus key (merged bindings object)', {
+          tool_response: { stdout: JSON.stringify({ ...receipt, specs_dir: '/abs/spoofed' }) },
+        }],
+        ['missing selection_id', {
+          tool_response: { stdout: JSON.stringify(Object.fromEntries(Object.entries(receipt).filter(([k]) => k !== 'selection_id'))) },
+        }],
+        ['non-hex selection_id', {
+          tool_response: { stdout: JSON.stringify({ ...receipt, selection_id: 'ZZZZ' + 'a'.repeat(20) }) },
+        }],
+        ['uppercase-hex selection_id', {
+          tool_response: { stdout: JSON.stringify({ ...receipt, selection_id: 'A'.repeat(24) }) },
+        }],
+        ['unsafe session_id', {
+          tool_response: { stdout: JSON.stringify({ ...receipt, session_id: '../../evil' }) },
+        }],
+      ];
+      for (const [name, override] of cases) {
+        const payload = {
+          session_id: 'chat-x',
+          tool_input: { command: `node ${CLI} select web --harness codex` },
+          ...override,
+        };
+        const hooked = runPinHook(repo, env, payload);
+        assert.strictEqual(hooked.status, 0, `${name}: ${hooked.stderr}`);
+      }
+      const snapDir = path.join(path.join(repo, 'home'), '.codex', 'groundwork-state', 'chat-snapshots');
+      if (fs.existsSync(snapDir)) {
+        assert.ok(
+          !fs.readdirSync(snapDir).some(f => f.startsWith('chat-x')),
+          'no rejected payload form may pin a snapshot'
+        );
+      }
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  test('hook is a no-op when jq is unavailable (no sed guessing)', () => {
+    const { root: repo } = makeMultiRepo();
+    const env = panelessEnv(repo);
+    try {
+      const receipt = selectBare(repo, env, 'web');
+      // A PATH that can spawn bash but has no jq anywhere on it.
+      const jqlessBin = path.join(repo, 'empty-bin');
+      fs.mkdirSync(jqlessBin);
+      fs.symlinkSync('/bin/bash', path.join(jqlessBin, 'bash'));
+      const hooked = spawnSync('bash', [PIN_HOOK], {
+        cwd: repo,
+        env: { ...env, PATH: jqlessBin },
+        input: JSON.stringify({
+          session_id: 'chat-jq',
+          tool_input: { command: `node ${CLI} select web --harness codex` },
+          tool_response: { stdout: JSON.stringify(receipt) },
+        }),
+        encoding: 'utf8',
+      });
+      assert.strictEqual(hooked.status, 0, 'the hook must never fail a session');
+      const snapDir = path.join(path.join(repo, 'home'), '.codex', 'groundwork-state', 'chat-snapshots');
+      if (fs.existsSync(snapDir)) {
+        assert.ok(
+          !fs.readdirSync(snapDir).some((f) => f.startsWith('chat-jq')),
+          'a payload the hook cannot parse reliably must not pin'
+        );
+      }
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  test('a receipt-bearing response on a non-selector command is ignored', () => {
+    const { root: repo } = makeMultiRepo();
+    const env = panelessEnv(repo);
+    try {
+      const receipt = selectBare(repo, env, 'web');
+      const hooked = runPinHook(repo, env, {
+        session_id: 'chat-x',
+        tool_input: { command: 'cat README.md' },
+        tool_response: { stdout: JSON.stringify(receipt) },
+      });
+      assert.strictEqual(hooked.status, 0, hooked.stderr);
+      const restored = nodeJson(repo, env, restoreSnippet('chat-x'));
+      assert.notStrictEqual(restored && restored.source, 'session');
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  test('real pane identity keeps the hook a no-op and ignores snapshots', () => {
+    const { root: repo } = makeMultiRepo();
+    const env = panelessEnv(repo);
+    env.TMUX = '/tmp/tmux-test/default,123,0';
+    env.TMUX_PANE = '%1';
+    try {
+      const receipt = selectBare(repo, env, 'web');
+      const hooked = runPinHook(repo, env, receiptPayload('chat-a', receipt));
+      assert.strictEqual(hooked.status, 0, hooked.stderr);
+      const snapDir = path.join(path.join(repo, 'home'), '.codex', 'groundwork-state', 'chat-snapshots');
+      if (fs.existsSync(snapDir)) {
+        assert.ok(!fs.readdirSync(snapDir).some(f => f.startsWith('chat-a')), 'pane identity must not pin snapshots');
+      }
+      const restored = nodeJson(repo, env, restoreSnippet('chat-a'));
+      assert.strictEqual(restored.source, 'pane');
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  test('persist-project.js emits the receipt and pins with a stable session id', () => {
+    const { root: repo } = makeMultiRepo();
+    const env = panelessEnv(repo);
+    try {
+      // persist-project prints pane metadata, then the standalone receipt line.
+      const persistOut = execFileSync(
+        'node', [PERSIST, 'web'],
+        { cwd: repo, env: { ...env, GROUNDWORK_SESSION_ID: 'chat-a' }, encoding: 'utf8' }
+      );
+      const output = JSON.parse(persistOut.trim().split('\n').filter(Boolean).pop());
+      assert.strictEqual(output.protocol, PROTOCOL);
+      assert.strictEqual(output.status, 'selected');
+      assert.strictEqual(output.project_name, 'web');
+      assert.ok(output.selection_id);
+
+      const restored = nodeJson(repo, env, restoreSnippet('chat-a'));
+      assert.strictEqual(restored.projectName, 'web');
+      assert.strictEqual(restored.source, 'session');
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  test('the pin hook never consults shared pane state for a pin decision', () => {
+    const hook = fs.readFileSync(PIN_HOOK, 'utf8');
+    assert.ok(!hook.includes('restorePaneSelection'), 'hook must not read pane state to decide pins');
+    assert.ok(!hook.includes('>= snap'), 'hook must not arbitrate by timestamp');
+  });
+});
+
+describe('invalid project configuration fails closed', () => {
+  // An invalid .groundwork.yml must never degrade to single-project resolution:
+  // every operational surface (CLI resolve/select, persist, detection, the pin
+  // hook) refuses with a non-zero exit, emits no bindings or receipt, and
+  // names the config as the problem. Only a MISSING config is single-project.
+  const INVALID_CONFIGS = {
+    'malformed-yaml': 'version: 1\nprojects:\n  - web\n',
+    'empty': '',
+    'unsupported-version': 'version: 2\nprojects:\n  web:\n    path: apps/web\n',
+    'missing-project-path': 'version: 1\nprojects:\n  web:\n',
+    'escaping-project-path': 'version: 1\nprojects:\n  web:\n    path: ../outside\n',
+    'invalid-indentation': 'version: 1\nprojects:\n   web:\n       path: apps/web\n',
+    // Unsupported YAML is not silently ignored: a config outside the exact
+    // canonical grammar is malformed no matter where the stray line sits.
+    'trailing-garbage': 'version: 1\nprojects:\n  web:\n    path: apps/web\n::: garbage\n',
+    'unknown-top-level-key': 'version: 1\nname: x\nprojects:\n  web:\n    path: apps/web\n',
+    'unknown-project-property': 'version: 1\nprojects:\n  web:\n    path: apps/web\n    description: hi\n',
+    'version-after-projects': 'version: 1\nprojects:\n  web:\n    path: apps/web\nversion: 1\n',
+    'duplicate-version': 'version: 1\nversion: 1\nprojects:\n  web:\n    path: apps/web\n',
+    'missing-version': 'projects:\n  web:\n    path: apps/web\n',
+    'missing-projects': 'version: 1\n',
+    'duplicate-project-key': 'version: 1\nprojects:\n  web:\n    path: apps/web\n  web:\n    path: apps/api\n',
+    'duplicate-path-property': 'version: 1\nprojects:\n  web:\n    path: apps/web\n    path: apps/api\n',
+    'indented-top-level-key': '  version: 1\nprojects:\n  web:\n    path: apps/web\n',
+    'projects-before-version': 'projects:\n  web:\n    path: apps/web\nversion: 1\n',
+    'overlapping-nested-trees': 'version: 1\nprojects:\n  web:\n    path: apps\n  api:\n    path: apps/web\n',
+    'overlapping-nested-trees-reversed': 'version: 1\nprojects:\n  web:\n    path: apps/web\n  root:\n    path: apps\n',
+    'duplicate-project-root': 'version: 1\nprojects:\n  web:\n    path: apps/web\n  api:\n    path: apps/web\n',
+  };
+
+  function makeInvalidRepo(configName) {
+    const root = makeMonorepo();
+    if (configName === 'unreadable') {
+      fs.writeFileSync(path.join(root, '.groundwork.yml'), 'version: 1\nprojects:\n  web:\n    path: apps/web\n');
+      fs.chmodSync(path.join(root, '.groundwork.yml'), 0o000);
+    } else {
+      fs.writeFileSync(path.join(root, '.groundwork.yml'), INVALID_CONFIGS[configName]);
+    }
+    return root;
+  }
+
+  const CWD_VARIANTS = {
+    'repo-root': (root) => root,
+    'project-root': (root) => path.join(root, 'apps', 'web'),
+    'nested-descendant': (root) => path.join(root, 'apps', 'web', 'specs'),
+  };
+
+  const spawns = [];
+  function runCliChecked(cwd, env, ...args) {
+    const result = spawnSync('node', [CLI, ...args], { cwd, env, encoding: 'utf8' });
+    spawns.push(result);
+    return result;
+  }
+
+  for (const configName of [...Object.keys(INVALID_CONFIGS), 'unreadable']) {
+    for (const [cwdName, cwdOf] of Object.entries(CWD_VARIANTS)) {
+      test(`resolve with ${configName} config fails closed from the ${cwdName}`, () => {
+        const root = makeInvalidRepo(configName);
+        try {
+          const home = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-home-'));
+          const env = cleanEnv(home);
+          const result = runCliChecked(cwdOf(root), env, 'resolve', '--harness', 'codex');
+          assert.notStrictEqual(result.status, 0, `exit was ${result.status}: ${result.stdout}`);
+          assert.strictEqual(result.stdout.trim(), '', 'bindings were emitted for an invalid config');
+          assert.match(result.stderr, /groundwork/i, 'the failure does not mention the config');
+        } finally {
+          fs.rmSync(root, { recursive: true, force: true });
+        }
+      });
+    }
+  }
+
+  test('symlinked project roots that alias one tree fail closed', () => {
+    const root = makeMonorepo();
+    try {
+      // api's root is a symlink to web's root: lexically distinct, the same
+      // tree after realpath — two names must not own two leases over it.
+      fs.symlinkSync(path.join(root, 'apps', 'web'), path.join(root, 'apps', 'alias'));
+      fs.writeFileSync(path.join(root, '.groundwork.yml'),
+        'version: 1\nprojects:\n  web:\n    path: apps/web\n  api:\n    path: apps/alias\n');
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-home-'));
+      const env = cleanEnv(home);
+      const result = runCliChecked(root, env, 'resolve', '--harness', 'codex');
+      assert.notStrictEqual(result.status, 0, 'aliased project trees were accepted');
+      assert.strictEqual(result.stdout.trim(), '', 'bindings were emitted for aliased trees');
+      assert.match(result.stderr, /overlapping-project-path/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('a lexically nested symlink pointing at a disjoint tree still fails closed', () => {
+    const root = makeMonorepo();
+    try {
+      // apps/web is a symlink to the physically disjoint packages/web: the
+      // realpaths do not alias, but the lexical namespace does — the apps
+      // owner can rename/replace apps/web under the child project.
+      fs.mkdirSync(path.join(root, 'packages', 'web'), { recursive: true });
+      // Replace the real apps/web directory with the disjoint symlink.
+      fs.rmSync(path.join(root, 'apps', 'web'), { recursive: true, force: true });
+      fs.symlinkSync(path.join(root, 'packages', 'web'), path.join(root, 'apps', 'web'));
+      fs.writeFileSync(path.join(root, '.groundwork.yml'),
+        'version: 1\nprojects:\n  web:\n    path: apps/web\n  root:\n    path: apps\n');
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-home-'));
+      const env = cleanEnv(home);
+      const result = runCliChecked(root, env, 'resolve', '--harness', 'codex');
+      assert.notStrictEqual(result.status, 0, 'lexical overlap behind a disjoint symlink was accepted');
+      assert.strictEqual(result.stdout.trim(), '', 'bindings were emitted for overlapping trees');
+      assert.match(result.stderr, /overlapping-project-path/);
+      assert.match(result.stderr, /lexical/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('select with an invalid config writes no receipt and no state', () => {
+    const root = makeInvalidRepo('malformed-yaml');
+    try {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-home-'));
+      const env = cleanEnv(home);
+      const result = runCliChecked(root, env, 'select', 'web', '--harness', 'codex');
+      assert.notStrictEqual(result.status, 0);
+      assert.ok(!result.stdout.includes('selection_id'), 'a receipt was emitted for an invalid config');
+      const stateDir = path.join(home, 'codex-home', 'groundwork-state');
+      assert.strictEqual(fs.existsSync(stateDir), false, 'selection state was persisted anyway');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('persist-project with an invalid config exits non-zero without a receipt', () => {
+    const root = makeInvalidRepo('escaping-project-path');
+    try {
+      const result = spawnSync('node', [path.join(PLUGIN_ROOT, 'lib', 'persist-project.js'), 'web'], {
+        cwd: root, env: cleanEnv(fs.mkdtempSync(path.join(os.tmpdir(), 'gw-home-'))), encoding: 'utf8',
+      });
+      assert.notStrictEqual(result.status, 0);
+      assert.ok(!result.stdout.includes('selection_id'));
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('detect-project-state reports the config error instead of degrading to single-project', () => {
+    const root = makeInvalidRepo('unsupported-version');
+    try {
+      const result = spawnSync('node', [DETECT], { cwd: root, encoding: 'utf8' });
+      assert.notStrictEqual(result.status, 0, 'invalid config detection exited 0');
+      assert.ok(!/"isMonorepo":false/.test(result.stdout), 'detector silently degraded to single-project');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('the pin hook is a no-op in an invalid-config repository', () => {
+    const root = makeInvalidRepo('malformed-yaml');
+    try {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-home-'));
+      const receiptish = JSON.stringify({
+        protocol: 'groundwork-project-selection-v1',
+        status: 'selected',
+        project_name: 'web',
+        project_root: path.join(root, 'apps', 'web'),
+        repo_root: root,
+        selection_id: 'a'.repeat(24),
+      });
+      const hookInput = JSON.stringify({
+        session_id: 'chat-a',
+        tool_input: { command: 'node persist-project.js web' },
+        tool_response: { stdout: receiptish },
+      });
+      const result = spawnSync('bash', [PIN_HOOK], {
+        cwd: root, env: { ...cleanEnv(home), GROUNDWORK_HARNESS: 'codex' }, input: hookInput, encoding: 'utf8',
+      });
+      assert.strictEqual(result.status, 0, 'the hook itself must never fail a session');
+      const snapshots = path.join(home, 'codex-home', 'groundwork-state', 'chat-snapshots');
+      assert.strictEqual(fs.existsSync(snapshots), false, 'a pin was written from an invalid config repo');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('a missing config stays a single-project resolution with selection_required false', () => {
+    const root = makeSingleProjectRepo();
+    try {
+      const env = cleanEnv(fs.mkdtempSync(path.join(os.tmpdir(), 'gw-home-')));
+      const output = runCli(root, env, 'resolve', '--harness', 'codex');
+      assert.strictEqual(output.selection_required, false);
+      assert.strictEqual(path.isAbsolute(output.project_root), true);
+      assert.strictEqual(path.isAbsolute(output.specs_dir), true);
+      assert.strictEqual(path.isAbsolute(output.plans_dir), true);
+      assert.strictEqual(path.isAbsolute(output.debug_dir), true);
+      assert.strictEqual(path.isAbsolute(output.research_dir), true);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('a valid monorepo without a selection reports selection_required true', () => {
+    const root = makeMonorepo();
+    try {
+      const env = cleanEnv(fs.mkdtempSync(path.join(os.tmpdir(), 'gw-home-')));
+      const output = runCli(root, env, 'resolve', '--harness', 'codex');
+      assert.strictEqual(output.selection_required, true);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('template variable resolution preserves absolute bindings in a no-config repo', () => {
+    const root = makeSingleProjectRepo();
+    try {
+      const result = spawnSync('node', [path.join(PLUGIN_ROOT, 'lib', 'resolve-template-vars.js')], {
+        cwd: root,
+        env: cleanEnv(fs.mkdtempSync(path.join(os.tmpdir(), 'gw-home-'))),
+        input: '',
+        encoding: 'utf8',
+      });
+      const context = JSON.parse(result.stdout).hookSpecificOutput.additionalContext;
+      const specs = context.split('\n').find((line) => line.startsWith('- {{specs_dir}}'));
+      const plans = context.split('\n').find((line) => line.startsWith('- {{plans_dir}}'));
+      assert.match(specs, new RegExp(`= ${root.replace(/\//g, '\\/')}/specs$`));
+      assert.match(plans, new RegExp(`= ${root.replace(/\//g, '\\/')}/\\.groundwork-plans$`));
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('pi selection-ui adapter (dependency-free)', () => {
+  const selectionUi = require(path.join(PLUGIN_ROOT, 'pi-extension', 'lib', 'selection-ui.js'));
+
+  test('a typed failure keeps the previous context and yields one actionable message', () => {
+    const previous = { root: '/prev', specsDir: '/prev/specs' };
+    const applied = selectionUi.piApply({ ok: false, code: 'malformed-yaml', message: 'bad mapping' }, previous);
+    assert.strictEqual(applied.context, previous, 'failure must retain the previous context object');
+    assert.match(applied.message, /malformed-yaml/);
+    assert.match(applied.message, /bad mapping/);
+    assert.match(applied.message, /previous project context is kept/);
+  });
+
+  test('a successful resolution returns the fresh context with no message', () => {
+    const fresh = { ok: true, project_root: '/repo/apps/web' };
+    const applied = selectionUi.piApply(fresh, { root: '/prev' });
+    assert.strictEqual(applied.context, fresh);
+    assert.strictEqual(applied.message, null);
+  });
+
+  test('a null/undefined result degrades to the failure shape, never garbage bindings', () => {
+    for (const result of [null, undefined]) {
+      const previous = { root: '/prev' };
+      const applied = selectionUi.piApply(result, previous);
+      assert.strictEqual(applied.context, previous);
+      assert.ok(applied.message);
     }
   });
 });

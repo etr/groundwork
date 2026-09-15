@@ -119,6 +119,10 @@ Hooks are defined in `hooks/hooks.json` and use `${CLAUDE_PLUGIN_ROOT}` for port
 | `lib/resolve-template-vars.js` | Resolves `{{specs_dir}}`, `{{plans_dir}}`, `{{debug_dir}}`, `{{research_dir}}` etc. in skill bodies (PostToolUse) |
 | `lib/persist-project.js`, `lib/persist-unworked-findings.js` | Persist project + validation state (per terminal pane where pane identity exists; per-chat snapshots + labeled workspace default in pane-less UIs like ZCode) |
 | `lib/atomic-write.js` | Shared tmp+fsync+rename writes for anything a concurrent reader can observe |
+| `lib/owned-lock.js` | Token-bearing O_EXCL lock with holder process identity and identity-checked release |
+| `lib/lease-mutation.js` | Serialized mutation-turn queue fencing every fixed-lock/lease transition (compare-and-delete only inside a turn) |
+| `lib/process-identity.js` | PID + process-start identity for same-host liveness probes (locks, heartbeats, reaping) |
+| `lib/external-runner-manifest.js` | Checked manifest of the exported standalone runner runtime; validates its transitive import closure |
 | `lib/state-dir.js` | Prints the harness-resolved state directory so bash hooks/statusline cannot diverge from Node writers |
 | `lib/worktree-identity.js` | Single source of truth for task worktree paths and branch names (project-qualified in monorepos); CLI for skills, factory for the runner |
 | `lib/plan-check.js` | Verifies a legacy repo-root plan's recorded project before adoption |
@@ -128,7 +132,7 @@ Hooks are defined in `hooks/hooks.json` and use `${CLAUDE_PLUGIN_ROOT}` for port
 
 ### Path safety
 
-Files produced by skills follow three invariants, enforced repo-wide by `tests/path-safety.test.js` (see `docs/developing-skills.md` → "Path Safety" for the full rules and the reserved-dirs table): artifacts keyed on per-project identifiers are project-scoped via template variables; run-keyed artifacts carry uniqueness suffixes; and shared "active" pointers use O_EXCL locks with staleness recovery (as in `lib/validation-session.js`).
+Files produced by skills follow five invariants — project-scoped artifacts and invocation-unique run artifacts, absolute operational bindings, no fixed shared temp paths, serialized fixed-state transitions (owned-lock/lease-mutation with holder identity), and worktree/branch identity from `lib/worktree-identity.js` — enforced by `tests/path-safety.test.js` with per-rule scope (corpus-wide scans for invariants 1 and 3; a functional check for invariant 2; primitive-level checks plus a corpus-wide pointer prohibition for invariant 4; targeted instruction-surface checks for invariant 5 and the journal/handoff applications of invariant 1) (see `docs/developing-skills.md` → "Path Safety" for the full rules and the reserved-dirs table): artifacts keyed on per-project identifiers are project-scoped via template variables (in both template and literal relative shell spellings); run-keyed artifacts carry uniqueness suffixes; operational bindings are normalized absolute paths; fixed mutable state ("active" pointers, owned locks, lease publications) transitions only through the serialized mutation protocol (`lib/owned-lock.js`, `lib/lease-mutation.js`, holder identity from `lib/process-identity.js`); and task worktree/branch identity comes from `lib/worktree-identity.js`. The exported standalone runner closure is declared and validated by `lib/external-runner-manifest.js`.
 
 ## Multi-target installation
 
