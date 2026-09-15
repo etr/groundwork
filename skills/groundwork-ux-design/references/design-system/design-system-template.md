@@ -1,0 +1,334 @@
+# Design System Template
+
+Use this template when creating `{{specs_dir}}/design_system.md`.
+
+```markdown
+# Design System Specification
+
+**Version:** 0.1
+**Last updated:** <date>
+**Status:** Draft | Review | Approved
+
+---
+
+## 1) Design Foundations
+
+### 1.1 Accessibility Requirements
+
+**Compliance Level:** [WCAG 2.1 AA | AAA | Section 508]
+**Date Decided:** YYYY-MM-DD
+
+| Requirement | Standard | Notes |
+|-------------|----------|-------|
+| Color Contrast (text) | [4.5:1 | 7:1] | Normal text minimum |
+| Color Contrast (large text) | [3:1 | 4.5:1] | 18pt+ or 14pt bold |
+| Focus Indicators | Visible | 3:1 contrast against adjacent |
+| Keyboard Navigation | Full | All interactive elements |
+| Screen Reader | Compatible | ARIA labels, semantic HTML |
+
+### 1.2 Design Principles
+
+[List DP-NNN decisions here]
+
+### 1.3 Token Categories
+
+| Category | Purpose | Values Defined In |
+|----------|---------|-------------------|
+| Colors | Brand identity, semantic meaning | Section 2.1 |
+| Typography | Font families, sizes, weights | Section 2.2 |
+| Spacing | Layout rhythm and consistency | Below |
+| Elevation | Shadow and layering hierarchy | Below |
+| Border Radius | Shape language | Below |
+| Animation | Motion timing and easing | Section 3.7 |
+| Breakpoints | Responsive boundaries | Section 3.6 |
+
+#### Spacing Scale
+
+| Token | Value | Usage |
+|-------|-------|-------|
+| `--space-0` | 0 | No space |
+| `--space-1` | 4px | Tight spacing (icons, inline) |
+| `--space-2` | 8px | Compact spacing (form fields) |
+| `--space-3` | 12px | Default spacing |
+| `--space-4` | 16px | Section spacing |
+| `--space-6` | 24px | Group spacing |
+| `--space-8` | 32px | Major section spacing |
+| `--space-12` | 48px | Page section spacing |
+| `--space-16` | 64px | Hero/header spacing |
+
+#### Elevation Scale
+
+| Token | Value | Usage |
+|-------|-------|-------|
+| `--elevation-0` | none | Flat surfaces |
+| `--elevation-1` | `0 1px 3px rgba(0,0,0,0.12)` | Cards, raised surfaces |
+| `--elevation-2` | `0 4px 6px rgba(0,0,0,0.15)` | Dropdowns, popovers |
+| `--elevation-3` | `0 10px 20px rgba(0,0,0,0.19)` | Modals, dialogs |
+
+#### Border Radius Scale
+
+| Token | Value | Usage |
+|-------|-------|-------|
+| `--radius-none` | 0 | Sharp corners |
+| `--radius-sm` | 4px | Buttons, inputs |
+| `--radius-md` | 8px | Cards |
+| `--radius-lg` | 12px | Modals |
+| `--radius-full` | 9999px | Pills, avatars |
+
+### 1.4 Platform Requirements
+
+| Platform | Minimum Support | Notes |
+|----------|-----------------|-------|
+| [Web/Mobile/Desktop] | [versions] | [constraints] |
+
+---
+
+## 2) Brand Identity
+
+[Populated by branding skill]
+
+### 2.1 Color System
+
+[Color tokens and palette]
+
+#### Color Space & Neutrals
+**Color Space:** [OKLCH | HSL | hex-only]
+**Neutral Tinting:** [Brand hue applied to neutral scale — hue angle and chroma value]
+**Pure Black/White:** Prohibited — use tinted near-black/near-white from neutral scale
+
+#### Dark Mode Strategy
+**Approach:** [Semantic token layer swap | Full palette variant | Not applicable]
+**Key Adjustments:**
+- [e.g., Lighter surfaces for depth instead of shadows]
+- [e.g., Desaturated accent colors]
+- [e.g., Reduced font weight or increased line-height]
+
+### 2.2 Typography
+
+[Font families, type scale]
+
+#### Fluid Type Strategy
+| Context | Approach | Rationale |
+|---------|----------|-----------|
+| Display/hero text | [e.g., `clamp(2rem, 5vw + 1rem, 4rem)`] | Scales with viewport |
+| App UI / controls | [e.g., Fixed `rem` scale] | Predictable sizing |
+
+#### Font Loading
+**Strategy:** [e.g., `font-display: swap` with metric-matched fallbacks]
+**Fallback Stack:** [e.g., `'CustomFont', 'CustomFont-Fallback', sans-serif`]
+**Minimum Body Text:** 16px (1rem)
+
+### 2.3 Logo Usage
+
+[Logo guidelines if applicable]
+
+### 2.4 Brand Voice & Writing Style
+
+**Voice:** [constant personality — e.g., confident but warm, precise but human]
+**Tone adapts to moment:** [e.g., celebratory for success, empathetic for errors, encouraging for empty states]
+
+**Writing Patterns:**
+| Pattern | Standard | Example |
+|---------|----------|---------|
+| Button labels | Verb + Object | "Save changes", not "OK" |
+| Error messages | What + Why + How to fix | "File too large (max 10MB). Compress or choose a smaller file." |
+| Empty states | Acknowledge + Value + Action | "No projects yet. Create your first one." |
+| Destructive actions | Name the destruction | "Delete project", not "Yes" |
+
+**Terminology Glossary:** [list of standardized terms — one term per concept]
+
+### 2.5 Visual Atmosphere
+
+**Tonal Direction:** [e.g., brutally minimal, warm editorial, retro-futuristic, organic warmth, quiet luxury, playful, editorial, brutalist, art deco, soft atmospheric, industrial, geometric bold]
+
+**Surface Treatments:**
+| Surface | Treatment | Notes |
+|---------|-----------|-------|
+| Backgrounds | [e.g., subtle noise texture, gradient wash, solid flat] | [usage context] |
+| Cards | [e.g., glass morphism, sharp shadow, flat border, soft elevation] | [hover behavior] |
+| Section dividers | [e.g., hairline, gradient fade, whitespace only, decorative rule] | [rhythm role] |
+| Image treatments | [e.g., rounded corners, duotone filter, masked shapes, full-bleed] | [brand expression] |
+
+**Spatial Character:**
+| Property | Approach | Notes |
+|----------|----------|-------|
+| Alignment | [e.g., strict grid, organic offset, centered, asymmetric] | [overall rhythm] |
+| Density | [e.g., generous whitespace, compact utilitarian, varied rhythm] | [content type influence] |
+| Hero treatment | [e.g., full-bleed, contained card, split layout, typographic-only] | [landing/key pages] |
+| Content rhythm | [e.g., regular cadence, varied section sizes, alternating layouts] | [scroll experience] |
+
+**Signature Details:**
+[Distinctive micro-decisions that make this design recognizable — e.g., specific border radius for all elements, a recurring accent line, a particular way images are cropped, a color treatment on hover states]
+
+---
+
+## 3) UX Patterns
+
+[Populated by ux-patterns skill]
+
+### 3.1 Navigation
+
+[Navigation structure and patterns]
+
+### 3.2 Loading States
+
+[Loading feedback patterns]
+
+### 3.3 Error Handling
+
+[Error display and recovery]
+
+### 3.4 Empty States
+
+[Empty state patterns]
+
+### 3.5 Form Patterns
+
+[Form validation and interaction]
+
+**Validation Timing:** [On blur | On submit | Hybrid — e.g., blur for format, submit for required]
+**Labels:** Visible `<label>` elements required (never placeholder-only)
+**Error Placement:** Below field, connected via `aria-describedby`
+
+### 3.6 Responsive Behavior
+
+[Breakpoints and adaptation]
+
+### 3.7 Motion & Interaction Character
+
+**Timing Tokens:**
+| Category | Duration | Examples |
+|----------|----------|----------|
+| Instant feedback | [100-150ms] | Button press, toggle |
+| State changes | [200-300ms] | Menu, tooltip, hover |
+| Layout changes | [300-500ms] | Accordion, modal, drawer |
+| Entrances | [500-800ms] | Page load, hero reveals |
+
+**Easing Functions:**
+| Context | Easing | CSS Value |
+|---------|--------|-----------|
+| Enter/appear | [e.g., ease-out-quart] | `cubic-bezier(0.25, 1, 0.5, 1)` |
+| Exit/dismiss | [e.g., ease-in-quart] | `cubic-bezier(0.5, 0, 0.75, 0)` |
+| State change | [e.g., ease-in-out] | `cubic-bezier(0.65, 0, 0.35, 1)` |
+
+**Animatable Properties:** `transform` and `opacity` only (no layout properties)
+**Exit Duration:** ~75% of entrance duration
+**Reduced Motion:** `prefers-reduced-motion` removes decorative motion; preserves functional (progress, loading, focus)
+
+**Entrance Patterns:**
+| Element | Entrance | Duration | Notes |
+|---------|----------|----------|-------|
+| Page content | [e.g., fade-up, slide-in, cut] | [ms] | [stagger behavior] |
+| Cards/lists | [e.g., staggered fade, cascade, instant] | [ms] | [delay pattern] |
+| Modals/dialogs | [e.g., scale-fade, slide-up, instant] | [ms] | [backdrop behavior] |
+
+**Hover Signatures:**
+| Element | Hover Effect | Notes |
+|---------|-------------|-------|
+| Buttons | [e.g., subtle lift + shadow, color shift, underline reveal] | [brand personality] |
+| Cards | [e.g., border glow, subtle scale, shadow deepen, accent reveal] | [interaction invitation] |
+| Links | [e.g., underline slide, color transition, background highlight] | [discoverability] |
+
+**Scroll Behavior:**
+| Pattern | Usage | Notes |
+|---------|-------|-------|
+| [e.g., parallax, sticky headers, reveal-on-scroll, none] | [where applied] | [reduced-motion fallback] |
+
+### 3.8 Visual Atmosphere
+
+**Background treatments, card surfaces, section dividers, and image styles that create the product's visual feel.**
+
+[Reference §2.5 for defined treatments. This section documents how those treatments are applied across UX patterns.]
+
+### 3.9 Spatial Composition
+
+**Alignment style, density, hero treatments, and content rhythm that define the product's layout personality.**
+
+[Reference §2.5 for defined spatial character. This section documents how spatial decisions apply across page types and breakpoints.]
+
+### 3.10 Layout Architecture
+
+**Structural spatial decisions that define how the page is organized, how sections relate, and how the user moves through the experience.**
+
+- **Section Geometry**: [variable container widths / fixed width / diagonal breaks / rounded stacking / asymmetric splits / ...]
+  - Rationale: [derived from tonal direction + product requirements]
+  - Container widths: [narrow sections at Xrem, standard at Yrem, full-bleed where]
+- **Scroll Architecture**: [scroll-scrubbed / fixed parallax / pin-and-reveal / sticky card cascade / horizontal scroll conversion / standard vertical / ...]
+  - Reduced motion fallback: [how the page degrades for prefers-reduced-motion]
+  - Scroll library: [none / GSAP ScrollTrigger / CSS scroll-driven animations / ...]
+- **Content Hierarchy**: [image-first / type-dominant / data-dense / balanced / density-contrast alternating / ...]
+  - Primary content type: [what dominates each section type]
+- **Navigation Behavior**: [migratory / dual-layer contextual / embedded hero / content-push / marquee / navigation by absence / standard sticky / ...]
+  - Mobile adaptation: [how the nav pattern adapts to mobile]
+  - Transition points: [when/where nav changes behavior during scroll]
+- **Page Rhythm**: [description of breathing pattern — which sections are dense vs sparse, how rhythm varies across the page]
+  - Section sequence: [e.g., sparse hero → dense features → sparse CTA → dense specs → sparse footer]
+
+**Strategy bundle**: [name from layout-examples.md, if applicable — e.g., "Cinematic Scroll Narrative", "Industrial Precision"]
+**Named patterns**: [list of specific patterns from layout-architecture-guide.md being used]
+**Complexity tier**: [CSS-only / JS-light / JS-heavy]
+
+### 3.11 Interaction States
+
+| State | Visual Treatment | Notes |
+|-------|-----------------|-------|
+| Default | [base appearance] | |
+| Hover | [e.g., subtle lift, color shift] | Pointer only, not touch |
+| Focus | [focus ring: width, color, offset] | `:focus-visible` only |
+| Active/Pressed | [e.g., pressed in, darker] | |
+| Disabled | [e.g., 40% opacity, no pointer events] | |
+| Loading | [e.g., spinner replacing label, skeleton] | |
+| Error | [e.g., red border, error icon] | |
+| Success | [e.g., green check, temporary confirmation] | |
+
+### 3.12 Writing Style
+
+[Reference §2.4 for voice, tone, and writing patterns. This section documents how writing decisions apply across specific UI contexts.]
+
+**Error Message Examples:**
+| Context | Message |
+|---------|---------|
+| [e.g., File upload] | [e.g., "This file is too large (max 10MB). Compress it or choose a smaller file."] |
+| [e.g., Network] | [e.g., "Couldn't reach the server. Check your connection and try again."] |
+
+**Empty State Examples:**
+| Context | Message | Action |
+|---------|---------|--------|
+| [e.g., First project] | [e.g., "No projects yet. Projects help you organize related tasks."] | [e.g., "Create your first project"] |
+
+---
+
+## 4) Component Guidelines
+
+[Summary mapping components to design decisions]
+
+| Component | Key Decisions | Notes |
+|-----------|---------------|-------|
+| Button | BRD-NNN (color), DP-NNN (clarity) | Primary, secondary, ghost variants |
+| Input | BRD-NNN (typography), UXD-NNN (validation) | Focus states, error states |
+| Card | DP-NNN (elevation), BRD-NNN (radius) | Consistent shadow, padding |
+
+---
+
+## 5) Decision Log
+
+### Design Principles (DP-NNN)
+
+[List all DP decisions]
+
+### Brand Decisions (BRD-NNN)
+
+[List all BRD decisions]
+
+### UX Decisions (UXD-NNN)
+
+[List all UXD decisions]
+
+---
+
+## 6) Open Questions & Risks
+
+| ID | Question/Risk | Impact | Owner |
+|----|---------------|--------|-------|
+| DS-001 | [description] | [H/M/L] | [who] |
+```
