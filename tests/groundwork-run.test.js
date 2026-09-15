@@ -7660,6 +7660,86 @@ describe('phaseChildLeases owner validation', () => {
   });
 });
 
+describe('assertClean survives transient index-lock contention', () => {
+  const { assertClean } = require(RUNNER);
+
+  function lockContention() {
+    const failure = new Error("Command failed: git -c core.hooksPath=/dev/null update-index --really-refresh");
+    failure.status = 128;
+    failure.stderr = "fatal: Unable to create '/repo/.git/index.lock': File exists.\n";
+    return failure;
+  }
+
+  test('retries the index refresh past a sibling runner holding index.lock', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-clean-lock-'));
+    try {
+      initRepo(root);
+      let failures = 2;
+      let refreshAttempts = 0;
+      assertClean(root, 'Base worktree', new Set(), {
+        execGit: (next, cwd, args, options) => {
+          if (args.includes('update-index')) {
+            refreshAttempts++;
+            if (failures > 0) {
+              failures--;
+              throw lockContention();
+            }
+          }
+          return next(cwd, args, options);
+        },
+      });
+      assert.strictEqual(failures, 0, 'the transient failures were not consumed');
+      assert.ok(refreshAttempts >= 3, 'the refresh must have been retried');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('still fails closed when the index refresh keeps failing', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-clean-stuck-'));
+    try {
+      initRepo(root);
+      assert.throws(
+        () => assertClean(root, 'Base worktree', new Set(), {
+          execGit: (next, cwd, args) => {
+            if (args.includes('update-index')) throw lockContention();
+            return next(cwd, args);
+          },
+        }),
+        /Base worktree has tracked content that differs from its index/
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('a non-lock refresh failure is not retried', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-clean-hard-'));
+    try {
+      initRepo(root);
+      let refreshAttempts = 0;
+      assert.throws(
+        () => assertClean(root, 'Base worktree', new Set(), {
+          execGit: (next, cwd, args) => {
+            if (args.includes('update-index')) {
+              refreshAttempts++;
+              const failure = new Error('Command failed: git update-index --really-refresh');
+              failure.status = 128;
+              failure.stderr = 'fatal: bad object HEAD\n';
+              throw failure;
+            }
+            return next(cwd, args);
+          },
+        }),
+        /Base worktree has tracked content that differs from its index/
+      );
+      assert.strictEqual(refreshAttempts, 1, 'non-lock failures must not be retried');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
 process.on('exit', () => {
   console.log(`\n${passed} passed, ${failed} failed`);
   if (failed > 0) process.exitCode = 1;

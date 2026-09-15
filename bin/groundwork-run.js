@@ -2614,25 +2614,39 @@ function assertNoHiddenIndexFlags(cwd, label, pathspec = null) {
   }
 }
 
-function assertClean(cwd, label, seen = new Set()) {
+function assertClean(cwd, label, seen = new Set(), dependencies = {}) {
   const canonical = fs.realpathSync(cwd);
   if (seen.has(canonical)) throw new Error(`${label} contains a recursive submodule path`);
   seen.add(canonical);
+  const run = (args, options) => (dependencies.execGit
+    ? dependencies.execGit(execGit, cwd, args, options)
+    : execGit(cwd, args, options));
   const initialFlags = hiddenIndexFlags(cwd);
   if (initialFlags.length) {
     throw new Error(`${label} has assume-unchanged or skip-worktree entries:\n${initialFlags.join('\n')}`);
   }
   let refreshFailed = false;
-  try {
-    execGit(cwd, ['update-index', '--really-refresh']);
-  } catch {
-    refreshFailed = true;
+  // A sibling runner's opportunistic `git status` refresh can hold the
+  // shared index lock for the span of one command; on slower filesystems
+  // that turns a healthy refresh into a spurious cleanliness failure.
+  // Retry the transient contention, bounded, before treating it as real.
+  for (let attempt = 0; ; attempt++) {
+    try {
+      run(['update-index', '--really-refresh']);
+      refreshFailed = false;
+      break;
+    } catch (error) {
+      refreshFailed = true;
+      const detail = `${(error && error.message) || ''}\n${(error && error.stderr) || ''}`;
+      if (attempt >= 4 || !/index\.lock|File exists/i.test(detail)) break;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+    }
   }
   const flagged = hiddenIndexFlags(cwd);
   if (flagged.length) {
     throw new Error(`${label} has assume-unchanged or skip-worktree entries:\n${flagged.join('\n')}`);
   }
-  const status = execGit(cwd, [
+  const status = run([
     'status',
     '--porcelain',
     '--untracked-files=all',
@@ -2645,7 +2659,7 @@ function assertClean(cwd, label, seen = new Set()) {
   for (const relative of initializedSubmodules(cwd)) {
     const absolute = path.join(cwd, relative);
     assertNoSymlinkComponents(cwd, absolute, `${label} submodule`);
-    assertClean(absolute, `${label} submodule ${relative}`, seen);
+    assertClean(absolute, `${label} submodule ${relative}`, seen, dependencies);
   }
   seen.delete(canonical);
 }
@@ -4300,6 +4314,7 @@ module.exports = {
   acquireRepositoryGate,
   activeProjectOwners,
   phaseChildLeases,
+  assertClean,
   processStartIdentity,
   resolveProject,
   runTasks,
