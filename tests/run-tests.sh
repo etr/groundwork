@@ -10,8 +10,11 @@ PLUGIN_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 # killed (its child processes first, so orphaned workers cannot outlive it)
 # and recorded as FAILED, letting the remaining suites still run. Without
 # this, one hung suite stalls the whole validation gate indefinitely.
+# The default must accommodate the slowest healthy suites (install-config
+# runs 8-10 minutes on a loaded machine or CI runner), not just the fast
+# ones: a timeout that kills healthy suites turns every CI run red.
 # Override via the environment, e.g. SUITE_TIMEOUT=60 bash tests/run-tests.sh
-SUITE_TIMEOUT="${SUITE_TIMEOUT:-300}"
+SUITE_TIMEOUT="${SUITE_TIMEOUT:-900}"
 
 # pkill reaps a timed-out suite's children before the suite itself. If it is
 # unavailable, the watchdog still bounds the suite process (children may
