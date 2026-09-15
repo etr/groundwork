@@ -229,7 +229,7 @@ When escalating after swarm debugging, include **all teammate findings** in the 
 
 ## Debug Journal — Swarm Extension
 
-Use the same invocation-unique `{{debug_dir}}/${SLUG}-<timestamp>-<pid>.md` journal format as the debug skill, with an additional `## Swarm Evidence` section:
+Use the same invocation-unique run-directory journal as the debug skill — the literal `$RUN_DIR/journal.md` you allocated in Phase 1 with `RUN_DIR="$(mktemp -d "{{debug_dir}}/${SLUG}-XXXXXX")"` — with an additional `## Swarm Evidence` section:
 
 ```markdown
 # Debug: {slug}

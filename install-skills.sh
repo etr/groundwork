@@ -968,10 +968,12 @@ $new_body"
                 write_codex_agent "$session_dir/persist-unworked-findings.js" "$(<"$SOURCE_DIR/lib/persist-unworked-findings.js")" "unworked findings persistence helper" "$dest_base"
                 write_codex_agent "$session_dir/validation-session.js" "$(<"$SOURCE_DIR/lib/validation-session.js")" "validation session helper" "$dest_base"
                 write_codex_agent "$session_dir/atomic-write.js" "$(<"$SOURCE_DIR/lib/atomic-write.js")" "validation session helper" "$dest_base"
+                write_codex_agent "$session_dir/redact.js" "$(<"$SOURCE_DIR/lib/redact.js")" "validation session helper" "$dest_base"
             else
                 write_file "$session_dir/persist-unworked-findings.js" "$(<"$SOURCE_DIR/lib/persist-unworked-findings.js")" "unworked findings persistence helper"
                 write_file "$session_dir/validation-session.js" "$(<"$SOURCE_DIR/lib/validation-session.js")" "validation session helper"
                 write_file "$session_dir/atomic-write.js" "$(<"$SOURCE_DIR/lib/atomic-write.js")" "validation session helper"
+                write_file "$session_dir/redact.js" "$(<"$SOURCE_DIR/lib/redact.js")" "validation session helper"
             fi
         fi
         if [[ "$needs_worktree_identity" == true ]]; then

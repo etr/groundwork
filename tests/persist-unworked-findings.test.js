@@ -54,6 +54,44 @@ function waitForFile(file, timeoutMs = 30000) {
   return file;
 }
 
+// Failure-safe barrier teardown: unblock every worker (release is
+// idempotent), wait a bounded interval for each worker's result file — its
+// last action — then SIGKILL survivors so no child can hold the test
+// process's event loop open, and only then remove the scratch directories
+// (retries absorb a racing worker's final writes). The original test
+// failure, if any, still fails the test.
+function cleanupBarrierWorkers(workers, ...dirs) {
+  try {
+    for (const worker of workers) {
+      try {
+        fs.writeFileSync(worker.release, 'go\n');
+      } catch {
+        // already released or the barrier directory is gone
+      }
+    }
+    const deadline = Date.now() + 10_000;
+    for (const worker of workers) {
+      while (!fs.existsSync(worker.result)) {
+        if (Date.now() > deadline) break;
+        sleepMs(20);
+      }
+    }
+    for (const worker of workers) {
+      if (!fs.existsSync(worker.result)) {
+        try {
+          worker.child.kill('SIGKILL');
+        } catch {
+          // already exiting or gone
+        }
+      }
+    }
+  } finally {
+    for (const dir of dirs) {
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    }
+  }
+}
+
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-unworked-'));
   const findingsDir = path.join(root, 'findings');
@@ -161,6 +199,7 @@ describe('concurrent manual unworked-findings persistence', () => {
     const { root, findingsDir, specsDir } = fixture();
     const barrier = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-unworked-barrier-'));
     const WORKER_COUNT = 12;
+    const workers = [];
     try {
       const baseArgs = [
         '--findings-dir', findingsDir,
@@ -168,7 +207,6 @@ describe('concurrent manual unworked-findings persistence', () => {
         '--task-id', 'TASK-075',
         '--fixed-ids', '',
       ];
-      const workers = [];
       for (let i = 0; i < WORKER_COUNT; i++) {
         workers.push(spawnPersistWorker(barrier, `w${i}`, baseArgs));
       }
@@ -207,14 +245,14 @@ describe('concurrent manual unworked-findings persistence', () => {
       assert.strictEqual(entries.length, WORKER_COUNT, `orphan files left behind: ${entries}`);
       assert.ok(entries.every((name) => name.endsWith('.md')), `non-report files left behind: ${entries}`);
     } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-      fs.rmSync(barrier, { recursive: true, force: true });
+      cleanupBarrierWorkers(workers, root, barrier);
     }
   });
 
   test('the same run id remains one intentional idempotent report under concurrency', () => {
     const { root, findingsDir, specsDir } = fixture();
     const barrier = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-unworked-barrier-'));
+    const workers = [];
     try {
       const args = [
         '--findings-dir', findingsDir,
@@ -223,7 +261,7 @@ describe('concurrent manual unworked-findings persistence', () => {
         '--fixed-ids', '',
         '--run-id', 'a'.repeat(32),
       ];
-      const workers = [0, 1, 2, 3].map((i) => spawnPersistWorker(barrier, `w${i}`, args));
+      for (const i of [0, 1, 2, 3]) workers.push(spawnPersistWorker(barrier, `w${i}`, args));
       for (const worker of workers) waitForFile(worker.ready);
       for (const worker of workers) fs.writeFileSync(worker.release, 'go\n');
       const outcomes = workers.map((worker) => {
@@ -241,8 +279,120 @@ describe('concurrent manual unworked-findings persistence', () => {
       const content = fs.readFileSync(paths[0], 'utf8');
       assert.ok(content.startsWith('# Unworked Review Issues'));
     } finally {
+      cleanupBarrierWorkers(workers, root, barrier);
+    }
+  });
+});
+
+describe('unrecognized dispositions fail closed', () => {
+  const { spawnSync } = require('child_process');
+
+  test('a typoed disposition aborts persistence naming the value and the finding id', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-unworked-unknown-'));
+    const findingsDir = path.join(root, 'findings');
+    const specsDir = path.join(root, 'specs');
+    fs.mkdirSync(findingsDir);
+    fs.mkdirSync(specsDir);
+    fs.writeFileSync(path.join(findingsDir, 'findings-reviewer-iter2.json'), JSON.stringify({
+      agent: 'reviewer',
+      iteration: 2,
+      findings: [
+        { id: 9, severity: 'minor', category: 'drift', file: 'a.js', line: 1,
+          finding: 'open finding', recommendation: 'Do it', disposition: 'actionble' },
+      ],
+    }));
+    try {
+      const result = spawnSync(
+        process.execPath,
+        [PERSIST, '--findings-dir', findingsDir, '--specs-dir', specsDir, '--task-id', 'drift'],
+        { encoding: 'utf8' }
+      );
+      assert.notStrictEqual(result.status, 0, 'an unrecognized disposition must fail closed');
+      assert.match(result.stderr, /actionble/, 'the error must name the offending disposition value');
+      assert.match(result.stderr, /reviewer-iter2-9/, 'the error must name the offending finding id');
+      assert.ok(
+        !fs.existsSync(path.join(specsDir, 'unworked_review_issues')),
+        'no ledger may be written when the disposition protocol has drifted'
+      );
+    } finally {
       fs.rmSync(root, { recursive: true, force: true });
-      fs.rmSync(barrier, { recursive: true, force: true });
+    }
+  });
+
+  test('case-insensitive ACTIONABLE still persists', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-unworked-upper-'));
+    const findingsDir = path.join(root, 'findings');
+    const specsDir = path.join(root, 'specs');
+    fs.mkdirSync(findingsDir);
+    fs.mkdirSync(specsDir);
+    fs.writeFileSync(path.join(findingsDir, 'findings-reviewer-iter3.json'), JSON.stringify({
+      agent: 'reviewer',
+      iteration: 3,
+      findings: [
+        { id: 1, severity: 'minor', category: 'docs', file: 'b.js', line: 2,
+          finding: 'open finding', recommendation: 'Do it', disposition: 'ACTIONABLE' },
+      ],
+    }));
+    try {
+      const result = spawnSync(
+        process.execPath,
+        [PERSIST, '--findings-dir', findingsDir, '--specs-dir', specsDir, '--task-id', 'upper'],
+        { encoding: 'utf8' }
+      );
+      assert.strictEqual(result.status, 0, result.stderr);
+      const payload = JSON.parse(result.stdout);
+      assert.strictEqual(payload.status, 'written');
+      assert.strictEqual(payload.counts.minor, 1);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('committed ledgers redact quoted credentials', () => {
+  const { spawnSync } = require('child_process');
+
+  test('provider keys, AWS keys, GitHub tokens, and private keys never reach the written markdown', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-unworked-redact-'));
+    const findingsDir = path.join(root, 'findings');
+    const specsDir = path.join(root, 'specs');
+    fs.mkdirSync(findingsDir);
+    fs.mkdirSync(specsDir);
+    fs.writeFileSync(path.join(findingsDir, 'findings-security-reviewer-iter1.json'), JSON.stringify({
+      agent: 'security-reviewer',
+      iteration: 1,
+      findings: [
+        { id: 1, severity: 'major', category: 'secret', file: 'deploy.js', line: 4,
+          finding: 'hardcoded provider key sk-proj-ABCDEFGHIJKLMNOP1234 committed in deploy.js',
+          recommendation: 'Rotate the key and move it to the environment' },
+        { id: 2, severity: 'major', category: 'secret', file: 'infra.tf', line: 9,
+          finding: 'AWS access key AKIAIOSFODNN7EXAMPLE committed in infra.tf',
+          recommendation: 'Rotate via IAM' },
+        { id: 3, severity: 'major', category: 'secret', file: '.npmrc', line: 2,
+          finding: 'GitHub token ghp_ABCDEFGHIJKLMNOPQRSTUV committed in .npmrc',
+          recommendation: 'Revoke the token' },
+        { id: 4, severity: 'major', category: 'secret', file: 'server.pem', line: 1,
+          finding: 'private key material quoted verbatim',
+          recommendation: '-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA0123456789abcdef\n-----END RSA PRIVATE KEY-----' },
+      ],
+    }));
+    try {
+      const result = spawnSync(
+        process.execPath,
+        [PERSIST, '--findings-dir', findingsDir, '--specs-dir', specsDir, '--task-id', 'redaction'],
+        { encoding: 'utf8' }
+      );
+      assert.strictEqual(result.status, 0, result.stderr);
+      const payload = JSON.parse(result.stdout);
+      assert.strictEqual(payload.status, 'written');
+      const markdown = fs.readFileSync(payload.written, 'utf8');
+      assert.ok(!markdown.includes('sk-proj-ABCDEFGHIJKLMNOP1234'), 'provider key reached the ledger');
+      assert.ok(!markdown.includes('AKIAIOSFODNN7EXAMPLE'), 'AWS key reached the ledger');
+      assert.ok(!markdown.includes('ghp_ABCDEFGHIJKLMNOPQRSTUV'), 'GitHub token reached the ledger');
+      assert.ok(!markdown.includes('BEGIN RSA PRIVATE KEY'), 'private key block reached the ledger');
+      assert.match(markdown, /\[redacted\]/, 'redaction markers must replace the secrets');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
     }
   });
 });

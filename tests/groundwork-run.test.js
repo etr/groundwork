@@ -7583,6 +7583,83 @@ describe('runner and manual validation ownership arbitration', () => {
   });
 });
 
+describe('phaseChildLeases owner validation', () => {
+  const { phaseChildLeases } = require(RUNNER);
+
+  function validOwner(overrides = {}) {
+    return {
+      version: 1,
+      pid: process.pid,
+      processStart: 'Mon Sep 14 10:00:00 2026',
+      token: 'a'.repeat(48),
+      project: 'web',
+      projectPath: '.',
+      taskId: 'TASK-001',
+      startedAt: Date.now(),
+      ...overrides,
+    };
+  }
+
+  test('accepts a well-formed owner and allocates its contained record path', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-phase-child-'));
+    try {
+      const owner = validOwner();
+      const leasePath = path.join(dir, 'project.lease');
+      const leases = phaseChildLeases({ phaseLeases: [{ leasePath, owner }] });
+      assert.strictEqual(leases.length, 1);
+      assert.strictEqual(leases[0].recordPath, path.join(dir, '.phase-children', `${owner.token}.json`));
+      assert.ok(fs.statSync(path.join(dir, '.phase-children')).isDirectory());
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('rejects malformed owners the identity guard must actually catch', () => {
+    const malformed = [
+      validOwner({ version: 2 }),
+      validOwner({ pid: 0 }),
+      validOwner({ pid: 1.5 }),
+      validOwner({ token: 'not-hex-at-all' }),
+      validOwner({ token: 'a'.repeat(47) }),
+      validOwner({ processStart: '' }),
+      validOwner({ processStart: 'x'.repeat(257) }),
+      validOwner({ startedAt: 0 }),
+      validOwner({ startedAt: Number.NaN }),
+      validOwner({ project: 'bad project!' }),
+      validOwner({ projectPath: '/absolute' }),
+      validOwner({ projectPath: '../escape' }),
+      validOwner({ taskId: 'not-a-task' }),
+    ];
+    const baseline = validOwner();
+    for (const owner of malformed) {
+      const differing = Object.keys(baseline).find((k) => baseline[k] !== owner[k]);
+      assert.throws(
+        () => phaseChildLeases({ phaseLeases: [{ leasePath: '/tmp/x.lease', owner }] }),
+        /invalid/i,
+        `owner with malformed ${differing} must be rejected`
+      );
+    }
+  });
+
+  test('still rejects structural garbage and duplicate record paths', () => {
+    assert.throws(() => phaseChildLeases({ phaseLeases: [{ leasePath: '', owner: validOwner() }] }), /Phase child lease identity is invalid/);
+    assert.throws(() => phaseChildLeases({ phaseLeases: [{ leasePath: '/tmp/a.lease' }] }), /Phase child lease identity is invalid/);
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-phase-child-dup-'));
+    try {
+      const owner = validOwner();
+      assert.throws(
+        () => phaseChildLeases({ phaseLeases: [
+          { leasePath: path.join(dir, 'a.lease'), owner },
+          { leasePath: path.join(dir, 'b.lease'), owner },
+        ] }),
+        /Phase child lease record is duplicated/
+      );
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 process.on('exit', () => {
   console.log(`\n${passed} passed, ${failed} failed`);
   if (failed > 0) process.exitCode = 1;

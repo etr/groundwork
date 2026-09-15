@@ -856,7 +856,7 @@ function phaseChildLeases(input) {
   const leases = input.phaseLeases || (input.phaseLease ? [input.phaseLease] : []);
   const paths = new Set();
   return leases.map(({ leasePath, owner }) => {
-    if (!leasePath || !owner || !sameLeaseIdentity(owner, owner)) {
+    if (!leasePath || !owner || !validLeaseOwnerIdentity(owner)) {
       throw new Error('Phase child lease identity is invalid');
     }
     const recordPath = phaseChildRecordPath(leasePath, owner);
@@ -865,6 +865,24 @@ function phaseChildLeases(input) {
     createContainedDirectory(path.dirname(leasePath), path.dirname(recordPath), 'Phase child record directory');
     return { leasePath, owner, recordPath };
   });
+}
+
+// The owner a phase-child record is published under must be a well-formed
+// lease identity: the same shape inspectLease validates for on-disk holders
+// (normalizeLeaseOwner covers project/projectPath/taskId; this adds the
+// scalar fields sameLeaseIdentity compares).
+function validLeaseOwnerIdentity(owner) {
+  try {
+    normalizeLeaseOwner(owner);
+  } catch {
+    return false;
+  }
+  return owner.version === 1
+    && Number.isInteger(owner.pid) && owner.pid >= 1
+    && typeof owner.token === 'string' && /^[0-9a-f]{48}$/.test(owner.token)
+    && typeof owner.processStart === 'string' && owner.processStart.length > 0
+    && owner.processStart.length <= 256
+    && Number.isFinite(owner.startedAt) && owner.startedAt > 0;
 }
 
 // The runner's liveness strategy for the shared staging-record reclaim
@@ -4281,6 +4299,7 @@ module.exports = {
   acquireProjectLease,
   acquireRepositoryGate,
   activeProjectOwners,
+  phaseChildLeases,
   processStartIdentity,
   resolveProject,
   runTasks,

@@ -417,6 +417,13 @@ describe('invocation-unique debug and research journals', () => {
       // rejected — it collides on same-process-same-second and pid reuse.
       assert.match(body, /mktemp -d "\{\{(?:debug|research)_dir\}\}\/\$\{SLUG\}-X{6}"/, `${file} must allocate its journal run directory with mktemp`);
       assert.ok(!/\$\$[-.)]/.test(body), `${file} still uses the pid in its journal identity (pid reuse collides)`);
+      // Prose spellings of the same prohibited contract count too: a section
+      // teaching `<timestamp>-<pid>` naming contradicts the mktemp allocation
+      // and reintroduces same-second + pid-reuse collisions.
+      assert.ok(
+        !/<timestamp>-<pid>/.test(body),
+        `${file} still teaches a timestamp+PID journal contract in prose (same-second and pid-reuse collisions)`
+      );
       // The literal generated path is what collaborators receive.
       assert.match(body, /literal (?:resolved )?(?:journal|path|research)/i, `${file} must pass the literal path to collaborators`);
       // Prior work is found by slug-prefixed run directories, never by a fixed name.
