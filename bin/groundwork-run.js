@@ -81,7 +81,7 @@ const COORDINATOR_EFFORTS = ['low', 'medium', 'high', 'max'];
 // stays unset and the GLM model default applies.
 const COORDINATOR_DEFAULTS = {
   claude: { model: 'opus', effort: 'high' },
-  codex: { model: 'gpt-5.6-sol', effort: 'high' },
+  codex: { model: 'gpt-6.1-sol', effort: 'high' },
   // Concrete registry id (display name "GLM" is not a valid model ref).
   zcode: { model: 'glm-5.3', effort: null },
 };
@@ -2756,6 +2756,7 @@ function phasePrompt(phase, input) {
     `Invoke the ${skill} skill exactly once in this fresh session.`,
     'Do not invoke any earlier or later phase. Do not ask questions; return RESULT: FAILURE when blocked.',
     `Task: ${input.taskId}`,
+    'Do not work on another task or prepare its plan, branch, implementation, or validation. Finish this assigned task/phase only.',
     `Repository root: ${input.repoRoot}`,
     `Project root: ${input.projectRoot}`,
     `Specs directory: ${input.specsDir}`,
@@ -4242,7 +4243,7 @@ function usage() {
   groundwork-run logs TASK-NNN [--project NAME] [--repo PATH] [--tail N] [--follow] [--include-tool-output]
 
 Coordinator model (phase sessions):
-  Defaults per harness: Claude Code opus/high, Codex gpt-5.6-sol/high, ZCode glm-5.3
+  Defaults per harness: Claude Code opus/high, Codex gpt-6.1-sol/high, ZCode glm-5.3
   (effort follows the model default). Override with --coordinator-model MODEL and
   --coordinator-effort low|medium|high|max. --coordinator-effort is rejected with
   --harness zcode, which cannot set reasoning effort headlessly.`;

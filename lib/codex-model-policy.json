@@ -1,8 +1,8 @@
 {
   "translation": {
-    "light": "gpt-5.6-luna",
-    "balanced": "gpt-5.6-terra",
-    "deep": "gpt-5.6-sol"
+    "light": "gpt-6-luna",
+    "balanced": "gpt-6.1-sol",
+    "deep": "gpt-6.1-sol"
   },
   "sourceModels": {
     "": "inherit",

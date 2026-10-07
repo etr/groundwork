@@ -37,8 +37,8 @@ FINDINGS FILES:
   "score": 85,
   "verdict": "request-changes",
   "findings": [
-    {"id": 1, "severity": "critical", "category": "...", "file": "...", "line": 42, "finding": "...", "recommendation": "..."},
-    {"id": 2, "severity": "major",    "category": "...", "file": "...", "line": 10, "finding": "...", "recommendation": "..."}
+    {"id": 1, "severity": "critical", "category": "...", "file": "...", "line": 42, "finding": "...", "recommendation": "...", "disposition": "actionable"},
+    {"id": 2, "severity": "major",    "category": "...", "file": "...", "line": 10, "finding": "...", "recommendation": "...", "disposition": "actionable"}
   ]
 }
 ```

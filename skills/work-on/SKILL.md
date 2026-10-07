@@ -18,6 +18,12 @@ This skill orchestrates long multi-agent workflows. Every turn re-reads the full
 3. **No waiting updates.** Do not output "Waiting for results..." turns. Wait silently until results arrive.
 4. **Keep context lean.** Do not read file contents you won't use directly. Pass file paths to subagents and let them read in their own context windows.
 
+## Delegation Ownership
+
+Keep implementation and validation delegated to fresh, isolated contexts. The executor owns implementation and test monitoring; the validation coordinator owns its reviewer/fixer loop. The root owns dispatch, required decisions, and phase transitions.
+
+Wait for completion, a concrete blocker, or a required decision. Do not request periodic progress, repeat the executor's checks, or independently monitor its test processes. Use existing runner status and heartbeats for routine visibility; intervene only on concrete failure or loss of liveness. Executors send exception reports and their terminal result, not periodic progress messages. Delegation for context isolation remains required.
+
 ## Pre-flight: Model Recommendation
 
 **Your current effort level is `{{effort_level}}`.**

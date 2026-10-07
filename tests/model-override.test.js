@@ -110,9 +110,9 @@ describe('Codex model overrides', () => {
   test('builtin Codex conversion is a complete internal policy config', () => {
     const policy = JSON.parse(fs.readFileSync(BUILTIN_POLICY, 'utf8'));
     assert.deepStrictEqual(policy.translation, {
-      light: 'gpt-5.6-luna',
-      balanced: 'gpt-5.6-terra',
-      deep: 'gpt-5.6-sol',
+      light: 'gpt-6-luna',
+      balanced: 'gpt-6.1-sol',
+      deep: 'gpt-6.1-sol',
     });
     assert.deepStrictEqual(policy.sourceModels, {
       '': 'inherit',
@@ -152,19 +152,19 @@ describe('Codex model overrides', () => {
         name: 'researcher',
         sourceModel: 'opus[1m]',
         sourceEffort: 'max',
-        expected: { model: 'gpt-5.6-sol', effort: 'high' },
+        expected: { model: 'gpt-6.1-sol', effort: 'high' },
       },
       {
         name: 'housekeeper',
         sourceModel: 'sonnet',
         sourceEffort: 'high',
-        expected: { model: 'gpt-5.6-luna', effort: 'high' },
+        expected: { model: 'gpt-6-luna', effort: 'high' },
       },
       {
         name: 'unlisted-agent',
         sourceModel: 'sonnet',
         sourceEffort: 'medium',
-        expected: { model: 'gpt-5.6-terra', effort: 'medium' },
+        expected: { model: 'gpt-6.1-sol', effort: 'medium' },
       },
     ];
 
@@ -198,7 +198,7 @@ describe('Codex model overrides', () => {
   test('installer delegates builtin model IDs to the policy config', () => {
     const installer = fs.readFileSync(INSTALLER, 'utf8');
     assert.ok(
-      !/gpt-5\.6-(?:luna|terra|sol)/.test(installer),
+      !/gpt-(?:5\.6|6(?:\.1)?)-(?:luna|terra|sol)/.test(installer),
       'install-skills.sh still contains builtin Codex model IDs'
     );
     assert.ok(
@@ -235,7 +235,7 @@ describe('Codex model overrides', () => {
         // default names a builtin model); the guard targets exported prose.
         if (file.endsWith('groundwork-run.js')) return false;
         const content = fs.readFileSync(file, 'utf8');
-        return /gpt-5\.6-(?:luna|terra|sol)/.test(content);
+        return /gpt-(?:5\.6|6(?:\.1)?)-(?:luna|terra|sol)/.test(content);
       });
       assert.deepStrictEqual(
         offenders.map((file) => path.relative(root, file)),
@@ -260,7 +260,7 @@ describe('Codex model overrides', () => {
       assert.ok(validate.includes('closure review rejected the immediately preceding fix'));
       assert.ok(validate.includes('model `glm-5.3`'));
       assert.ok(validate.includes('glm-5.3'));
-      assert.ok(!validate.includes('gpt-5.6-sol'));
+      assert.ok(!validate.includes('gpt-6.1-sol'));
       assert.ok(!validate.includes('Sol/high'));
 
       const agentsDir = path.join(root, '.codex', 'agents');

@@ -30,24 +30,24 @@ const CODEX_STATUSLINE_BODY = path.join(
 );
 
 const CODEX_AGENT_POLICY = {
-  'architecture-alignment-checker': ['gpt-5.6-terra', 'high'],
-  'architecture-task-alignment-checker': ['gpt-5.6-luna', 'high'],
-  'cloud-infrastructure-reviewer': ['gpt-5.6-terra', 'high'],
-  'code-quality-reviewer': ['gpt-5.6-terra', 'high'],
-  'code-simplifier': ['gpt-5.6-luna', 'high'],
-  'conventions-reviewer': ['gpt-5.6-luna', 'high'],
-  'design-consistency-checker': ['gpt-5.6-terra', 'high'],
-  'design-task-alignment-checker': ['gpt-5.6-luna', 'high'],
-  housekeeper: ['gpt-5.6-luna', 'high'],
-  'performance-reviewer': ['gpt-5.6-terra', 'high'],
-  'prd-architecture-checker': ['gpt-5.6-terra', 'high'],
-  'prd-task-alignment-checker': ['gpt-5.6-luna', 'high'],
-  researcher: ['gpt-5.6-sol', 'high'],
-  'security-reviewer': ['gpt-5.6-sol', 'high'],
-  'spec-alignment-checker': ['gpt-5.6-terra', 'high'],
-  'task-executor': ['gpt-5.6-sol', 'high'],
-  'test-quality-reviewer': ['gpt-5.6-terra', 'high'],
-  'validation-fixer': ['gpt-5.6-terra', 'high'],
+  'architecture-alignment-checker': ['gpt-6.1-sol', 'high'],
+  'architecture-task-alignment-checker': ['gpt-6-luna', 'high'],
+  'cloud-infrastructure-reviewer': ['gpt-6.1-sol', 'high'],
+  'code-quality-reviewer': ['gpt-6.1-sol', 'high'],
+  'code-simplifier': ['gpt-6-luna', 'high'],
+  'conventions-reviewer': ['gpt-6-luna', 'high'],
+  'design-consistency-checker': ['gpt-6.1-sol', 'high'],
+  'design-task-alignment-checker': ['gpt-6-luna', 'high'],
+  housekeeper: ['gpt-6-luna', 'high'],
+  'performance-reviewer': ['gpt-6.1-sol', 'high'],
+  'prd-architecture-checker': ['gpt-6.1-sol', 'high'],
+  'prd-task-alignment-checker': ['gpt-6-luna', 'high'],
+  researcher: ['gpt-6.1-sol', 'high'],
+  'security-reviewer': ['gpt-6.1-sol', 'high'],
+  'spec-alignment-checker': ['gpt-6.1-sol', 'high'],
+  'task-executor': ['gpt-6.1-sol', 'high'],
+  'test-quality-reviewer': ['gpt-6.1-sol', 'high'],
+  'validation-fixer': ['gpt-6.1-sol', 'high'],
 };
 
 // Test utilities (match the convention in the other tests/*.test.js files)
@@ -568,8 +568,8 @@ describe('Codex model recommendations', () => {
         path.join(root, '.codex', 'skills', 'groundwork-debug', 'SKILL.md'),
         'utf8'
       );
-      assert.ok(debug.includes('Sol at high effort'));
-      assert.ok(debug.includes('/model sol'));
+      assert.ok(debug.includes('gpt-6.1-sol at high effort'));
+      assert.ok(debug.includes('/model gpt-6.1-sol'));
       assert.ok(!debug.includes('Opus (1M context)'));
       assert.ok(!debug.includes('/model opus[1m]'));
 
@@ -577,7 +577,7 @@ describe('Codex model recommendations', () => {
         path.join(root, '.codex', 'skills', 'groundwork-work-on', 'SKILL.md'),
         'utf8'
       );
-      assert.ok(workOn.includes('Use Terra/medium for routine orchestration'));
+      assert.ok(workOn.includes('Use gpt-6.1-sol/medium for routine orchestration'));
       assert.ok(!workOn.includes('Terra or Sol at high effort'));
       assert.ok(!workOn.includes('If effort is `low` or `medium`'));
       assert.ok(!workOn.includes('Sonnet or Opus'));
@@ -1015,11 +1015,11 @@ describe('Codex native agent export', () => {
     assert.ok(transformed.includes('Read /tmp/brief.md'));
   });
 
-  test('runs planning subagents on Terra at high effort', () => {
+  test('resolves balanced planning subagents to Sol 6.1 at high effort', () => {
     const transformed = transformAgents(
       '    Agent(subagent_type="Plan", description="Plan TASK-001", prompt="Create the plan")'
     );
-    assert.ok(transformed.includes('model `gpt-5.6-terra` at `high` effort'));
+    assert.ok(transformed.includes('model `Terra` at `high` effort'));
 
     const root = runInstaller('codex');
     if (root === null) return;
@@ -1030,7 +1030,7 @@ describe('Codex native agent export', () => {
           'utf8'
         );
         assert.ok(
-          exported.includes('model `gpt-5.6-terra` at `high` effort'),
+          exported.includes('model `gpt-6.1-sol` at `high` effort'),
           `${skill}: planning subagent lacks an explicit Codex model/effort`
         );
       }
@@ -1424,7 +1424,7 @@ describe('Codex consumption guardrails', () => {
           'utf8'
         );
         assert.ok(
-          exported.includes('Use Terra/medium for routine orchestration'),
+          exported.includes('Use gpt-6.1-sol/medium for routine orchestration'),
           `${skill}: missing routine coordinator model policy`
         );
         assert.ok(!exported.includes('Terra or Sol at high effort'));
@@ -1443,9 +1443,9 @@ describe('Codex consumption guardrails', () => {
         path.join(root, '.codex', 'skills', 'groundwork-just-do-it-swarming', 'SKILL.md'),
         'utf8'
       );
-      assert.ok(swarming.includes('model: "gpt-5.6-terra"'));
+      assert.ok(swarming.includes('model: "gpt-6.1-sol"'));
       assert.ok(swarming.includes('reasoning_effort: "high"'));
-      assert.ok(swarming.includes('gpt-5.6-sol'));
+      assert.ok(swarming.includes('gpt-6.1-sol'));
       assert.ok(!swarming.includes('model: "sol"'));
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
@@ -1487,9 +1487,9 @@ describe('Codex consumption guardrails', () => {
       assert.ok(workOn.includes('Codex Phase Isolation'));
       assert.ok(workOn.includes('fresh validation coordinator'));
       assert.ok(workOn.includes('`fork_turns="none"`'));
-      assert.ok(workOn.includes('model `gpt-5.6-terra` at `high` effort'));
-      assert.ok(!workOn.includes('model `gpt-5.6-sol` at `high` effort'));
-      assert.ok(!workOn.includes('model `gpt-5.6-terra` at `medium` effort'));
+      assert.ok(workOn.includes('model `gpt-6.1-sol` at `medium` effort'));
+      assert.ok(!workOn.includes('gpt-5.6-terra'));
+      assert.ok(!workOn.includes('model `gpt-6.1-sol` at `high` effort'));
       assert.ok(!workOn.includes('Optional Context Clear Pause'));
       assert.ok(!workOn.includes('run `/compact`'));
     } finally {
@@ -1506,7 +1506,7 @@ describe('Codex consumption guardrails', () => {
         'utf8'
       );
       assert.ok(ship.includes('Codex Deployment Monitoring'));
-      assert.ok(ship.includes('model `gpt-5.6-luna` at `low` effort'));
+      assert.ok(ship.includes('model `gpt-6-luna` at `low` effort'));
       assert.ok(ship.includes('one long-lived native watch command'));
       assert.ok(ship.includes('`fork_turns="none"`'));
     } finally {
@@ -1551,13 +1551,13 @@ describe('Codex consumption guardrails', () => {
       assert.ok(validate.includes('recommended twelve slots'));
       assert.ok(validate.includes('max_concurrent_threads_per_session = 12'));
       assert.ok(validate.includes('Do not modify `~/.codex/config.toml`'));
-      assert.ok(validate.includes('Use Terra/high for the validation coordinator'));
+      assert.ok(validate.includes('Use gpt-6.1-sol/medium for the validation coordinator'));
       assert.ok(!validate.includes('Use Sol/high for the validation coordinator'));
       assert.ok(!validate.includes('Terra at medium effort is the default coordinator'));
-      assert.ok(!validate.includes('Use Terra/medium for routine orchestration'));
+      assert.ok(!validate.includes('Use gpt-6.1-sol/medium for routine orchestration'));
       assert.ok(validate.includes('two or more reviewer domains'));
       assert.ok(validate.includes('closure review rejected the immediately preceding fix'));
-      assert.ok(validate.includes('model `gpt-5.6-sol`'));
+      assert.ok(validate.includes('model `gpt-6.1-sol`'));
       assert.ok(validate.includes('`reasoning_effort: "high"`'));
       assert.ok(!validate.includes('max_validation_iterations'));
 
@@ -1580,6 +1580,17 @@ describe('Codex consumption guardrails', () => {
       assert.ok(validate.includes('node <skill-directory>/scripts/validation-session.js open'));
       assert.ok(fs.existsSync(path.join(validateDir, 'scripts', 'validation-session.js')));
       assert.ok(fs.existsSync(path.join(root, '.codex', 'validation-session.js')));
+      for (const helper of ['validation-session.js', 'validate-fixer-result.js']) {
+        const loaded = spawnSync(process.execPath, ['-e', 'require(process.argv[1])', path.join(validateDir, 'scripts', helper)], { encoding: 'utf8' });
+        assert.strictEqual(loaded.status, 0, loaded.stderr);
+      }
+      const persisted = spawnSync(process.execPath, [path.join(validateDir, 'scripts/persist-unworked-findings.js'), '--findings-dir', path.join(validateDir, 'scripts'), '--specs-dir', root, '--task-id', 'smoke'], { encoding: 'utf8' });
+      assert.strictEqual(persisted.status, 0, persisted.stderr);
+      const batchDir = path.join(root, '.codex', 'skills', 'groundwork-just-do-it');
+      const batch = fs.readFileSync(path.join(batchDir, 'SKILL.md'), 'utf8');
+      assert.ok(batch.includes('node <skill-directory>/../../groundwork-run.js all'));
+      const runnerHelp = spawnSync(process.execPath, [path.join(root, '.codex/groundwork-run.js'), '--help'], { encoding: 'utf8' });
+      assert.strictEqual(runnerHelp.status, 0, runnerHelp.stderr);
 
       const findingsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'groundwork-validation-'));
       try {

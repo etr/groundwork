@@ -35,6 +35,10 @@ Otherwise → use `AskUserQuestion`:
 
 If the user selects "Cancel — I'll switch first": output the switching commands above and stop. Do not proceed with the skill.
 
+## Sequential execution contract
+
+Keep exactly one active task through planning, implementation, validation, finalization, merge, and cleanup. Do not plan, prepare, implement, or validate a later task until that sequence finishes. A blocked task stops the batch; it does not authorize an independent task detour. Same-task reviewers may run together. Parallel task implementation requires the explicitly invoked swarming workflow or explicit user authorization; “build everything” and “keep going” preserve sequential execution.
+
 ## Workflow
 
 ### Step 0: Resolve Project Context
@@ -105,15 +109,23 @@ This ensures each task starts from a clean baseline and changes are integrated i
 ### Blocked Tasks (will execute after dependencies complete)
 - TASK-NNN: [Title] (blocked by TASK-XXX)
 
-**Ask for confirmation before proceeding.**
+**Ask for confirmation before proceeding only when the user has not already authorized the batch.**
 
 If user declines, stop and suggest alternatives:
 - `/groundwork:work-on N` to work on a specific task
 - `/groundwork:work-on-next-task` to work on just the next available task
 
-### Step 3: Execute Loop (Direct Orchestration)
+### Step 3: Execute Sequentially
 
-Each task is executed through 5 phases orchestrated directly from this conversation. This avoids nested sub-tasks (sub-tasks cannot spawn other sub-tasks). The main loop holds only: task list + per-task plan summary, IMPLEMENTED result, validation verdicts, and merge result.
+**Runner-supported harnesses (`claude`, `codex`, `zcode`):** use the existing external runner. It owns dependency ordering, per-task phase sessions, project ownership, publication, and cleanup. From the repository root, preview the exact selection:
+
+```bash
+node ${CLAUDE_PLUGIN_ROOT}/bin/groundwork-run.js all --harness <claude|codex|zcode> --repo "<repo_root>" <optional --project "<project_name>"> --dry-run
+```
+
+Honor any user-specified task range or stop boundary using the existing `--from`/`--to` options in both preview and execution. After the batch authorization in step 2, run the same command without `--dry-run`. An existing instruction to build all tasks is sufficient authorization; do not ask again. Keep this conversation available for user steering, observe the runner's task/stage results, and report its terminal outcome. Do not start a separate task workflow alongside it. If the runner fails or its runtime is incomplete, preserve its state and report the failure; do not silently switch to conversational execution.
+
+**Other harnesses:** use the serial conversation fallback below. Hold only the task list and the active task's plan, implementation, validation, and finalization results. Never start a later task while the active task remains unfinished.
 
 For each remaining task in dependency order:
 
@@ -121,7 +133,7 @@ For each remaining task in dependency order:
 
 2. **Announce start:** "Starting TASK-NNN: [Title]"
 
-3. **Update task status** to `**Status:** In Progress` in the tasks file.
+3. **Keep task status changes inside the active task worktree.** Implementation records `In Progress`; validation/finalization record `Complete`. The batch does not premark queued tasks.
 
 #### Phase A: Plan
 
@@ -214,20 +226,15 @@ Parse its terminal line:
 - `Validation INCOMPLETE (...)` or an unparseable result → stop the batch. Report the reason and preserved worktree.
 
 Do not implement a separate reviewer/fixer loop here. The `validate` skill owns the frozen baseline, repair envelopes, causal closure reviews, unworked-finding persistence, and cleanup.
-#### Phase E: Merge
+#### Phase E: Finalize
 
-From the project root (NOT the worktree):
+Invoke the shared finalizer from the validated task worktree:
 
-```bash
-git checkout <base_branch>
-git merge --no-ff <branch> -m "Merge <branch>: [Task Title]"
-git worktree remove <worktree_path>
-git branch -d <branch>
+```
+Skill(skill="groundwork:finalize-task")
 ```
 
-If merge conflicts occur, report them and preserve the worktree for investigation. STOP.
-
-4. **Update task status** to `**Status:** Complete` in the tasks file.
+Require verified integration into the recorded base branch, complete task status, and cleanup of the merged task worktree/branch before advancing. The finalizer owns commits, status bookkeeping, merge ancestry checks, and cleanup; do not duplicate them here. Any incomplete or unparseable finalization result stops the batch and preserves its worktree.
 
 5. **Log result:** "Completed TASK-NNN: [Title] — [one-line summary]"
 

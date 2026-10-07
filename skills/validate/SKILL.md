@@ -85,7 +85,9 @@ INITIAL_AUDIT → BASELINE-COMPATIBLE_FIX → CLOSURE_REVIEW → PASS
 - `review_mode: closure-review` grants only causal repair-verification authority.
 - A repair is baseline-compatible when its required outcome is determined by the frozen task/spec/architecture baseline. Repair size and implementation shape do not change that: validation may authorize a substantial refactor or reimplementation when the baseline requires it.
 - A concrete `initial-audit-miss` found incidentally during closure may enter the same finding ledger when it violates the frozen baseline and meets the reviewer's normal blocking threshold. Fix it and re-review only affected invariants; never restart the initial audit.
-- `scope-expansion` observations are persisted as unworked findings and do not enter the fixer loop.
+- An incidental initial-audit miss must name the violated baseline requirement, concrete failure evidence, and blocking consequence under the normal severity rules. It never authorizes searching unchanged code for more findings or replacing a settled design with a preferred alternative.
+- Actionable `scope-expansion` observations are persisted as unworked findings and do not enter the fixer loop.
+- Apply the shared review protocol's verification-scope boundary before adding blocking checks or building tools. For missing shared verification infrastructure outside the authorized task, record a separately owned blocked dependency or ownership-triage action. The required check remains incomplete; do not silently create a general framework or waive the gate.
 
 ## Findings Storage
 
@@ -121,14 +123,24 @@ A new file per iteration preserves history across the fix-and-retry loop, so the
 
 Every finding carries a `disposition`: `"actionable"` while it demands work, or the closure outcome (`"resolved"`, `"approved"`, `"fixed"`, `"closure-observation"`) once it no longer does. A prior finding you re-checked and found already addressed is `"resolved"` (or `"closure-observation"` when it never demanded work) — never re-listed as actionable. The unworked-findings report persists only actionable items: fixed IDs and every closed disposition are dropped, so a stale "resolved" entry must not survive into the ledger.
 
+Disposition is a reviewer claim, not independent evidence of closure. The coordinator confirms closed claims against prior finding records, repair evidence, and the frozen baseline before accepting them into the semantic ledger or persisting unworked findings. Reconcile any unsupported claim with the reviewer. Counts include all records; only actionable critical/major records may enter fixer scope. Missing disposition is accepted only for legacy artifacts without `review_mode`, and means actionable.
+
 The **stable global ID** of a finding is `{agent_name}-iter{N}-{id}` (e.g. `code-quality-reviewer-iter1-2`). Use these IDs anywhere you need to reference a finding across iterations (fix-agent prompts, stuck detection, unworked_review_issues).
 
 **Compact agent response** (single JSON line returned by each agent):
 ```json
-{"verdict":"approve","score":85,"summary":"One-sentence assessment","findings_file":"<run_dir>/findings-code-quality-reviewer-iter1.json","counts":{"critical":0,"major":1,"minor":2}}
+{"verdict":"approve","score":85,"summary":"One-sentence assessment","findings_file":"<run_dir>/findings-code-quality-reviewer-iter1.json","counts":{"critical":0,"major":1,"minor":1}}
 ```
 
 This is the only thing the orchestrator parses from conversational responses. Semantic finding data comes from the coordinator-assigned artifact, never from reviewer prose.
+
+After each reviewer batch, prepare the manifest from only the coordinator-assigned basenames:
+
+```bash
+node ${CLAUDE_PLUGIN_ROOT}/lib/validate-fixer-result.js --findings-dir "<findings_dir>" --manifest "fixer-manifest-iter<N>.json" --prepare-manifest --review-files "<comma-separated coordinator-assigned basenames>"
+```
+
+The helper derives metadata and counts, validates the batch, and writes the manifest atomically. Compare its returned metadata with the compact reviewer responses. Do not hand-assemble the manifest or discover additional files by globbing.
 
 ## Prerequisites
 
@@ -435,7 +447,7 @@ Continue until every valid baseline finding is closed and all impacted reviewers
 
    If the process stops before this succeeds, resume the `fixer-inflight` transaction through the recovery rules; never adopt partial source mutations as an implicit fixer result.
 
-4. **Write Closure Brief and Re-run Impacted Agents** — Run every required post-fix project gate on the current worktree. Once they pass, update the coordinator file and checkpoint the durable gate boundary:
+4. **Write Closure Brief and Re-run Impacted Agents** — Run every required post-fix project gate on the current worktree. Distinguish repair checks from final acceptance: use focused checks during repair unless the source workflow explicitly requires broader gates then. Run all mandatory final gates before publication; do not infer a new full-suite requirement merely from the review iteration number. Reuse a passing gate only while its covered source, dependencies, configuration, and environment remain unchanged. Once they pass, update the coordinator file and checkpoint the durable gate boundary:
 
    ```bash
    node ${CLAUDE_PLUGIN_ROOT}/lib/validation-session.js checkpoint \
@@ -492,6 +504,10 @@ Continue until every valid baseline finding is closed and all impacted reviewers
    - Every assigned finding closed and every impacted reviewer approves → **PASS**
 
 ### 5. Stuck Detection
+
+Track semantic progress in the existing iteration notes: previously blocking invariants closed, new blockers admitted, and blockers still open. Compare invariants rather than file/line identity; renaming a finding or opening a new session does not reset its history.
+
+After two completed repair/closure cycles with no net reduction in unresolved blocking invariants, including replacement by different findings, reassess the cause and strategy before another fixer pass. Record a concrete changed hypothesis or bounded repair strategy and its decisive check. Continue only when that strategy follows from new evidence; otherwise preserve the session and return `RESULT: FAILURE` in runner mode or `Validation INCOMPLETE` in noninteractive mode, or request the specific missing decision interactively. Never restart the initial audit to escape this condition, and never treat a stalled run as passed.
 
 Track findings by key: `[Agent]-[Category]-[File]-[Line]`. You don't need full finding bodies in context to do this — derive `Agent` from the global ID prefix and rely on the iteration tracking notes (which carry global IDs) to count repeats. When you actually need to escalate to the user, **only then** Read the relevant `findings_file` once to extract `Category`/`File`/`Line`/`finding`/`recommendation` for the message. Stuck detection is rare; this one-shot read is bounded.
 

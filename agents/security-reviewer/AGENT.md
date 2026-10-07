@@ -110,7 +110,7 @@ Return your review as JSON:
   "score": 75,
   "verdict": "request-changes",
   "findings": [
-    {"id": 1, "severity": "critical", "category": "...", "file": "...", "line": 28, "finding": "...", "recommendation": "..."}
+    {"id": 1, "severity": "critical", "category": "...", "file": "...", "line": 28, "finding": "...", "recommendation": "...", "disposition": "actionable"}
   ]
 }
 ```

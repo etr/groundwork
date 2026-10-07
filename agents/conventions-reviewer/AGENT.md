@@ -132,7 +132,7 @@ Return a JSON object:
   "score": 95,
   "verdict": "approve",
   "findings": [
-    {"id": 1, "severity": "major", "category": "naming-convention", "file": "...", "line": 1, "finding": "...", "recommendation": "..."}
+    {"id": 1, "severity": "major", "category": "naming-convention", "file": "...", "line": 1, "finding": "...", "recommendation": "...", "disposition": "actionable"}
   ]
 }
 ```

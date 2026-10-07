@@ -108,7 +108,7 @@ Return your review as JSON:
   "score": 85,
   "verdict": "approve",
   "findings": [
-    {"id": 1, "severity": "major", "category": "...", "file": "...", "line": 45, "finding": "...", "recommendation": "..."}
+    {"id": 1, "severity": "major", "category": "...", "file": "...", "line": 45, "finding": "...", "recommendation": "...", "disposition": "actionable"}
   ]
 }
 ```

@@ -34,6 +34,12 @@ This skill orchestrates implementation dispatch. Every turn re-reads the full co
 3. **No waiting updates.** Do not output "Waiting for results..." turns. Wait silently until results arrive.
 4. **Keep context lean.** Do not read file contents you won't use directly. The task-executor agent has Read/Grep/Glob and will read files in its own context window.
 
+## Delegation Ownership
+
+Keep implementation and validation delegated to fresh, isolated contexts. The executor owns implementation and test monitoring; the validation coordinator owns its reviewer/fixer loop. The root owns dispatch, required decisions, and phase transitions.
+
+Wait for completion, a concrete blocker, or a required decision. Do not request periodic progress, repeat the executor's checks, or independently monitor its test processes. Use existing runner status and heartbeats for routine visibility; intervene only on concrete failure or loss of liveness. Executors send exception reports and their terminal result, not periodic progress messages. Delegation for context isolation remains required.
+
 ## Pre-flight: Model Recommendation
 
 **Your current effort level is `{{effort_level}}`.**
@@ -148,6 +154,9 @@ Agent(
      OR:
      RESULT: FAILURE | [one-line reason]
 
+  REPORTING:
+  - Own implementation and test monitoring. Report only completion, a concrete blocker, or a required decision; no periodic progress messages. Preserve the exact terminal RESULT contract supplied above.
+
   IMPORTANT:
   - Do NOT run validate or merge — the caller handles those
   - Do NOT use AskUserQuestion for merge decisions
@@ -180,6 +189,9 @@ Agent(
      RESULT: IMPLEMENTED | <worktree_path> | <branch> | <base_branch>
      OR:
      RESULT: FAILURE | [one-line reason]
+
+  REPORTING:
+  - Own implementation and test monitoring. Report only completion, a concrete blocker, or a required decision; no periodic progress messages. Preserve the exact terminal RESULT contract supplied above.
 
   IMPORTANT:
   - Do NOT run validate or merge — the caller handles those

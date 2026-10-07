@@ -315,7 +315,7 @@ Return your review as JSON:
   "score": 78,
   "verdict": "request-changes",
   "findings": [
-    {"id": 1, "severity": "critical", "category": "network-public-ingress", "file": "infra/network.tf", "line": 42, "finding": "...", "recommendation": "..."}
+    {"id": 1, "severity": "critical", "category": "network-public-ingress", "file": "infra/network.tf", "line": 42, "finding": "...", "recommendation": "...", "disposition": "actionable"}
   ]
 }
 ```

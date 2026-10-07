@@ -40,6 +40,7 @@ function defaultReviews() {
           line: 12,
           finding: 'The implementation is incomplete.',
           recommendation: 'Complete the implementation.',
+          disposition: 'actionable',
         },
         {
           id: 2,
@@ -49,6 +50,7 @@ function defaultReviews() {
           line: 18,
           finding: 'The name is vague.',
           recommendation: 'Use a clearer name.',
+          disposition: 'actionable',
         },
       ],
     },
@@ -67,6 +69,7 @@ function defaultReviews() {
           line: 24,
           finding: 'Untrusted input reaches a shell.',
           recommendation: 'Remove the shell data path.',
+          disposition: 'actionable',
         },
       ],
     },

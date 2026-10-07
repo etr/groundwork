@@ -277,10 +277,10 @@ Return your review as JSON:
   "review_mode": "<review_mode from prompt>",
   "summary": "...",
   "score": 85,
-  "verdict": "approve",
+  "verdict": "request-changes",
   "findings": [
-    {"id": 1, "severity": "major",    "category": "token-usage",   "file": "...", "line": 15, "finding": "...", "recommendation": "..."},
-    {"id": 2, "severity": "critical", "category": "accessibility", "file": "...", "line":  8, "finding": "...", "recommendation": "..."}
+    {"id": 1, "severity": "major",    "category": "token-usage",   "file": "...", "line": 15, "finding": "...", "recommendation": "...", "disposition": "actionable"},
+    {"id": 2, "severity": "critical", "category": "accessibility", "file": "...", "line":  8, "finding": "...", "recommendation": "...", "disposition": "actionable"}
   ]
 }
 ```
@@ -288,7 +288,7 @@ Return your review as JSON:
 Your conversational response in file mode is exactly one JSON line (no findings inline, no extra prose):
 
 ```json
-{"verdict":"approve","score":85,"summary":"...","findings_file":"<the path you wrote>","counts":{"critical":1,"major":1,"minor":0}}
+{"verdict":"request-changes","score":85,"summary":"...","findings_file":"<the path you wrote>","counts":{"critical":1,"major":1,"minor":0}}
 ```
 
 `counts` reflects how many findings of each severity you wrote to the file.

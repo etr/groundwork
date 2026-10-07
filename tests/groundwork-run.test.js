@@ -2474,7 +2474,7 @@ for (let index = 0; index < 100000; index++) fs.writeSync(1, record);
     });
     assert.deepStrictEqual(
       [codex.args[codex.args.indexOf('-m') + 1], codex.args[codex.args.indexOf('-c') + 1]],
-      ['gpt-5.6-sol', 'model_reasoning_effort="high"']
+      ['gpt-6.1-sol', 'model_reasoning_effort="high"']
     );
 
     const overridden = buildInvocation({
@@ -6884,6 +6884,11 @@ describe('four-phase orchestration', () => {
             phases.push(`${input.taskId}:${input.phase}`);
             const worktree = path.join(root, '.worktrees', input.taskId);
             const branch = `task/${input.taskId}`;
+            if (input.taskId === 'TASK-002' && input.phase === 'plan') {
+              assert.ok(!fs.existsSync(path.join(root, '.worktrees', 'TASK-001')), 'later planning began before prior cleanup');
+              assert.throws(() => git(root, 'rev-parse', '--verify', 'refs/heads/task/TASK-001'));
+              assert.strictEqual(require(RUNNER).parseTaskCatalog(fs.readFileSync(path.join(root, 'specs/tasks.md'), 'utf8')).get('TASK-001').status, 'Complete');
+            }
             if (input.phase === 'plan') {
               write(path.join(root, '.groundwork-plans', `${input.taskId}-plan.md`), '# Plan\n');
               return `RESULT: PLANNED | plan_file_path=.groundwork-plans/${input.taskId}-plan.md | identifier=${input.taskId} | branch_prefix=task`;
@@ -6988,11 +6993,13 @@ describe('four-phase orchestration', () => {
 });
 
 describe('skill and export integration', () => {
-  test('restores just-do-it as the original in-session workflow', () => {
+  test('just-do-it routes supported harnesses through the runner with a serial fallback', () => {
     const skill = fs.readFileSync(path.join(PLUGIN_ROOT, 'skills', 'just-do-it', 'SKILL.md'), 'utf8');
     assert.ok(skill.includes('#### Phase A: Plan'));
     assert.ok(skill.includes('#### Phase C: Validate'));
-    assert.ok(!skill.includes('groundwork-run.js'));
+    assert.ok(skill.includes('groundwork-run.js all'));
+    assert.ok(skill.includes('Do not plan, prepare, implement, or validate a later task'));
+    assert.ok(skill.includes('#### Phase E: Finalize'));
   });
 
   test('finalize-task has the same chain/dual visibility as validate', () => {

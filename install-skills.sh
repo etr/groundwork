@@ -303,6 +303,24 @@ get_dest_base() {
 # Frontmatter & body helpers
 # ============================================================
 
+# Export a checked runtime closure beside a skill or agent. No second list of
+# transitive dependencies: the manifest scanner derives helper bundles.
+write_runtime_bundle() {
+    local runtime_dir="$1" target="$2" dest_base="$3" format="$4"
+    shift 4
+    local entries
+    entries=$(node "$SOURCE_DIR/lib/external-runner-manifest.js" "$format" "$@") || return 1
+    local source_file installed_file
+    while IFS=$'\t' read -r source_file installed_file; do
+        [[ -n "$source_file" ]] || continue
+        if [[ "$target" == "codex" ]]; then
+            write_codex_agent "$runtime_dir/$installed_file" "$(<"$SOURCE_DIR/$source_file")" "checked runtime helper" "$dest_base"
+        else
+            write_file "$runtime_dir/$installed_file" "$(<"$SOURCE_DIR/$source_file")" "checked runtime helper"
+        fi
+    done <<< "$entries"
+}
+
 # Extract a single YAML frontmatter value (single-line only)
 get_fm_value() {
     local content="$1" key="$2"
@@ -634,13 +652,13 @@ require_model_override_replacement() {
 
 transform_model_override() {
     local kind="$1" name="$2" target="$3" content="$4"
-    # No override file: identity — skip the node spawn per component.
-    if [[ -z "$MODEL_OVERRIDE_FILE" ]]; then
+    # Codex also resolves builtin tier aliases after policy injection.
+    if [[ -z "$MODEL_OVERRIDE_FILE" && "$target" != "codex" ]]; then
         printf '%s\n' "$content"
         return
     fi
     local args=(--kind "$kind" --name "$name" --harness "$target")
-    args+=(--file "$MODEL_OVERRIDE_FILE")
+    [[ -n "$MODEL_OVERRIDE_FILE" ]] && args+=(--file "$MODEL_OVERRIDE_FILE")
 
     printf '%s\n' "$content" | node "$SOURCE_DIR/lib/model-override.js" transform "${args[@]}"
 }
@@ -879,6 +897,7 @@ $inlined_deps"
         local needs_runtime_context=false
         local needs_validate_scripts=false
         local needs_worktree_identity=false
+        local needs_batch_runner=false
         if [[ "$target" == "codex" && ( "$raw_body" == *'{{effort_level}}'* || "$skill_name" == "validate" ) ]]; then
             needs_runtime_context=true
             new_body="$(portable_runtime_context_preamble)
@@ -904,6 +923,19 @@ $new_body"
             needs_validate_scripts=true
             new_body=$(printf '%s' "$new_body" | sed \
                 's|node the plugin directory/lib/validation-session.js|node <skill-directory>/scripts/validation-session.js|g')
+        fi
+        if [[ "$new_body" == *"node the plugin directory/bin/groundwork-run.js"* ]]; then
+            if [[ "$target" == "codex" ]]; then
+                # Reuse the existing harness-root bundle, not a second runner.
+                new_body=$(printf '%s' "$new_body" | sed 's|node the plugin directory/bin/groundwork-run.js|node <skill-directory>/../../groundwork-run.js|g')
+            else
+                needs_batch_runner=true
+                new_body=$(printf '%s' "$new_body" | sed 's|node the plugin directory/bin/groundwork-run.js|node <skill-directory>/scripts/groundwork-run.js|g')
+            fi
+        fi
+        if [[ "$new_body" == *"node the plugin directory/lib/validate-fixer-result.js"* ]]; then
+            needs_validate_scripts=true
+            new_body=$(printf '%s' "$new_body" | sed 's|node the plugin directory/lib/validate-fixer-result.js|node <skill-directory>/scripts/validate-fixer-result.js|g')
         fi
         if [[ "$new_body" == *"node the plugin directory/lib/worktree-identity.js"* ]]; then
             needs_worktree_identity=true
@@ -954,27 +986,12 @@ $new_body"
             runtime_dir="$(dirname "$dest")/scripts"
             write_codex_agent "$runtime_dir/runtime-context-cli.js" "$(<"$SOURCE_DIR/lib/runtime-context-cli.js")" "runtime context resolver" "$dest_base"
         fi
-        if [[ "$skill_name" == "validate" && "$target" == "codex" ]]; then
-            # Codex's skill policy injection points validate's coordinator
-            # at the fixer result validator.
-            local validator_dir
-            validator_dir="$(dirname "$dest")/scripts"
-            write_codex_agent "$validator_dir/validate-fixer-result.js" "$(<"$SOURCE_DIR/lib/validate-fixer-result.js")" "fixer result validator" "$dest_base"
-        fi
         if [[ "$needs_validate_scripts" == true ]]; then
-            local session_dir
-            session_dir="$(dirname "$dest")/scripts"
-            if [[ "$target" == "codex" ]]; then
-                write_codex_agent "$session_dir/persist-unworked-findings.js" "$(<"$SOURCE_DIR/lib/persist-unworked-findings.js")" "unworked findings persistence helper" "$dest_base"
-                write_codex_agent "$session_dir/validation-session.js" "$(<"$SOURCE_DIR/lib/validation-session.js")" "validation session helper" "$dest_base"
-                write_codex_agent "$session_dir/atomic-write.js" "$(<"$SOURCE_DIR/lib/atomic-write.js")" "validation session helper" "$dest_base"
-                write_codex_agent "$session_dir/redact.js" "$(<"$SOURCE_DIR/lib/redact.js")" "validation session helper" "$dest_base"
-            else
-                write_file "$session_dir/persist-unworked-findings.js" "$(<"$SOURCE_DIR/lib/persist-unworked-findings.js")" "unworked findings persistence helper"
-                write_file "$session_dir/validation-session.js" "$(<"$SOURCE_DIR/lib/validation-session.js")" "validation session helper"
-                write_file "$session_dir/atomic-write.js" "$(<"$SOURCE_DIR/lib/atomic-write.js")" "validation session helper"
-                write_file "$session_dir/redact.js" "$(<"$SOURCE_DIR/lib/redact.js")" "validation session helper"
-            fi
+            write_runtime_bundle "$(dirname "$dest")/scripts" "$target" "$dest_base" --helpers-tsv \
+                validation-session.js persist-unworked-findings.js validate-fixer-result.js
+        fi
+        if [[ "$needs_batch_runner" == true ]]; then
+            write_runtime_bundle "$(dirname "$dest")/scripts" "$target" "$dest_base" --tsv
         fi
         if [[ "$needs_worktree_identity" == true ]]; then
             local identity_dir
@@ -1104,8 +1121,7 @@ install_agents_for_target() {
                 require_model_override_replacement "$dest" "agent" "$agent_name"
                 write_codex_agent "$dest" "$codex_agent" "agent" "$dest_base"
                 if [[ "$agent_name" == "validation-fixer" ]]; then
-                    write_codex_agent "$dest_base/agents/$agent_name/scripts/validate-fixer-result.js" \
-                        "$(<"$SOURCE_DIR/lib/validate-fixer-result.js")" "fixer result validator" "$dest_base"
+                    write_runtime_bundle "$dest_base/agents/$agent_name/scripts" "$target" "$dest_base" --helpers-tsv validate-fixer-result.js
                 fi
                 remove_legacy_codex_agent_skill "$agent_name" "$dest_base"
                 ;;

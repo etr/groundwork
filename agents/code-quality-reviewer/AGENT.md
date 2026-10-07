@@ -107,7 +107,7 @@ Return your review as JSON:
   "score": 85,
   "verdict": "approve",
   "findings": [
-    {"id": 1, "severity": "major", "category": "...", "file": "...", "line": 42, "finding": "...", "recommendation": "..."}
+    {"id": 1, "severity": "major", "category": "...", "file": "...", "line": 42, "finding": "...", "recommendation": "...", "disposition": "actionable"}
   ]
 }
 ```
@@ -115,7 +115,7 @@ Return your review as JSON:
 Your conversational response in file mode is exactly one JSON line (no findings inline, no extra prose):
 
 ```json
-{"verdict":"approve","score":85,"summary":"...","findings_file":"<the path you wrote>","counts":{"critical":0,"major":1,"minor":2}}
+{"verdict":"approve","score":85,"summary":"...","findings_file":"<the path you wrote>","counts":{"critical":0,"major":1,"minor":0}}
 ```
 
 `counts` reflects how many findings of each severity you wrote to the file.

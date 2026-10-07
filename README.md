@@ -62,12 +62,12 @@ Codex agents are written to `.codex/agents/*.toml` for project installs (or
 
 | Claude agent model | Codex model override |
 |--------------------|----------------------|
-| `sonnet` | `gpt-5.6-terra` |
-| `opus[1m]` | `gpt-5.6-sol` |
+| `sonnet` | `gpt-6.1-sol` |
+| `opus[1m]` | `gpt-6.1-sol` |
 | `inherit` or absent | No override; inherit the active Codex model |
 
 Role-specific policy overrides that generic mapping. In particular, the
-`task-executor` is exported as `gpt-5.6-sol` at high effort so implementation
+`task-executor` is exported as `gpt-6.1-sol` at high effort so implementation
 does not inherit a weaker orchestration model.
 
 Supported effort values (`low`, `medium`, `high`, and `max`) are preserved as
@@ -91,9 +91,12 @@ The file has three logical tiers:
 
 | Tier | Current default | Groundwork meaning |
 |------|-----------------|--------------------|
-| `light` | `gpt-5.6-luna` / Claude `haiku` | monitoring and lightweight work |
-| `balanced` | `gpt-5.6-terra` / Claude `sonnet` | routine orchestration and bounded work |
-| `deep` | `gpt-5.6-sol` / Claude `opus[1m]` | implementation, validation, security, and escalation |
+| `light` | `gpt-6-luna` / Claude `haiku` | monitoring and lightweight work |
+| `balanced` | `gpt-6.1-sol` / Claude `sonnet` | routine orchestration and bounded work |
+| `deep` | `gpt-6.1-sol` / Claude `opus[1m]` | implementation, validation, security, and escalation |
+
+Codex uses Sol 6.1 for both balanced and deep work, and Luna 6 for light work.
+Reasoning effort policies are unchanged; custom overrides retain separate tiers.
 
 A custom file may translate any subset of tiers and optionally force all
 installer-controlled reasoning policies to one effort:
@@ -505,6 +508,10 @@ The external runner is a start-once completion harness for Claude Code, Codex, a
 
 The runner is valuable when work should continue unattended. Fresh processes keep phase context focused, durable checkpoints make interrupted runs resumable, repair sessions handle recoverable failures, and verified Git handoffs prevent a model's claim of success from being treated as proof. Read-only status and logs expose phase progress, validation rounds, reviewer state, and credential-redacted diagnostics while it runs.
 
+Delegation remains the context-isolation boundary: the executor owns implementation and test monitoring, and a separate validation coordinator owns reviewers and fixers. The root waits for completion, a concrete blocker, or a required decision; routine visibility uses runner status and heartbeats instead of periodic agent messages or duplicate test supervision.
+
+Verification reuses the frozen acceptance baseline and valid evidence. Missing shared verification infrastructure outside the task becomes an explicitly owned dependency, not an implicit framework-building assignment; unavailable required checks remain incomplete. After two repair/closure cycles without fewer blocking invariants, validation requires an evidence-backed strategy change or an incomplete handoff. Codex exports use medium effort for routine coordination while preserving executor/reviewer effort; a headless Codex trial must explicitly pass `--coordinator-effort medium` to override the runner's configured default.
+
 Use the runner for well-specified tasks when you want hands-off completion, repeatable validation, or a batch processed in dependency order. Use the same skills manually when requirements or architecture still need discussion, you want to approve each phase, or the change is small enough that an interactive session is simpler. The runner can commit and merge completed task work into the local base branch, so start it only when that workflow is intended.
 
 Each phase runs in a fresh Claude Code, Codex, or ZCode process with the harness's native session persistence enabled. Groundwork passes compact receipts and verified Git state between phases; it neither disables native memory nor copies memory between harnesses.
@@ -525,7 +532,7 @@ node /path/to/groundwork/bin/groundwork-run.js logs TASK-005 --project api --tai
 
 Run the repository's `bin/groundwork-run.js` with any supported `--harness`. Codex exports also install it at `~/.codex/groundwork-run.js` for user scope or `.codex/groundwork-run.js` for project scope. Before the first phase, the runner verifies the selected harness can actually discover Groundwork — the harness CLI must be on `PATH`, and the phase skills must be installed (Claude Code and ZCode: marketplace plugin or file export; Codex: `install-skills.sh`) — and fails with an actionable error instead of a confusing mid-run failure. ZCode headless has no plugin-dir injection and no `--output-last-message` file, so the runner invokes `zcode --prompt … --output-format stream-json` (falling back to the CLI bundled with the macOS ZCode app when no `zcode` binary is on `PATH`) and reads the final message from the stream's `result` event. The runner creates each linked task worktree before planning and runs every phase from its project root. It repeatedly chooses the lowest-numbered currently unblocked task, so dependency constraints take precedence and numeric priority breaks ties. When any phase invocation, receipt, or handoff fails, a fresh repair session receives the diagnostic, fixes the current selected-task worktree, and the runner retries that same phase. Repair changes remain for the retried phase and its normal commit flow; recovery creates no snapshots, rollback transaction, special commit, or repository-wide boundary comparison. Repair sessions never publish.
 
-Each phase session (the coordinator) runs on a per-harness default model: **Claude Code** `opus` at high effort, **Codex** `gpt-5.6-sol` at high effort (passed as `-m`/`-c model_reasoning_effort=…`), and **ZCode** `glm-5.3` (the concrete registry id behind the "GLM" picker entry). ZCode has no per-invocation model flag, so the runner pins it through a temporary HOME whose `.zcode/cli/config.json` merges the user's config (plugins, credentials, and state preserved via symlinks) with a `model.main` ref of `<provider>/glm-5.3`, reusing the provider written by `zcode login` when present. The coordinator is always pinned this way — login's own default model (for example `zai/glm-5.1`) does not downshift it; reasoning effort follows the model's default. Pass `--coordinator-model MODEL` and `--coordinator-effort low|medium|high|max` to override on any harness; `--coordinator-effort` is rejected outright with `--harness zcode`, which cannot set reasoning effort headlessly. Headless ZCode runs require a one-time `zcode login zai-coding-plan` so CLI processes carry their own credentials — the desktop app's session credentials are not reachable from CLI processes.
+Each phase session (the coordinator) runs on a per-harness default model: **Claude Code** `opus` at high effort, **Codex** `gpt-6.1-sol` at high effort (passed as `-m`/`-c model_reasoning_effort=…`), and **ZCode** `glm-5.3` (the concrete registry id behind the "GLM" picker entry). ZCode has no per-invocation model flag, so the runner pins it through a temporary HOME whose `.zcode/cli/config.json` merges the user's config (plugins, credentials, and state preserved via symlinks) with a `model.main` ref of `<provider>/glm-5.3`, reusing the provider written by `zcode login` when present. The coordinator is always pinned this way — login's own default model (for example `zai/glm-5.1`) does not downshift it; reasoning effort follows the model's default. Pass `--coordinator-model MODEL` and `--coordinator-effort low|medium|high|max` to override on any harness; `--coordinator-effort` is rejected outright with `--harness zcode`, which cannot set reasoning effort headlessly. Headless ZCode runs require a one-time `zcode login zai-coding-plan` so CLI processes carry their own credentials — the desktop app's session credentials are not reachable from CLI processes.
 
 Range bounds are inclusive; either `--from` or `--to` may be used alone. Dependencies outside a selected list or range must already be complete. Default output is semantic: phase transitions, validation stages, named gate outcomes, repair summaries, next actions, and a heartbeat tied to the last known semantic state. Add `--verbose` to show sanitized commands and selected tool activity. Generic turn events and successful short-command completions remain suppressed; command failures and commands lasting at least 10 seconds remain visible.
 

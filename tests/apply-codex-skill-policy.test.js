@@ -40,7 +40,7 @@ test('limits fixer scope and passes complete targeted re-review context', () => 
   const exported = applyPolicy('validate', validateSource);
 
   assert.ok(exported.includes('Only findings owned by `request-changes` reviews'));
-  assert.ok(exported.includes('Approved major findings remain unworked findings'));
+  assert.ok(exported.includes('Approved actionable major findings remain unworked findings'));
   assert.ok(exported.includes('prior finding records and status'));
   assert.ok(exported.includes('validated semantic repair claims'));
   assert.ok(exported.includes('repair delta'));
@@ -75,14 +75,39 @@ test('turns Codex rechecks into causal closure reviews', () => {
 test('makes cross-domain Sol elevation and concurrent fan-out executable', () => {
   const exported = applyPolicy('validate', validateSource);
 
-  assert.ok(exported.includes('Use Terra/high for the validation coordinator'));
+  assert.ok(exported.includes('Use Terra/medium for the validation coordinator'));
   assert.ok(!exported.includes('Use Sol/high for the validation coordinator'));
   assert.ok(exported.includes('two or more reviewer domains'));
   assert.ok(exported.includes('closure review rejected the immediately preceding fix'));
-  assert.ok(exported.includes('spawn a default agent with `fork_turns="none"`, model `gpt-5.6-sol`, and `reasoning_effort: "high"`'));
+  assert.ok(exported.includes('spawn a default agent with `fork_turns="none"`, model `gpt-6.1-sol`, and `reasoning_effort: "high"`'));
   assert.ok(exported.includes('Emit every independent reviewer `spawn_agent` call in one batch'));
   assert.ok(exported.includes('wait once for the batch'));
   assert.ok(exported.includes('Never issue fixed-interval status polls'));
+});
+
+test('routine coordinator effort is consistent across entry points without lowering review effort', () => {
+  const workOnSource = fs.readFileSync(path.join(ROOT, 'skills', 'work-on', 'SKILL.md'), 'utf8');
+  const validate = applyPolicy('validate', validateSource);
+  const workOn = applyPolicy('work-on', workOnSource);
+  assert.ok(workOn.includes('model `Terra` at `medium` effort'));
+  assert.ok(!validate.includes('Use Terra/high for the validation coordinator'));
+  assert.ok(validate.includes('Security remains Sol/high'));
+  assert.ok(validate.includes('Use Terra/high for routine validation leaves'));
+});
+
+test('completion guidance reaches coordinators and preserves honest acceptance', () => {
+  for (const name of ['validate', 'work-on', 'build-unplanned', 'just-do-it']) {
+    const source = fs.readFileSync(path.join(ROOT, 'skills', name, 'SKILL.md'), 'utf8');
+    const exported = applyPolicy(name, source);
+    assert.strictEqual(exported.split('## Codex Completion Discipline').length - 1, 1, name);
+    assert.ok(exported.includes('covered inputs change'), name);
+    assert.ok(exported.includes('Do not add speculative safeguards'), name);
+    assert.ok(exported.includes('An unavailable or failed required check remains incomplete'), name);
+  }
+  assert.ok(!applyPolicy('debug', '# Debug').includes('Codex Completion Discipline'));
+  assert.ok(applyPolicy('validate', validateSource).includes('no net reduction in unresolved blocking invariants'));
+  const security = fs.readFileSync(path.join(ROOT, 'agents', 'security-reviewer', 'AGENT.md'), 'utf8');
+  assert.ok(applyAgentPolicy('security-reviewer', security).includes('violated baseline requirement, concrete failure evidence, and blocking consequence'));
 });
 
 test('fixer consumes only validator-authorized requested findings', () => {
@@ -126,6 +151,63 @@ test('Codex reviewers enforce closure mode independently of coordinator wording'
   assert.ok(exported.includes('causal_ref'));
   assert.ok(exported.includes('scope-expansion'));
   assert.ok(exported.includes('Approve immediately'));
+});
+
+test('renders Codex defaults without collapsing balanced and deep overrides', () => {
+  const { applyToText } = require('../lib/model-override');
+  const text = 'Use Terra/medium, Sol/high, Luna/low, and model `gpt-6.1-sol`.';
+  assert.strictEqual(
+    applyToText({}, 'skill', 'work-on', text, 'codex'),
+    'Use gpt-6.1-sol/medium, gpt-6.1-sol/high, gpt-6-luna/low, and model `gpt-6.1-sol`.'
+  );
+  assert.strictEqual(
+    applyToText({ translation: { balanced: 'gpt-6.1-sol', deep: 'custom-deep' } },
+      'skill', 'work-on', text, 'codex'),
+    'Use gpt-6.1-sol/medium, custom-deep/high, gpt-6-luna/low, and model `custom-deep`.'
+  );
+  assert.strictEqual(
+    applyToText({ translation: { balanced: 'custom-balanced', deep: 'custom-deep' }, effort: 'max' },
+      'skill', 'work-on', text, 'codex'),
+    'Use custom-balanced/max, custom-deep/max, gpt-6-luna/max, and model `custom-deep`.'
+  );
+});
+
+test('preserves isolated delegation while assigning monitoring to one executor', () => {
+  for (const name of ['work-on', 'implement-task']) {
+    const source = fs.readFileSync(path.join(ROOT, 'skills', name, 'SKILL.md'), 'utf8');
+    const exported = applyPolicy(name, source);
+    for (const text of [source, exported]) {
+      assert.match(text, /executor owns implementation and test monitoring/i);
+      assert.match(text, /completion, a concrete blocker, or a required decision/i);
+      assert.match(text, /do not request periodic progress/i);
+    }
+    if (name === 'work-on') {
+      assert.ok(exported.includes('fork_turns="none"'));
+      assert.ok(exported.includes('description `Validate [TASK-NNN]`'));
+    } else {
+      assert.ok(exported.includes('subagent_type="groundwork:task-executor:task-executor"'));
+      assert.strictEqual((exported.match(/REPORTING:/g) || []).length, 2);
+    }
+  }
+  const executor = fs.readFileSync(path.join(ROOT, 'agents', 'task-executor', 'AGENT.md'), 'utf8');
+  const exported = applyAgentPolicy('task-executor', executor);
+  assert.match(exported, /implementation and test monitoring/i);
+  assert.match(exported, /completion, a concrete blocker, or a required decision/i);
+  assert.ok(exported.includes('groundwork:test-driven-development'));
+  assert.ok(exported.includes('RESULT: IMPLEMENTED'));
+});
+
+test('reports missing verification infrastructure without silently expanding the task', () => {
+  for (const name of ['validate', 'work-on', 'implement-task']) {
+    const source = fs.readFileSync(path.join(ROOT, 'skills', name, 'SKILL.md'), 'utf8');
+    const exported = applyPolicy(name, source);
+    assert.match(exported, /missing shared verification infrastructure/i);
+    assert.match(exported, /blocked dependency/i);
+    assert.match(exported, /required check remains incomplete/i);
+  }
+  const protocol = fs.readFileSync(path.join(ROOT, 'references', 'validation-review-protocol.md'), 'utf8');
+  assert.match(protocol, /baseline requirement.*concrete failure evidence/i);
+  assert.match(protocol, /missing shared verification infrastructure/i);
 });
 
 console.log(`\nTests: ${passed} passed, ${failed} failed`);
