@@ -2465,6 +2465,7 @@ function invokePhase(input) {
   const resultFile = path.join(tempDir, 'result.txt');
   const outputPath = path.join(tempDir, 'stdout.jsonl');
   const errorPath = path.join(tempDir, 'stderr.log');
+  let inputFd;
   let outputFd;
   let errorFd;
   let monitor;
@@ -2474,6 +2475,13 @@ function invokePhase(input) {
     outputFd = fs.openSync(outputPath, 'wx', 0o600);
     errorFd = fs.openSync(errorPath, 'wx', 0o600);
     const invocation = buildInvocation({ ...input, resultFile });
+    if (invocation.input !== undefined) {
+      // A harness may exit or close stdin before reading its prompt. Feeding
+      // a file avoids spawnSync's EPIPE race and preserves the child result.
+      const inputPath = path.join(tempDir, 'prompt.txt');
+      fs.writeFileSync(inputPath, invocation.input, { flag: 'wx', mode: 0o600 });
+      inputFd = fs.openSync(inputPath, 'r');
+    }
     let zcodeHome = null;
     if (input.harness === 'zcode') {
       zcodeHome = resolveZcodeCoordinatorHome(tempDir, input.coordinatorModel);
@@ -2492,10 +2500,11 @@ function invokePhase(input) {
         ...env,
         ...phaseChild.environment,
       } : env,
-      input: invocation.input,
       encoding: 'utf8',
-      stdio: ['pipe', outputFd, errorFd],
+      stdio: [inputFd === undefined ? 'pipe' : inputFd, outputFd, errorFd],
     });
+    if (inputFd !== undefined) fs.closeSync(inputFd);
+    inputFd = undefined;
     fs.closeSync(outputFd);
     outputFd = undefined;
     fs.closeSync(errorFd);
@@ -2517,6 +2526,7 @@ function invokePhase(input) {
     if (input.harness === 'zcode') return readZcodeResult(outputPath);
     return readClaudeResult(outputPath);
   } finally {
+    if (inputFd !== undefined) fs.closeSync(inputFd);
     if (outputFd !== undefined) fs.closeSync(outputFd);
     if (errorFd !== undefined) fs.closeSync(errorFd);
     stopProgressMonitor(monitor);

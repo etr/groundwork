@@ -1,6 +1,7 @@
 # Local Claude settings (user-specific)
 .claude/settings.local.json
 .groundwork-plans/
+.debug/
 
 # Python
 __pycache__/
