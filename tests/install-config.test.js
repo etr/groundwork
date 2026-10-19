@@ -1588,7 +1588,17 @@ describe('Codex consumption guardrails', () => {
       assert.strictEqual(persisted.status, 0, persisted.stderr);
       const batchDir = path.join(root, '.codex', 'skills', 'groundwork-just-do-it');
       const batch = fs.readFileSync(path.join(batchDir, 'SKILL.md'), 'utf8');
-      assert.ok(batch.includes('node <skill-directory>/../../groundwork-run.js all'));
+      assert.ok(!batch.includes('groundwork-run.js all'), 'exported batch must not launch the external runner');
+      assert.deepStrictEqual(
+        [...batch.matchAll(/^#### Phase [A-Z]: (.+)$/gm)].map(match => match[1]),
+        ['Plan', 'Implement', 'Validate', 'Finalize']
+      );
+      assert.ok(batch.includes('every harness'));
+      assert.ok(batch.includes('the groundwork-validate workflow'));
+      assert.ok(batch.includes('the groundwork-finalize-task workflow'));
+      assert.ok(batch.includes('Do not plan, prepare, implement, or validate a later task'));
+      assert.ok(batch.includes('user-specified task range or stop boundary'));
+      assert.ok(batch.includes('cleanup of the merged task worktree/branch before advancing'));
       const runnerHelp = spawnSync(process.execPath, [path.join(root, '.codex/groundwork-run.js'), '--help'], { encoding: 'utf8' });
       assert.strictEqual(runnerHelp.status, 0, runnerHelp.stderr);
 

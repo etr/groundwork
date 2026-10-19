@@ -6993,13 +6993,16 @@ describe('four-phase orchestration', () => {
 });
 
 describe('skill and export integration', () => {
-  test('just-do-it routes supported harnesses through the runner with a serial fallback', () => {
+  test('just-do-it keeps every harness in the coordinator phase chain', () => {
     const skill = fs.readFileSync(path.join(PLUGIN_ROOT, 'skills', 'just-do-it', 'SKILL.md'), 'utf8');
-    assert.ok(skill.includes('#### Phase A: Plan'));
-    assert.ok(skill.includes('#### Phase C: Validate'));
-    assert.ok(skill.includes('groundwork-run.js all'));
+    const phases = [...skill.matchAll(/^#### Phase [A-Z]: (.+)$/gm)].map(match => match[1]);
+    assert.deepStrictEqual(phases, ['Plan', 'Implement', 'Validate', 'Finalize']);
+    assert.ok(!skill.includes('groundwork-run.js all'), 'batch skill must not launch the external runner');
+    assert.ok(!skill.includes('fallback'));
+    assert.ok(skill.includes('Skill(skill="groundwork:validate", args="--noninteractive")'));
+    assert.ok(skill.includes('Skill(skill="groundwork:finalize-task")'));
     assert.ok(skill.includes('Do not plan, prepare, implement, or validate a later task'));
-    assert.ok(skill.includes('#### Phase E: Finalize'));
+    assert.ok(skill.includes('cleanup of the merged task worktree/branch before advancing'));
   });
 
   test('finalize-task has the same chain/dual visibility as validate', () => {

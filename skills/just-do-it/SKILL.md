@@ -35,11 +35,11 @@ Otherwise → use `AskUserQuestion`:
 
 If the user selects "Cancel — I'll switch first": output the switching commands above and stop. Do not proceed with the skill.
 
-## Sequential execution contract
+## Workflow
+
+### Sequential execution contract
 
 Keep exactly one active task through planning, implementation, validation, finalization, merge, and cleanup. Do not plan, prepare, implement, or validate a later task until that sequence finishes. A blocked task stops the batch; it does not authorize an independent task detour. Same-task reviewers may run together. Parallel task implementation requires the explicitly invoked swarming workflow or explicit user authorization; “build everything” and “keep going” preserve sequential execution.
-
-## Workflow
 
 ### Step 0: Resolve Project Context
 
@@ -117,15 +117,7 @@ If user declines, stop and suggest alternatives:
 
 ### Step 3: Execute Sequentially
 
-**Runner-supported harnesses (`claude`, `codex`, `zcode`):** use the existing external runner. It owns dependency ordering, per-task phase sessions, project ownership, publication, and cleanup. From the repository root, preview the exact selection:
-
-```bash
-node ${CLAUDE_PLUGIN_ROOT}/bin/groundwork-run.js all --harness <claude|codex|zcode> --repo "<repo_root>" <optional --project "<project_name>"> --dry-run
-```
-
-Honor any user-specified task range or stop boundary using the existing `--from`/`--to` options in both preview and execution. After the batch authorization in step 2, run the same command without `--dry-run`. An existing instruction to build all tasks is sufficient authorization; do not ask again. Keep this conversation available for user steering, observe the runner's task/stage results, and report its terminal outcome. Do not start a separate task workflow alongside it. If the runner fails or its runtime is incomplete, preserve its state and report the failure; do not silently switch to conversational execution.
-
-**Other harnesses:** use the serial conversation fallback below. Hold only the task list and the active task's plan, implementation, validation, and finalization results. Never start a later task while the active task remains unfinished.
+For every harness, this coordinator conversation owns the phase transitions below. Hold only the task list and the active task's plan, implementation, validation, and finalization results. Honor any user-specified task range or stop boundary when selecting tasks and before advancing. The standalone external runner remains separately launchable from outside this skill.
 
 For each remaining task in dependency order:
 

@@ -500,7 +500,7 @@ Execute all remaining tasks in dependency order inside the current conversation:
 /groundwork:just-do-it
 ```
 
-All task phases run inline. This remains useful for small batches and interactive oversight.
+The coordinator conversation owns Plan → Implement → Validate → Finalize for every harness, delegating implementation and reviews while keeping one active task through merge and cleanup. Any user-specified task range or stop boundary limits the batch. Launch the external runner separately when you want it to own execution.
 
 ### External Task Runner
 

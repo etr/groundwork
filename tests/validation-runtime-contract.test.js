@@ -158,11 +158,16 @@ test('the helper closure loads independently of the source tree', () => fixture(
   assert.strictEqual(persisted.status, 0, persisted.stderr);
   assert.ok(!entries.some(entry => entry.installed === 'groundwork-run.js'));
 }));
-test('batch instructions route supported harnesses through the serial runner', () => {
+test('batch instructions keep serial orchestration in the coordinator conversation', () => {
   const body = fs.readFileSync(path.join(ROOT, 'skills/just-do-it/SKILL.md'), 'utf8');
-  assert.ok(body.includes('node ${CLAUDE_PLUGIN_ROOT}/bin/groundwork-run.js all'));
+  assert.ok(!body.includes('groundwork-run.js all'), 'batch must not dispatch to the external runner');
+  assert.ok(body.includes('every harness'));
+  assert.ok(body.indexOf('### Sequential execution contract') > body.indexOf('## Workflow'));
   assert.ok(body.includes('Do not plan, prepare, implement, or validate a later task'));
-  assert.ok(body.includes('finalize-task'));
+  assert.ok(body.includes('user-specified task range or stop boundary'));
+  assert.ok(body.includes('Skill(skill="groundwork:validate", args="--noninteractive")'));
+  assert.ok(body.includes('Skill(skill="groundwork:finalize-task")'));
+  assert.ok(body.includes('cleanup of the merged task worktree/branch before advancing'));
   const { phasePrompt } = require('../bin/groundwork-run');
   assert.ok(phasePrompt('plan', { harness: 'codex', taskId: 'TASK-001', repoRoot: '/repo',
     projectRoot: '/repo', specsDir: '/repo/specs' }).includes('Do not work on another task'));
