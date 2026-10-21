@@ -402,6 +402,16 @@ function parseArgs(argv) {
 }
 
 function parseTaskCatalog(markdown) {
+  const statusNames = {
+    'not started': 'Not Started',
+    'in progress': 'In Progress',
+    complete: 'Complete',
+    completed: 'Complete',
+    done: 'Complete',
+    blocked: 'Blocked',
+    deferred: 'Deferred',
+  };
+  const statusPattern = /^(?:[-*+][\t ]+)?\*\*Status:\*\*[\t ]*(Not Started|In Progress|Completed?|Done|Blocked|Deferred)(?:[\t ]+[^\r\n]*)?\r?$/gmi;
   const catalog = new Map();
   const heading = /^###\s+(TASK-\d{3}):\s*(.+?)\s*$/gm;
   const matches = [...markdown.matchAll(heading)];
@@ -410,7 +420,11 @@ function parseTaskCatalog(markdown) {
     const match = matches[index];
     const end = index + 1 < matches.length ? matches[index + 1].index : markdown.length;
     const body = markdown.slice(match.index, end);
-    const statusMatch = body.match(/^(?:[-*+]\s+)?\*\*Status:\*\*\s*(Not Started|In Progress|Completed?|Blocked|Deferred)(?:\s+[^\r\n]*)?$/mi);
+    let status = 'Not Started';
+    // Completion and reopening updates may be appended below stale metadata.
+    for (const statusMatch of body.matchAll(statusPattern)) {
+      status = statusNames[statusMatch[1].toLowerCase()];
+    }
     const blockedMatch = body.match(/^(?:[-*+]\s+)?(?:\*\*)?Blocked by:(?:\*\*)?\s*(.+?)\s*$/mi);
     const blockedBy = !blockedMatch || /^none$/i.test(blockedMatch[1].trim())
       ? []
@@ -419,9 +433,7 @@ function parseTaskCatalog(markdown) {
     catalog.set(match[1], {
       id: match[1],
       title: match[2].trim(),
-      status: statusMatch && /^Completed$/i.test(statusMatch[1])
-        ? 'Complete'
-        : statusMatch ? statusMatch[1] : 'Not Started',
+      status,
       blockedBy,
     });
   }
