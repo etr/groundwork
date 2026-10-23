@@ -194,9 +194,11 @@ This is a hard stop. The user explicitly chose to take over the rest of the work
 3. The validate skill will run 9 verification agents in parallel and fix issues autonomously.
 
 **After validate completes:**
-- All agents approved → Proceed to Step 5
-- Validation failed → Report failure; in batch mode output `RESULT: FAILURE | [TASK-NNN] Validation failed: ...` and stop
-- Stuck on recurring issue → Report the stuck finding and stop
+- All required gates pass and all agents approve → Proceed to Step 5
+- Validation is incomplete because of an incidental or uncertain failure → Finish safe, independent work still within the task, preserve the implementation and valid evidence, then report implementation readiness, validation limits and any publication constraint together. Ask whether/how the user wants the separate issue investigated only once that work is ready. Do not restart validation or expand repair scope automatically. In batch mode, preserve the worktree and return `RESULT: FAILURE | [TASK-NNN] Validation incomplete: ...`.
+- Other validation failure or a stuck in-scope repair → Report the specific blocker and preserve completed work; in batch mode output `RESULT: FAILURE | [TASK-NNN] Validation failed: ...` and stop.
+
+Follow the validate skill's bounded failure assessment. A passing rerun does not prove a failure unrelated. Retain that assessment, checks already performed and the pending decision in the existing task/validation record across delegation and resume. Publication remains subject to the source workflow's rules and explicit user decisions; never report a failed or waived gate as passed.
 
 ## Step 5: Merge
 

@@ -89,6 +89,21 @@ INITIAL_AUDIT → BASELINE-COMPATIBLE_FIX → CLOSURE_REVIEW → PASS
 - Actionable `scope-expansion` observations are persisted as unworked findings and do not enter the fixer loop.
 - Apply the shared review protocol's verification-scope boundary before adding blocking checks or building tools. For missing shared verification infrastructure outside the authorized task, record a separately owned blocked dependency or ownership-triage action. The required check remains incomplete; do not silently create a general framework or waive the gate.
 
+## Incidental Check Failures
+
+A failed gate is evidence, not permission to repair its entire owning subsystem. Inspect what the assertion proves and whether the task can affect it. If needed, use one bounded diagnostic batch with a specific causal question and stopping condition; do not start a full baseline suite or repeatedly retry broad suites to resolve an incidental failure without user authorization. A passing rerun establishes intermittency, not independence from the task.
+
+| Assessment | Action |
+|---|---|
+| Caused by the task, or repair required by its accepted baseline | Use the existing in-scope repair and closure process |
+| Required execution setup is broken | Correct supported setup through its owner and repeat affected checks; preserve the failed receipt |
+| Unrelated | Record evidence and continue independent, already-authorized validation work |
+| Causality still uncertain after the bounded check | Keep the assessment uncertain, stop that investigation and continue independent, already-authorized validation work |
+
+Required gate membership alone does not expand repair scope. Do not switch to serial full-suite reruns or make unrelated source/threshold changes to chase incidental failures. Relevant task repairs or corrected setup may invalidate covered evidence and require another affected check; delegation, a new review iteration or a restart alone does not.
+
+Keep the failure evidence, assessment, completed diagnostics and pending decision in the existing coordinator-owned record as described in `${CLAUDE_PLUGIN_ROOT}/references/validation-session-protocol.md`. Preserve valid approvals and all failed receipts. Finish independent validation work without adding new checks, then return `Validation INCOMPLETE` (or the existing runner failure result), identifying implementation readiness, verification limits and the publication constraint for the calling workflow. Do not mark failed gates as passed, waive publication rules or enter another repair loop. The calling workflow finishes safe, independent task work before asking the user whether/how to address the separate issue. The orchestrator's source-write restriction still applies.
+
 ## Findings Storage
 
 Validation agents write their full JSON reviews to per-run, per-iteration files. The orchestrator parses compact response metadata, then reads only critical/major findings from `request-changes` reviews once to create semantic repair envelopes and closure briefs. Do not load approved/minor findings or whole review narratives. The fixer and persistence helper may read the full artifacts in their isolated contexts.

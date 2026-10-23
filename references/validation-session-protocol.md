@@ -99,6 +99,14 @@ validation-session.js checkpoint --run-dir <run_dir> --expected-stage <stage> --
 
 The coordinator file is the compact restart contract. It must contain semantic closure records, not only finding IDs.
 
+## Incidental failures and pending decisions
+
+Retain the failed command/assertion, evidence, causal assessment (task-related, setup, unrelated or uncertain), diagnostic checks already performed, remaining independent work and the specific pending user decision in the existing coordinator-owned notes/state artifact and gate receipts. Do not invent reviewer finding IDs for external gate failures. A passing rerun alone does not establish unrelatedness.
+
+On resume or delegation, continue from that record without repeating the bounded diagnostic batch or starting broader investigation merely because the session changed. Use the existing incomplete-result handling when a decision is needed. Keep implementation readiness, validation status and publication status distinct; an unresolved publication constraint does not authorize unrelated repair.
+
+This is a record-keeping instruction, not a new helper-enforced permission system. It adds no session stage, schema requirement, counter or separate tracking file. Do not edit helper-owned session state or checkpoint a failed gate as `gates-complete`.
+
 ## Fixer transaction
 
 Write `repair-envelope-iter<N>.json` directly inside `run_dir`, then record the semantic `fixer-inflight` transition before spawning the fixer:
