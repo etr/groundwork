@@ -1,6 +1,7 @@
 ---
 name: just-do-it
-description: Execute all remaining tasks in sequence until completion. Usage /groundwork:just-do-it
+description: Execute all remaining tasks in sequence until completion. Pass --project <name> to pin the monorepo package for this whole run. Usage /groundwork:just-do-it [--project name]
+argument-hint: "[--project name]"
 allowed-tools: ["Read", "Edit", "Write", "Bash", "Glob", "Grep", "Task", "AskUserQuestion", "Skill"]
 disable-model-invocation: true
 ---
@@ -45,9 +46,14 @@ Keep exactly one active task through planning, implementation, validation, final
 
 **Before loading tasks, ensure project context is resolved:**
 
+0. **Explicit project argument (highest precedence):** If the invocation arguments include `--project <name>` and `<name>` is configured in `.groundwork.yml`, that project is authoritative for this entire run. Resolve its root directly from `.groundwork.yml` (`<repo root>/<configured path>`); do not read or consult `{{project_name}}`.
+   - Do NOT invoke `select-project`, do NOT persist or change the stored selection, and do NOT run the CWD mismatch check below. Other sessions may be running concurrently on different packages and must not be disturbed by a global switch.
+   - Substitute the resolved project's paths for the template vars everywhere below: `<project root>/specs` for `{{specs_dir}}` and `<project root>/.groundwork-plans` for `{{plans_dir}}`.
+   - Thread the project explicitly through every downstream invocation instead of relying on the shared selection: pass `--project <name>` to validate and finalize-task, call the worktree helper as `node ${CLAUDE_PLUGIN_ROOT}/lib/worktree-identity.js TASK-NNN --project <name>`, and prefix other lib calls with `GROUNDWORK_PROJECT=<name>`.
+   - Then skip directly to Step 1.
 1. **Monorepo check:** Does `.groundwork.yml` exist at the repo root?
    - If yes → Is `{{project_name}}` non-empty?
-     - If empty → Invoke `Skill(skill="groundwork:select-project")` to select a project, then restart this skill.
+     - If empty → Invoke `Skill(skill="groundwork:select-project")` to select a project, then restart this skill. (`select-project` is interactive setup for a single session — never run it when an explicit `--project` was provided; item 0 already resolved the project in that case.)
      - If set → Project is `{{project_name}}`, specs at `{{specs_dir}}/`.
    - If no → Continue (single-project repo).
 2. **CWD mismatch check (monorepo only):**
@@ -212,6 +218,8 @@ Run the shared validation state machine from the task worktree in noninteractive
 Skill(skill="groundwork:validate", args="--noninteractive")
 ```
 
+If Step 0 item 0 resolved an explicit `--project <name>`, include it: `args="--project <name> --noninteractive"`.
+
 Parse its terminal line:
 
 - `Validation PASSED (...)` → proceed to Phase E.
@@ -225,6 +233,8 @@ Invoke the shared finalizer from the validated task worktree:
 ```
 Skill(skill="groundwork:finalize-task")
 ```
+
+If Step 0 item 0 resolved an explicit `--project <name>`, include it: `args="[TASK-NNN] --project <name>"`.
 
 Require verified integration into the recorded base branch, complete task status, and cleanup of the merged task worktree/branch before advancing. The finalizer owns commits, status bookkeeping, merge ancestry checks, and cleanup; do not duplicate them here. Any incomplete or unparseable finalization result stops the batch and preserves its worktree.
 
