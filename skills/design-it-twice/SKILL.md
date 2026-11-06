@@ -28,6 +28,8 @@ Skip for trivial or single-call-site code, or interfaces fully dictated by an ex
 
 Before generating alternatives, write down the constraints, dependencies, the dominant use case, and a rough code sketch of the interface. Use the project's domain language (see [[domain-modeling]]). Vague framing yields vague designs.
 
+**Check the premise:** What assumption makes this interface necessary? Could doing nothing, reusing an existing interface, or changing the boundary solve the underlying problem? Challenge inferred assumptions while keeping explicit user requirements fixed unless the user changes them. If no new interface is needed, recommend that and stop.
+
 ### 2. Generate 2–3 divergent designs
 
 Each design optimizes **one distinct goal** — they must genuinely differ, not be three shades of the same idea:
@@ -51,6 +53,8 @@ Each design optimizes **one distinct goal** — they must genuinely differ, not 
 
 Give an **opinionated recommendation** — which design solves the problem best and why — possibly a hybrid that grafts the best of two. A neutral menu pushes the judgment onto the reader and defeats the exercise.
 
+Preserve the **strongest unresolved objection**, if any, and state what evidence would change the recommendation. Base confidence on evidence, not agreement among agents; if no substantive objection remains, say so without inventing one.
+
 Named principles referenced here are defined in `${CLAUDE_PLUGIN_ROOT}/references/engineering-principles.md`.
 
 ## Rationalizations
@@ -71,7 +75,12 @@ Named principles referenced here are defined in `${CLAUDE_PLUGIN_ROOT}/reference
 
 ## Verification
 
+- [ ] Premise checked against simpler alternatives within explicit user requirements; stopped if no new interface is needed
+
+If proceeding with a new interface:
+
 - [ ] Problem space framed: constraints, dominant use case, interface sketch
 - [ ] 2–3 designs, each optimizing a genuinely distinct goal
 - [ ] Compared explicitly on depth, locality, and seam placement
 - [ ] A single opinionated recommendation (or justified hybrid), with reasoning
+- [ ] Strongest unresolved objection preserved (or none identified), with evidence that would change the recommendation
