@@ -87,6 +87,15 @@ Keep exactly one active task through planning, implementation, validation, final
 
 **Detection:** Check for file first (takes precedence), then directory.
 
+### Step 1.5: Sweep Stale Worktrees and Gate the First Task
+
+Killed runs leave worktrees behind. Before presenting the summary:
+
+1. **Sweep:** `node ${CLAUDE_PLUGIN_ROOT}/lib/task-resume.js sweep` (add `--project <name>` in monorepos). Remove every entry in `cleanable` automatically from the repo root (`git worktree remove <absolute path>` then `git branch -d <branch>`, exactly as the protocol specifies); list `needs_review` entries for the user without touching them.
+2. **Gate the first remaining task:** `node ${CLAUDE_PLUGIN_ROOT}/lib/task-resume.js check <TASK-NNN>` (same project flag). It prints one JSON line classifying existing work-in-progress — `resume_at`, `skip_phases`, `live_owner`, and ready-to-run `actions`.
+
+Follow `${CLAUDE_PLUGIN_ROOT}/references/task-resume-protocol.md` exactly: the standdown rule applies whenever `live_owner` is not `none`, and `conflict` stops the batch with the evidence surfaced.
+
 ### Step 2: Present Summary and Confirm
 
 Present a summary to the user:
@@ -112,6 +121,10 @@ This ensures each task starts from a clean baseline and changes are integrated i
 2. TASK-NNN: [Title]
 ...
 
+### In-Progress Tasks (resumed, not restarted)
+- TASK-NNN: [Title] — In Progress, resuming at [plan|implement|validate|finalize] per the resume gate
+(omit this section when the gate reports every remaining task `fresh`)
+
 ### Blocked Tasks (will execute after dependencies complete)
 - TASK-NNN: [Title] (blocked by TASK-XXX)
 
@@ -131,7 +144,14 @@ For each remaining task in dependency order:
 
 2. **Announce start:** "Starting TASK-NNN: [Title]"
 
-3. **Keep task status changes inside the active task worktree.** Implementation records `In Progress`; validation/finalization record `Complete`. The batch does not premark queued tasks.
+3. **Run the resume gate:** `node ${CLAUDE_PLUGIN_ROOT}/lib/task-resume.js check TASK-NNN` (add `--project <name>` in monorepos). Act on the one-line JSON exactly as `${CLAUDE_PLUGIN_ROOT}/references/task-resume-protocol.md` specifies:
+   - `live_owner` not `none` → standdown rule (report and stop the batch).
+   - `resume_at: conflict` → surface the `evidence` and stop the batch; the worktree is preserved.
+   - Skip every phase listed in `skip_phases`: when `plan.present` is true, reuse `plan.file` as `plan_file_path` instead of Phase A; when `validate` or beyond is done, jump straight to that phase.
+   - `resume_at: done` → run the `clear-checkpoint` action, log the task complete, advance.
+   - Run each `actions` command verbatim at its annotated moment (`record … --phase plan` right after persisting the plan; `record … --phase implemented` right after a successful Phase B; `clear` after Phase E lands).
+
+4. **Keep task status changes inside the active task worktree.** Implementation records `In Progress`; validation/finalization record `Complete`. The batch does not premark queued tasks.
 
 #### Phase A: Plan
 
@@ -190,6 +210,11 @@ and acceptance criteria. Do not ask the caller for task details.
 
 PLAN FILE: [plan_file_path]
 Read this file first with the Read tool — it contains the validated implementation plan.
+
+[When the resume gate returned resume_existing_worktree=true, include the three lines below verbatim, substituting the gate's values]
+WORKTREE PATH: [expected_worktree from the check result]
+TASK BRANCH: [expected_branch from the check result]
+RESUME EXISTING WORKTREE=true
 
 INSTRUCTIONS:
 1. Follow your preloaded skills to create a worktree, implement with TDD, and commit.

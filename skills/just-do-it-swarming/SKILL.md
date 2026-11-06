@@ -89,6 +89,8 @@ If the user selects "Cancel — I'll switch first": output the switching command
    - Topological sort respecting dependencies
    - Blocked tasks cannot execute until dependencies complete
 
+4. **Sweep and resume gate:** Run `node ${CLAUDE_PLUGIN_ROOT}/lib/task-resume.js sweep` (add `--project <name>` in monorepos) and auto-clean only the `cleanable` entries per `${CLAUDE_PLUGIN_ROOT}/references/task-resume-protocol.md`. An `In Progress` task whose `node ${CLAUDE_PLUGIN_ROOT}/lib/task-resume.js check <TASK-NNN>` reports existing work is in flight from a prior session — assign it to a teammate before any `Not Started` task (the embedded workflow's resume gate continues it at the right phase).
+
 **Detection:** Check for file first (takes precedence), then directory.
 
 ### Step 2: Present Summary and Confirm
@@ -202,7 +204,11 @@ Create an agent team. Then for each remaining task in dependency order:
 
    INSTRUCTIONS:
    1. Follow the EXECUTE-TASK WORKFLOW above starting from Step 1 (Parse Task Identifier).
-      - Skip Step 0 (context already resolved by the lead).
+      - Skip Step 0 (context already resolved by the lead) — but still run its
+        resume gate item for this task: `node ${CLAUDE_PLUGIN_ROOT}/lib/task-resume.js check TASK-NNN`
+        (add `--project <name>` in monorepos) and act on the one-line JSON per
+        `${CLAUDE_PLUGIN_ROOT}/references/task-resume-protocol.md` (skip the
+        phases it says are done; stand down when live_owner is not none).
       - TASK IDENTIFIER and TASK DEFINITION are provided above — use them directly.
       - GROUNDWORK_BATCH_MODE is true — auto-proceed all confirmations.
    2. When all the steps of the workflow are complete, report:

@@ -80,14 +80,15 @@ Parse the status table in `_index.md` to find the next task:
 | TASK-003 | Dashboard | M2 | Not Started | TASK-002 |
 ```
 
-1. Look for all rows with Status = `Not Started`
-2. Check dependencies — filter to unblocked tasks (all tasks in `Blocked by` column are `Complete`)
-3. **Detect ambiguity:**
+1. **Resume candidates first:** Look for rows with Status = `In Progress`. For each, run `node ${CLAUDE_PLUGIN_ROOT}/lib/task-resume.js check <TASK-NNN>` (add `--project <name>` in monorepos). A row whose check reports a worktree, branch, or validation session is **in flight from a prior session** — it is the top-priority candidate; delegate to `work-on` with that ID (the resume gate inside `work-on` continues at the right phase). An `In Progress` row with no artifacts anywhere is a stale marker: offer to reset it to `Not Started`, then treat it as a normal candidate.
+2. Look for all rows with Status = `Not Started`
+3. Check dependencies — filter to unblocked tasks (all tasks in `Blocked by` column are `Complete`)
+4. **Detect ambiguity:**
    - Let `candidates` = unblocked not-started tasks
    - Let `next_sequential` = lowest numbered candidate (e.g., TASK-004)
    - Let `completed_after` = any complete task with number > next_sequential
 
-4. **If ambiguous (completed tasks exist after candidates):**
+5. **If ambiguous (completed tasks exist after candidates):**
    Present options to user with context about the gap:
 
    > "Multiple tasks are available. Tasks 1,2,3,5 are complete.
@@ -98,7 +99,7 @@ Parse the status table in `_index.md` to find the next task:
 
    Wait for user selection before proceeding.
 
-5. **If unambiguous:** Select the first unblocked, not-started task
+6. **If unambiguous:** Select the first unblocked, not-started task
 
 **Dependency check:** A task is blocked if its `Blocked by` column lists any task that is not `Complete` in the status table.
 

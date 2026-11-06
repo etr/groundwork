@@ -104,6 +104,7 @@ Parse the input from the caller's conversation context. Three modes:
 3. **Validate task is workable:**
    - Status `Complete` → Output `RESULT: FAILURE | TASK-NNN is already Complete.` and stop.
    - Blocked by incomplete tasks → Output `RESULT: FAILURE | TASK-NNN is blocked by: [list].` and stop.
+   - **Resume guard:** Run `node ${CLAUDE_PLUGIN_ROOT}/lib/task-resume.js check TASK-NNN` (add `--project <name>` in monorepos). If the check reports existing implementation work (`resume_at` is `implement`, `validate`, `finalize`, or `done`), re-planning would invalidate a resumable run — output `RESULT: FAILURE | TASK-NNN has existing in-flight work (resume_at: <value>). Resume it via work-on instead of re-planning.` and stop, surfacing the check's `evidence`.
 
 4. **Verify spec paths exist** (use Glob, not Read):
    - `{{specs_dir}}/product_specs.md` or `{{specs_dir}}/product_specs/`

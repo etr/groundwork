@@ -20,7 +20,7 @@ When invoked manually from the task worktree:
 1. Resolve `--project` directly from the repository's `.groundwork.yml`; do not depend on or change persisted project selection.
 2. Derive the current registered worktree and checked-out task branch.
 3. Derive the primary worktree and its checked-out base branch.
-4. Treat the current task HEAD as `validated_head`. If validation did not just pass for this exact tree and working state, stop and ask the user to run `validate` first.
+4. Treat the current task HEAD as `validated_head`. If validation did not just pass for this exact tree and working state, stop and ask the user to run `validate` first. Exception — resume entry: when a resume gate (`node ${CLAUDE_PLUGIN_ROOT}/lib/task-resume.js check <task-id>`) classified this task as `resume_at: finalize`, its terminal validated session already covers this exact tree; proceed (see `${CLAUDE_PLUGIN_ROOT}/references/task-resume-protocol.md`).
 
 ## Workflow
 

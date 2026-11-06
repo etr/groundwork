@@ -76,12 +76,20 @@ If the user selects "Cancel — I'll switch first": output the switching command
 
 1. **Check skip flag:** If session context contains `GROUNDWORK_EXECUTE_SKIP_TO_STEP_SEVEN=true`, set `plan_file_path = $GROUNDWORK_EXECUTE_PLAN_FILE` and skip directly to Step 3 (Implementation). Do NOT read the plan file's contents into this orchestrator's context — the implement-task skill will pass the path to the executor agent.
 
-2. **Monorepo check:** Does `.groundwork.yml` exist at the repo root?
+2. **Run the resume gate:** `node ${CLAUDE_PLUGIN_ROOT}/lib/task-resume.js check <TASK-NNN>` (add `--project <name>` in monorepos; run it after the task identifier is known from Step 1 if the ID was not supplied). The one-line JSON classifies any existing work-in-progress for this task. Act on it exactly as `${CLAUDE_PLUGIN_ROOT}/references/task-resume-protocol.md` specifies:
+   - `live_owner` not `none` → standdown rule: report and stop.
+   - `resume_at: conflict` → surface the `evidence`, preserve the worktree, and stop for a user decision.
+   - Skip every phase in `skip_phases`: reuse `plan.file` instead of Step 2 when `plan.present`; jump to Step 4 (validation) or Step 5 (merge) when that much is already done.
+   - `resume_at: done` → run the `clear-checkpoint` action and report the task complete.
+   - Run each `actions` command verbatim at its annotated moment: `record … --phase plan` right after the plan file is persisted, `record … --phase implemented` right after Step 3 returns `RESULT: IMPLEMENTED`, and `clear` after Step 5's merge succeeds.
+   - When `resume_existing_worktree` is true, forward `WORKTREE PATH: <expected_worktree>`, `TASK BRANCH: <expected_branch>`, and `RESUME EXISTING WORKTREE=true` into the Step 3 dispatch.
+
+3. **Monorepo check:** Does `.groundwork.yml` exist at the repo root?
    - If yes → Is `{{project_name}}` non-empty?
      - If empty → Invoke `Skill(skill="groundwork:select-project")` to select a project, then restart this skill.
      - If set → Project is `{{project_name}}`, specs at `{{specs_dir}}/`.
    - If no → Continue (single-project repo).
-3. **CWD mismatch check (monorepo only):**
+4. **CWD mismatch check (monorepo only):**
    - Skip if not in monorepo mode or if the project was just selected above.
    - If CWD is the repo root → fine, proceed.
    - Check which project's path CWD falls inside (compare against all projects in `.groundwork.yml`).

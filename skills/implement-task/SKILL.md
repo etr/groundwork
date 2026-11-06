@@ -22,6 +22,10 @@ If session context contains `GROUNDWORK_RUNNER_MODE=true`:
 - Forward the runner-supplied task branch exactly; monorepos use a project-qualified branch to prevent overlapping task IDs from colliding.
 - When the runner supplies `RESUME EXISTING WORKTREE=true`, verify and reuse that exact registered worktree. Tell the executor to inspect existing commits, working state, tests, and plan progress; do not repeat completed implementation work.
 - Forward the runner receipt token exactly.
+
+## Resume Mode (interactive)
+
+The same worktree-resume contract applies outside runner mode: when the calling context (a resume gate result from `node ${CLAUDE_PLUGIN_ROOT}/lib/task-resume.js check <TASK-NNN>`, or an orchestrator forwarding one) supplies `WORKTREE PATH`, `TASK BRANCH`, and `RESUME EXISTING WORKTREE=true`, forward those lines into the task-executor prompt unchanged. Outside runner mode the executor still owns its commits — it reuses the registered worktree and finishes only remaining work; see `${CLAUDE_PLUGIN_ROOT}/references/task-resume-protocol.md` ("Resume-mode executor dispatch").
 - The runner exclusively owns task-worktree creation, reconciliation, cleanup, staging, and commits. The task-executor edits and tests the precreated worktree, then proposes an expressive commit subject and body.
 - Return the task-executor's versioned JSON `RESULT: IMPLEMENTED` receipt unchanged.
 
@@ -124,11 +128,13 @@ Agent(
   [If GROUNDWORK_RUNNER_MODE=true: include both lines below]
   GROUNDWORK_RUNNER_MODE=true
   RUNNER RECEIPT TOKEN: [runner-supplied exact token]
-  WORKTREE PATH: [runner-supplied absolute worktree path]
-  TASK BRANCH: [runner-supplied exact branch]
-  The runner exclusively owns the task-worktree lifecycle. Verify and reuse the precreated registered worktree; never create, remove, move, or repair a worktree in runner mode.
-  [If the runner reports an existing ambiguous or partial worktree: include the line below]
+  [If GROUNDWORK_RUNNER_MODE=true OR a resume gate supplied the values: include the three lines below]
+  WORKTREE PATH: [supplied absolute worktree path]
+  TASK BRANCH: [supplied exact branch]
+  [If the runner reports an existing ambiguous or partial worktree, OR the resume gate returned resume_existing_worktree=true: include the line below]
   RESUME EXISTING WORKTREE=true
+  [If GROUNDWORK_RUNNER_MODE=true: include the line below]
+  The runner exclusively owns the task-worktree lifecycle. Verify and reuse the precreated registered worktree; never create, remove, move, or repair a worktree in runner mode.
 
   PROJECT ROOT: [absolute path to project root]
 
