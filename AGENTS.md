@@ -125,6 +125,7 @@ Hooks are defined in `hooks/hooks.json` and use `${CLAUDE_PLUGIN_ROOT}` for port
 | `lib/external-runner-manifest.js` | Checked manifest of the exported standalone runner runtime; validates its transitive import closure |
 | `lib/state-dir.js` | Prints the harness-resolved state directory so bash hooks/statusline cannot diverge from Node writers |
 | `lib/worktree-identity.js` | Single source of truth for task worktree paths and branch names (project-qualified in monorepos); CLI for skills, factory for the runner |
+| `lib/task-resume.js` | Single-source resume classification shared by the runner and interactive skills: runner checkpoint IO, task-catalog parsing, the existing-worktree classifier, and the `check`/`sweep`/`record`/`clear` CLI behind the resume gate (`references/task-resume-protocol.md`) |
 | `lib/plan-check.js` | Verifies a legacy repo-root plan's recorded project before adoption |
 | `lib/transform-agents.js` | Rewrites `Agent()` calls when exporting skills to other harnesses |
 | `lib/filter-zcode-hooks.js` | Filters hooks.json to the hook events ZCode supports (marketplace bundle) |
