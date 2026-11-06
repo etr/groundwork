@@ -7025,8 +7025,12 @@ describe('skill and export integration', () => {
   test('runner mode preserves normal native task-executor memory behavior', () => {
     const implement = fs.readFileSync(path.join(PLUGIN_ROOT, 'skills', 'implement-task', 'SKILL.md'), 'utf8');
     const executor = fs.readFileSync(path.join(PLUGIN_ROOT, 'agents', 'task-executor', 'AGENT.md'), 'utf8');
-    assert.ok(implement.includes('WORKTREE PATH: [runner-supplied absolute worktree path]'));
-    assert.ok(implement.includes('TASK BRANCH: [runner-supplied exact branch]'));
+    assert.ok(implement.includes('WORKTREE PATH: [supplied absolute worktree path]'));
+    assert.ok(implement.includes('TASK BRANCH: [supplied exact branch]'));
+    // The same dispatch lines are forwarded for runner-supplied worktrees
+    // and interactive resume-gate results alike.
+    assert.match(implement, /GROUNDWORK_RUNNER_MODE=true OR a resume gate supplied the values/);
+    assert.match(implement, /resume_existing_worktree=true: include the line below/);
     assert.ok(!implement.includes('Do not read/write native agent memory in runner mode'));
     assert.ok(!executor.includes('do not read or write native agent memory'));
     assert.ok(executor.includes('Before starting work, consult your agent memory'));
