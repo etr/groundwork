@@ -67,6 +67,33 @@ const {
   reclaimStaleStagingEntries,
   waitForLeaseMutation,
 } = requireRuntimeHelper('lease-mutation.js');
+// Shared task-resume core (lib/task-resume.js): checkpoint IO, task-catalog
+// parsing, worktree assertions, and the single-source existing-worktree
+// classifier. The interactive-skill CLI in that module classifies the same
+// on-disk state with the same functions, so runner and skill runs can never
+// disagree about a worktree.
+const taskResumeCore = requireRuntimeHelper('task-resume.js').createTaskResumeCore({
+  execGit: (cwd, args, options) => execGit(cwd, args, options),
+  maxCheckpointBytes: 64 * 1024,
+  maxTaskFiles: 1000,
+  maxTaskBytes: 10 * 1024 * 1024,
+});
+const {
+  checkpointPath,
+  loadCheckpoint,
+  saveCheckpoint,
+  clearCheckpoint,
+  fileSha256,
+  readTasks,
+  readTasksAtCommit,
+  parseTaskCatalog,
+  maskSelectedTaskStatus,
+  taskBookkeepingPaths,
+  assertRegisteredWorktree,
+  assertClean,
+  hiddenIndexFlags,
+  classifyExistingWorktree: classifyExistingWorktreeShared,
+} = taskResumeCore;
 
 const TASK_ID = /^TASK-(\d{3})$/;
 const SUPPORTED_HARNESSES = ['claude', 'codex', 'zcode'];
@@ -401,46 +428,8 @@ function parseArgs(argv) {
   return result;
 }
 
-function parseTaskCatalog(markdown) {
-  const statusNames = {
-    'not started': 'Not Started',
-    'in progress': 'In Progress',
-    complete: 'Complete',
-    completed: 'Complete',
-    done: 'Complete',
-    blocked: 'Blocked',
-    deferred: 'Deferred',
-  };
-  const statusPattern = /^(?:[-*+][\t ]+)?\*\*Status:\*\*[\t ]*(Not Started|In Progress|Completed?|Done|Blocked|Deferred)(?:[\t ]+[^\r\n]*)?\r?$/gmi;
-  const catalog = new Map();
-  const heading = /^###\s+(TASK-\d{3}):\s*(.+?)\s*$/gm;
-  const matches = [...markdown.matchAll(heading)];
-
-  for (let index = 0; index < matches.length; index++) {
-    const match = matches[index];
-    const end = index + 1 < matches.length ? matches[index + 1].index : markdown.length;
-    const body = markdown.slice(match.index, end);
-    let status = 'Not Started';
-    // Completion and reopening updates may be appended below stale metadata.
-    for (const statusMatch of body.matchAll(statusPattern)) {
-      status = statusNames[statusMatch[1].toLowerCase()];
-    }
-    const blockedMatch = body.match(/^(?:[-*+]\s+)?(?:\*\*)?Blocked by:(?:\*\*)?\s*(.+?)\s*$/mi);
-    const blockedBy = !blockedMatch || /^none$/i.test(blockedMatch[1].trim())
-      ? []
-      : [...blockedMatch[1].matchAll(/TASK-\d{3}/gi)].map((entry) => entry[0].toUpperCase());
-
-    catalog.set(match[1], {
-      id: match[1],
-      title: match[2].trim(),
-      status,
-      blockedBy,
-    });
-  }
-
-  if (catalog.size === 0) throw new Error('No TASK-NNN definitions found in tasks spec');
-  return catalog;
-}
+// parseTaskCatalog lives in lib/task-resume.js (shared with the interactive
+// resume CLI) and is destructured above.
 
 function orderTasks(catalog, selected) {
   const parked = new Set(['Complete', 'Deferred']);
@@ -1344,14 +1333,8 @@ function registeredWorktrees(repoRoot) {
     .sort((left, right) => left.path.localeCompare(right.path));
 }
 
-function checkpointPath(commonDir, repoRoot, projectRoot, taskId) {
-  const projectRelative = path.relative(repoRoot, projectRoot).split(path.sep).join('/') || '.';
-  const projectKey = crypto.createHash('sha256').update(projectRelative).digest('hex').slice(0, 16);
-  return {
-    file: path.join(commonDir, 'groundwork', 'runner', projectKey, `${taskId}.json`),
-    projectRelative,
-  };
-}
+// checkpointPath/loadCheckpoint/saveCheckpoint/clearCheckpoint/fileSha256
+// live in lib/task-resume.js and are destructured above.
 
 function reportingPath(commonDir, repoRoot, projectRoot, taskId) {
   const projectRelative = path.relative(repoRoot, projectRoot).split(path.sep).join('/') || '.';
@@ -1439,53 +1422,6 @@ function showLogs(options, dependencies = {}) {
   });
 }
 
-function loadCheckpoint(commonDir, repoRoot, projectRoot, taskId) {
-  const location = checkpointPath(commonDir, repoRoot, projectRoot, taskId);
-  if (!fs.existsSync(location.file)) return null;
-  assertNoSymlinkComponents(commonDir, location.file, 'Runner checkpoint');
-  const stat = fs.lstatSync(location.file);
-  if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_CHECKPOINT_BYTES) {
-    throw new Error(`Runner checkpoint is invalid: ${location.file}`);
-  }
-  let checkpoint;
-  try {
-    checkpoint = JSON.parse(fs.readFileSync(location.file, 'utf8'));
-  } catch {
-    throw new Error(`Runner checkpoint is not valid JSON: ${location.file}`);
-  }
-  if (!checkpoint || checkpoint.version !== 1 || checkpoint.taskId !== taskId
-      || checkpoint.project !== location.projectRelative) {
-    throw new Error(`Runner checkpoint identity does not match ${taskId}`);
-  }
-  return checkpoint;
-}
-
-function saveCheckpoint(commonDir, repoRoot, projectRoot, checkpoint) {
-  const location = checkpointPath(commonDir, repoRoot, projectRoot, checkpoint.taskId);
-  const directory = path.dirname(location.file);
-  createContainedDirectory(commonDir, directory, 'Runner checkpoint directory');
-  if (fs.existsSync(location.file) && fs.lstatSync(location.file).isSymbolicLink()) {
-    throw new Error(`Runner checkpoint must not be a symlink: ${location.file}`);
-  }
-  // Standardized collision-resistant atomic write (lib/atomic-write.js): the
-  // crypto-random temporary name cannot collide with a crashed writer's
-  // leftover, even after pid recycling within the same millisecond.
-  requireRuntimeHelper('atomic-write.js').writeJsonSyncAtomic(location.file, checkpoint);
-}
-
-function clearCheckpoint(commonDir, repoRoot, projectRoot, taskId) {
-  const location = checkpointPath(commonDir, repoRoot, projectRoot, taskId);
-  if (!fs.existsSync(location.file)) return;
-  if (fs.lstatSync(location.file).isSymbolicLink()) {
-    throw new Error(`Runner checkpoint must not be a symlink: ${location.file}`);
-  }
-  fs.unlinkSync(location.file);
-}
-
-function fileSha256(filePath) {
-  return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
-}
-
 function assertPlanTree(projectRoot) {
   const planRoot = path.join(projectRoot, '.groundwork-plans');
   if (!fs.existsSync(planRoot)) fs.mkdirSync(planRoot, { recursive: true });
@@ -1569,46 +1505,7 @@ function resolveProject(repoRoot, requestedProject, cwd = process.cwd()) {
   return { projectName, projectRoot, specsDir: path.join(projectRoot, 'specs') };
 }
 
-function readTasks(projectRoot) {
-  const file = path.join(projectRoot, 'specs', 'tasks.md');
-  if (fs.existsSync(file)) {
-    assertNoSymlinkComponents(projectRoot, file, 'Tasks file');
-    const stat = fs.lstatSync(file);
-    if (stat.isSymbolicLink() || !stat.isFile()) throw new Error(`Tasks path must be a regular file: ${file}`);
-    if (stat.size > MAX_TASK_BYTES) throw new Error('Tasks spec exceeds the 10 MiB limit');
-    return fs.readFileSync(file, 'utf8');
-  }
-  const directory = path.join(projectRoot, 'specs', 'tasks');
-  if (!fs.existsSync(directory)) {
-    throw new Error(`Tasks spec not found under ${path.join(projectRoot, 'specs')}`);
-  }
-  assertNoSymlinkComponents(projectRoot, directory, 'Tasks directory');
-  const rootStat = fs.lstatSync(directory);
-  if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
-    throw new Error(`Tasks path must be a regular directory: ${directory}`);
-  }
-
-  const files = [];
-  let totalBytes = 0;
-  function collect(current) {
-    for (const entry of fs.readdirSync(current).sort()) {
-      if (entry.startsWith('.')) continue;
-      const full = path.join(current, entry);
-      const stat = fs.lstatSync(full);
-      if (stat.isSymbolicLink()) throw new Error(`Tasks tree contains a symlink: ${full}`);
-      if (stat.isDirectory()) collect(full);
-      else if (stat.isFile() && entry.endsWith('.md')) {
-        files.push(full);
-        totalBytes += stat.size;
-        if (files.length > MAX_TASK_FILES || totalBytes > MAX_TASK_BYTES) {
-          throw new Error('Tasks spec exceeds the file-count or 10 MiB limit');
-        }
-      }
-    }
-  }
-  collect(directory);
-  return files.map((taskFile) => fs.readFileSync(taskFile, 'utf8')).join('\n\n');
-}
+// readTasks lives in lib/task-resume.js and is destructured above.
 
 function resultFailure(output) {
   const match = String(output).match(/^RESULT:\s*(?:FAILURE|NEEDS_INPUT|CLEANUP_REQUIRED)\s*\|\s*(.+)$/mi);
@@ -2575,25 +2472,8 @@ function buildChildEnv(harness, additions = {}) {
   return env;
 }
 
-function assertRegisteredWorktree(repoRoot, worktreePath, branch) {
-  const expectedPath = path.resolve(worktreePath);
-  const expectedStat = fs.lstatSync(expectedPath);
-  if (expectedStat.isSymbolicLink() || !expectedStat.isDirectory()) {
-    throw new Error(`Expected worktree root is not a real directory: ${expectedPath}`);
-  }
-  const canonicalPath = fs.realpathSync(expectedPath);
-  const records = execGit(repoRoot, ['worktree', 'list', '--porcelain']).split('\n\n');
-  const matched = records.some((record) => {
-    const lines = record.split('\n');
-    const pathLine = lines.find((line) => line.startsWith('worktree '));
-    const branchLine = lines.find((line) => line.startsWith('branch refs/heads/'));
-    if (!pathLine || !branchLine) return false;
-    return fs.realpathSync(pathLine.slice('worktree '.length)) === canonicalPath
-      && branchLine.slice('branch refs/heads/'.length) === branch;
-  });
-  if (!matched) throw new Error(`Model-reported worktree is not registered for branch ${branch}: ${worktreePath}`);
-  return canonicalPath;
-}
+// assertRegisteredWorktree lives in lib/task-resume.js and is destructured
+// above.
 
 function prepareTaskWorkspace(repoRoot, workspace, baseHead) {
   const branchRef = `refs/heads/${workspace.branch}`;
@@ -2610,81 +2490,8 @@ function prepareTaskWorkspace(repoRoot, workspace, baseHead) {
   return assertRegisteredWorktree(repoRoot, workspace.worktreePath, workspace.branch);
 }
 
-function initializedSubmodules(cwd) {
-  return execGit(cwd, ['ls-files', '--stage', '-z'], { raw: true })
-    .split('\0')
-    .filter((entry) => entry.startsWith('160000 '))
-    .map((entry) => entry.slice(entry.indexOf('\t') + 1))
-    .filter((relative) => {
-      const absolute = path.join(cwd, relative);
-      return fs.existsSync(absolute) && fs.lstatSync(absolute).isDirectory();
-    });
-}
-
-function hiddenIndexFlags(cwd, pathspec = null) {
-  const args = ['ls-files', '-v', '-z'];
-  if (pathspec) args.push('--', pathspec);
-  return execGit(cwd, args, { raw: true })
-    .split('\0')
-    .filter((entry) => entry && (/^[a-z] /.test(entry) || entry.startsWith('S ')));
-}
-
-function assertNoHiddenIndexFlags(cwd, label, pathspec = null) {
-  const flagged = hiddenIndexFlags(cwd, pathspec);
-  if (flagged.length) {
-    throw new Error(`${label} has assume-unchanged or skip-worktree entries:\n${flagged.join('\n')}`);
-  }
-}
-
-function assertClean(cwd, label, seen = new Set(), dependencies = {}) {
-  const canonical = fs.realpathSync(cwd);
-  if (seen.has(canonical)) throw new Error(`${label} contains a recursive submodule path`);
-  seen.add(canonical);
-  const run = (args, options) => (dependencies.execGit
-    ? dependencies.execGit(execGit, cwd, args, options)
-    : execGit(cwd, args, options));
-  const initialFlags = hiddenIndexFlags(cwd);
-  if (initialFlags.length) {
-    throw new Error(`${label} has assume-unchanged or skip-worktree entries:\n${initialFlags.join('\n')}`);
-  }
-  let refreshFailed = false;
-  // A sibling runner's opportunistic `git status` refresh can hold the
-  // shared index lock for the span of one command; on slower filesystems
-  // that turns a healthy refresh into a spurious cleanliness failure.
-  // Retry the transient contention, bounded, before treating it as real.
-  for (let attempt = 0; ; attempt++) {
-    try {
-      run(['update-index', '--really-refresh']);
-      refreshFailed = false;
-      break;
-    } catch (error) {
-      refreshFailed = true;
-      const detail = `${(error && error.message) || ''}\n${(error && error.stderr) || ''}`;
-      if (attempt >= 4 || !/index\.lock|File exists/i.test(detail)) break;
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
-    }
-  }
-  const flagged = hiddenIndexFlags(cwd);
-  if (flagged.length) {
-    throw new Error(`${label} has assume-unchanged or skip-worktree entries:\n${flagged.join('\n')}`);
-  }
-  const status = run([
-    'status',
-    '--porcelain',
-    '--untracked-files=all',
-    '--ignore-submodules=none',
-  ]);
-  if (status) throw new Error(`${label} is not clean:\n${status}`);
-  if (refreshFailed) {
-    throw new Error(`${label} has tracked content that differs from its index`);
-  }
-  for (const relative of initializedSubmodules(cwd)) {
-    const absolute = path.join(cwd, relative);
-    assertNoSymlinkComponents(cwd, absolute, `${label} submodule`);
-    assertClean(absolute, `${label} submodule ${relative}`, seen, dependencies);
-  }
-  seen.delete(canonical);
-}
+// assertClean/hiddenIndexFlags live in lib/task-resume.js and are
+// destructured above.
 
 function assertPathspecClean(cwd, pathspec, label) {
   const flagged = execGit(cwd, ['ls-files', '-v', '-z', '--', pathspec], { raw: true })
@@ -2887,58 +2694,8 @@ function parseRecoveryHint(output) {
   return match ? match[1] : 'ready';
 }
 
-function readTasksAtCommit(repoRoot, projectRoot, commit) {
-  const relativeProject = path.relative(repoRoot, projectRoot).split(path.sep).join('/');
-  const specsPrefix = [relativeProject, 'specs'].filter(Boolean).join('/');
-  const tasksFile = `${specsPrefix}/tasks.md`;
-  try {
-    return execGit(repoRoot, ['show', `${commit}:${tasksFile}`]);
-  } catch {
-    const tasksPrefix = `${specsPrefix}/tasks/`;
-    const files = execGit(repoRoot, ['ls-tree', '-r', '--name-only', commit, '--', tasksPrefix])
-      .split('\n').filter((file) => file.endsWith('.md')).sort();
-    return files.map((file) => execGit(repoRoot, ['show', `${commit}:${file}`])).join('\n\n');
-  }
-}
-
-function maskSelectedTaskStatus(content, taskId) {
-  let currentTask = null;
-  return content.split('\n').map((line) => {
-    const heading = line.match(/^###\s+(TASK-\d{3}):/);
-    if (heading) currentTask = heading[1];
-    if (currentTask === taskId && /^(?:[-*+]\s+)?\*\*Status:\*\*/.test(line)) {
-      return line.replace(/(Not Started|In Progress|Complete|Blocked)/, '<TASK_STATUS>');
-    }
-    if (new RegExp(`^\\|\\s*${taskId}\\s*\\|`).test(line)) {
-      return line.replace(/(Not Started|In Progress|Complete|Blocked)/, '<TASK_STATUS>');
-    }
-    return line;
-  }).join('\n');
-}
-
-function taskBookkeepingPaths(repoRoot, projectRoot, taskId, validatedHead, taskHead) {
-  const changed = execGit(repoRoot, ['diff', '--name-only', validatedHead, taskHead])
-    .split('\n').filter(Boolean);
-  const projectRelative = path.relative(repoRoot, projectRoot).split(path.sep).join('/');
-  const tasksFile = [projectRelative, 'specs/tasks.md'].filter(Boolean).join('/');
-  const tasksDirectory = [projectRelative, 'specs/tasks/'].filter(Boolean).join('/');
-  const unexpected = changed.filter((file) => file !== tasksFile && !file.startsWith(tasksDirectory));
-  if (unexpected.length) {
-    throw new Error(`finalize-task changed non-bookkeeping paths after validation: ${unexpected.join(', ')}`);
-  }
-  for (const file of changed) {
-    const before = execGit(repoRoot, ['show', `${validatedHead}:${file}`]);
-    const after = execGit(repoRoot, ['show', `${taskHead}:${file}`]);
-    if (maskSelectedTaskStatus(before, taskId) !== maskSelectedTaskStatus(after, taskId)) {
-      throw new Error(`finalize-task changed task content beyond ${taskId} status: ${file}`);
-    }
-  }
-  const beforeTask = parseTaskCatalog(readTasksAtCommit(repoRoot, projectRoot, validatedHead)).get(taskId);
-  const afterTask = parseTaskCatalog(readTasksAtCommit(repoRoot, projectRoot, taskHead)).get(taskId);
-  if (!beforeTask || !afterTask || afterTask.status !== 'Complete') {
-    throw new Error(`finalize-task did not make only the required ${taskId} completion transition`);
-  }
-}
+// readTasksAtCommit/maskSelectedTaskStatus/taskBookkeepingPaths live in
+// lib/task-resume.js and are destructured above.
 
 function assertPreparedTaskBookkeeping(repoRoot, projectRoot, taskProjectRoot, worktreePath, taskId, validatedHead) {
   const changed = [
@@ -3418,122 +3175,21 @@ function runTasks(options, dependencies = {}) {
     // Stage 1 of the task-attempt loop: classify what (if anything) an
     // existing task branch/worktree already carries — accepted base
     // integration, reusable validation, a resumable active validation
-    // session, or dirt that forces a resume-through-implement. Takes the
-    // loop-carried state explicitly and returns the classification.
-    function classifyExistingWorktree({
-      branchExists,
-      checkpoint,
-      planRecord,
-      planInvalidatedDownstream,
-      baseSha,
-      expectedBranch,
-      expectedWorktree,
-      implementation,
-    }) {
-      if (!branchExists) {
-        return {
-          implementation,
-          resumeExistingWorktree: false,
-          reusableValidation: false,
-          resumeActiveValidation: false,
-          activeValidationSession: null,
-          acceptedIntegration: null,
-        };
-      }
-      const existing = {
-        worktreePath: assertRegisteredWorktree(repoRoot, expectedWorktree, expectedBranch),
-        branch: expectedBranch,
+    // session, or dirt that forces a resume-through-implement. The state
+    // machine lives in lib/task-resume.js (single source, shared with the
+    // interactive resume CLI); this wrapper binds the loop-carried state.
+    function classifyExistingWorktree(inputs) {
+      return classifyExistingWorktreeShared({
+        ...inputs,
+        repoRoot,
+        projectRoot,
+        taskId,
         baseBranch,
-      };
-      // Assign at the exact point the inline code did, so a mid-classify
-      // failure still reports the preserved worktree in the task error.
-      implementation = existing;
-      let worktreeClean = true;
-      try {
-        assertClean(existing.worktreePath, 'Existing task worktree');
-      } catch (error) {
-        if (/ is not clean:\n/.test(error.message)) worktreeClean = false;
-        else throw error;
-      }
-      const currentHead = execGit(existing.worktreePath, ['rev-parse', 'HEAD']);
-      const integrationMatches = worktreeClean
-        && checkpoint.integration
-        && checkpoint.integration.baseHead === baseSha
-        && checkpoint.integration.branch === expectedBranch
-        && checkpoint.integration.taskHead === currentHead;
-      let acceptedIntegration = null;
-      if (integrationMatches
-          && !(options.revalidateIfMergeConflicts
-            && checkpoint.integration.conflictsResolved)) {
-        acceptedIntegration = checkpoint.integration;
-      }
-      const validationIdentityMatches = worktreeClean
-        && checkpoint.validation
-        && checkpoint.validation.baseHead === baseSha
-        && checkpoint.validation.branch === expectedBranch;
-      let reusableValidation = Boolean(validationIdentityMatches
-        && checkpoint.validation.taskHead === currentHead);
-      if (validationIdentityMatches && !reusableValidation) {
-        try {
-          taskBookkeepingPaths(
-            repoRoot,
-            projectRoot,
-            taskId,
-            checkpoint.validation.taskHead,
-            currentHead
-          );
-          reusableValidation = true;
-        } catch {}
-      }
-      const implementationMatches = worktreeClean
-        && checkpoint.implementation
-        && checkpoint.implementation.planSha256 === planRecord.sha256
-        && checkpoint.implementation.branch === expectedBranch
-        && checkpoint.implementation.worktreePath === existing.worktreePath
-        && checkpoint.implementation.taskHead === currentHead;
-      const projectRelativePath = path.relative(repoRoot, projectRoot);
-      const existingTaskProject = path.join(existing.worktreePath, projectRelativePath);
-      assertNoSymlinkComponents(existing.worktreePath, existingTaskProject, 'Task project');
-      const inspectValidation = dependencies.inspectActiveValidationSession
-        || validationSessions.inspectActiveValidationSession;
-      let activeValidationSession = null;
-      let resumeActiveValidation = false;
-      if (!acceptedIntegration && inspectValidation && checkpoint.implementation
-          && checkpoint.implementation.planSha256 === planRecord.sha256
-          && checkpoint.implementation.branch === expectedBranch
-          && checkpoint.implementation.worktreePath === existing.worktreePath
-          && checkpoint.implementation.taskHead === currentHead) {
-        activeValidationSession = inspectValidation({
-          repoRoot: existing.worktreePath,
-          projectRoot: existingTaskProject,
-          worktreePath: existing.worktreePath,
-          taskId,
-          branch: expectedBranch,
-          baseHead: baseSha,
-          protocolVersion: 1,
-        });
-        resumeActiveValidation = Boolean(activeValidationSession && !reusableValidation);
-      }
-      const existingTask = parseTaskCatalog(readTasks(existingTaskProject)).get(taskId);
-      const legacyComplete = worktreeClean && !planInvalidatedDownstream && !checkpoint.implementation
-        && existingTask && ['In Progress', 'Complete'].includes(existingTask.status)
-        && currentHead !== execGit(repoRoot, ['merge-base', baseSha, currentHead]);
-      let resumeExistingWorktree = false;
-      if (resumeActiveValidation) {
-        taskLog(`[${taskId}] implement skipped — resumable validation session`);
-      } else if (acceptedIntegration || reusableValidation || implementationMatches || legacyComplete) {
-        taskLog(`[${taskId}] implement skipped — existing clean worktree`);
-      } else {
-        resumeExistingWorktree = true;
-      }
-      return {
-        implementation: existing,
-        resumeExistingWorktree,
-        reusableValidation,
-        resumeActiveValidation,
-        activeValidationSession,
-        acceptedIntegration,
-      };
+        revalidateIfMergeConflicts: Boolean(options.revalidateIfMergeConflicts),
+        inspectValidation: dependencies.inspectActiveValidationSession
+          || validationSessions.inspectActiveValidationSession,
+        taskLog,
+      });
     }
     try {
       taskAttempts: for (;;) {

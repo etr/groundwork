@@ -897,6 +897,7 @@ $inlined_deps"
         local needs_runtime_context=false
         local needs_validate_scripts=false
         local needs_worktree_identity=false
+        local needs_task_resume=false
         local needs_batch_runner=false
         if [[ "$target" == "codex" && ( "$raw_body" == *'{{effort_level}}'* || "$skill_name" == "validate" ) ]]; then
             needs_runtime_context=true
@@ -941,6 +942,11 @@ $new_body"
             needs_worktree_identity=true
             new_body=$(printf '%s' "$new_body" | sed \
                 's|node the plugin directory/lib/worktree-identity.js|node <skill-directory>/scripts/worktree-identity.js|g')
+        fi
+        if [[ "$new_body" == *"node the plugin directory/lib/task-resume.js"* ]]; then
+            needs_task_resume=true
+            new_body=$(printf '%s' "$new_body" | sed \
+                's|node the plugin directory/lib/task-resume.js|node <skill-directory>/scripts/task-resume.js|g')
         fi
         if [[ "$raw_body" == *'{{project_name}}'* || "$raw_body" == *'{{project_root}}'* || "$raw_body" == *'{{specs_dir}}'* || "$raw_body" == *'{{plans_dir}}'* || "$raw_body" == *'{{debug_dir}}'* || "$raw_body" == *'{{research_dir}}'* ]]; then
             needs_project_runtime=true
@@ -992,6 +998,13 @@ $new_body"
         fi
         if [[ "$needs_batch_runner" == true ]]; then
             write_runtime_bundle "$(dirname "$dest")/scripts" "$target" "$dest_base" --tsv
+        fi
+        if [[ "$needs_task_resume" == true ]]; then
+            # Manifest-derived closure: task-resume.js pulls in its required
+            # helpers (validation-session, worktree-identity, project-context,
+            # atomic-write, lease-mutation) automatically.
+            write_runtime_bundle "$(dirname "$dest")/scripts" "$target" "$dest_base" --helpers-tsv \
+                task-resume.js
         fi
         if [[ "$needs_worktree_identity" == true ]]; then
             local identity_dir
