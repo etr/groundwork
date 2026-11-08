@@ -1,7 +1,7 @@
 ---
 name: finalize-task
-description: Use when a task worktree has passed validation - manually commits, merges, and cleans up, or prepares runner-owned commits and publication
-argument-hint: "[task-id] [--project name]"
+description: Use when a task worktree has passed validation - manually commits, merges, and cleans up, or prepares runner-owned commits and publication. Pass --on-unrelated-failure ignore-and-merge to allow merging a tree validated as PASSED-WITH-WAIVERS (unrelated gates waived with receipts; default stop-and-ask refuses it).
+argument-hint: "[task-id] [--project name] [--on-unrelated-failure stop-and-ask|expand-and-fix|ignore-and-merge]"
 allowed-tools: ["Read", "Edit", "Bash", "Glob", "Grep"]
 ---
 
@@ -11,7 +11,7 @@ Finalize one validated task. Use judgment for commit and merge messages. Preserv
 
 ## Inputs
 
-Accept a task ID and optional `--project <name>`.
+Accept a task ID, optional `--project <name>`, and optional `--on-unrelated-failure <mode>` (`stop-and-ask`, `expand-and-fix`, or `ignore-and-merge`; default `stop-and-ask` when absent). `ignore-and-merge` is the only mode that changes finalization behavior here: it authorizes merging a tree whose terminal validation result was `Validation PASSED-WITH-WAIVERS` (see item 4 below). An invalid mode value → stop with a usage error.
 
 When invoked by the external runner, treat its exact `project_root`, `worktree_path`, `branch`, `base_branch`, `base_head`, and `validated_head` values as authoritative. Missing or inconsistent runner inputs are a failure.
 
@@ -20,7 +20,7 @@ When invoked manually from the task worktree:
 1. Resolve `--project` directly from the repository's `.groundwork.yml`; do not depend on or change persisted project selection.
 2. Derive the current registered worktree and checked-out task branch.
 3. Derive the primary worktree and its checked-out base branch.
-4. Treat the current task HEAD as `validated_head`. If validation did not just pass for this exact tree and working state, stop and ask the user to run `validate` first. Exception — resume entry: when a resume gate (`node ${CLAUDE_PLUGIN_ROOT}/lib/task-resume.js check <task-id>`) classified this task as `resume_at: finalize`, its terminal validated session already covers this exact tree; proceed (see `${CLAUDE_PLUGIN_ROOT}/references/task-resume-protocol.md`).
+4. Treat the current task HEAD as `validated_head`. If validation did not just pass for this exact tree and working state, stop and ask the user to run `validate` first. A `Validation PASSED-WITH-WAIVERS` outcome counts as a pass **only** when this invocation carried `--on-unrelated-failure ignore-and-merge` and the terminal validation session's coordinator-owned record contains at least one waiver receipt (failed gate, evidence, causal assessment, path attribution outside the project root, authorizing flag — see `${CLAUDE_PLUGIN_ROOT}/references/validation-session-protocol.md`); otherwise it is not a pass: stop and ask. Exception — resume entry: when a resume gate (`node ${CLAUDE_PLUGIN_ROOT}/lib/task-resume.js check <task-id>`) classified this task as `resume_at: finalize`, its terminal validated session already covers this exact tree; proceed (see `${CLAUDE_PLUGIN_ROOT}/references/task-resume-protocol.md`).
 
 ## Workflow
 
@@ -75,7 +75,7 @@ If resolution needs product, architecture, or ownership judgment, safely abort t
 In runner mode:
 
 1. Reconfirm the primary worktree is clean, the task worktree contains only the permitted bookkeeping change, and the base branch is still at the head recorded in step 1.
-2. Choose a concise merge message containing the task ID and actual title or outcome.
+2. Choose a concise merge message containing the task ID and actual title or outcome. When this finalization accepted a `PASSED-WITH-WAIVERS` validation, the merge body must name each waived gate as waived (never as passed). When validation repaired an unrelated failure under `expand-and-fix`, mention the incidental fix.
 3. Return the versioned JSON `RESULT: READY_TO_MERGE` receipt with the exact runner token, task identity, bookkeeping commit proposal when needed, and expressive outward merge subject/body. Do not merge outward, remove the worktree, or delete the branch; the runner verifies and commits the prepared tree before performing those operations.
 
 When invoked manually, merge with `--no-ff`, then continue to cleanup below. If an unexpected conflict occurs, abort it when safe and return `RESULT: NEEDS_INPUT`. Do not resolve it on the base branch because the resolution would not have been validated.

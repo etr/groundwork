@@ -1,6 +1,6 @@
 ---
 name: work-on-next-task
-description: Execute next uncompleted task with full project context (PRD, architecture, tasks). Pass --take-over to resume an in-flight task past a possibly-live prior session without asking. Usage /groundwork:work-on-next-task [--take-over]
+description: Execute next uncompleted task with full project context (PRD, architecture, tasks). Pass --take-over to resume an in-flight task past a possibly-live prior session without asking. Pass --on-unrelated-failure stop-and-ask|expand-and-fix|ignore-and-merge to choose how validation handles gate failures confidently unrelated to the active project (default stop-and-ask). Usage /groundwork:work-on-next-task [--take-over] [--on-unrelated-failure mode]
 allowed-tools: ["Read", "Edit", "Write", "Bash", "Glob", "Grep", "Task", "Skill"]
 ---
 
@@ -120,8 +120,8 @@ Parse the status table in `_index.md` to find the next task:
 
 ### Step 4: Delegate to Execute Task
 
-**You MUST call the Skill tool now:** `Skill(skill="groundwork:work-on", args="<task-id> [--take-over]")`
+**You MUST call the Skill tool now:** `Skill(skill="groundwork:work-on", args="<task-id> [--take-over] [--on-unrelated-failure <mode>]")`
 
-Replace `<task-id>` with the identified task identifier (e.g., `TASK-004`); append `--take-over` only when this skill's own invocation carried it.
+Replace `<task-id>` with the identified task identifier (e.g., `TASK-004`); append `--take-over` only when this skill's own invocation carried it, and append `--on-unrelated-failure <mode>` only when this skill's own invocation carried it.
 
 Do NOT load project context, explore the codebase, present summaries, or begin task execution yourself. The work-on skill handles the complete workflow including worktree setup, TDD, and validation.

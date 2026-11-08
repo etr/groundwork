@@ -1,7 +1,7 @@
 ---
 name: just-do-it
-description: Execute all remaining tasks in sequence until completion. Pass --project <name> to pin the monorepo package for this whole run. Pass --take-over to resume past a possibly-live prior session without asking (a provably-live worker still refuses). Usage /groundwork:just-do-it [--project name] [--take-over]
-argument-hint: "[--project name] [--take-over]"
+description: Execute all remaining tasks in sequence until completion. Pass --project <name> to pin the monorepo package for this whole run. Pass --take-over to resume past a possibly-live prior session without asking (a provably-live worker still refuses). Pass --on-unrelated-failure stop-and-ask|expand-and-fix|ignore-and-merge to choose how validation handles gate failures confidently unrelated to the active project (default stop-and-ask). Usage /groundwork:just-do-it [--project name] [--take-over] [--on-unrelated-failure mode]
+argument-hint: "[--project name] [--take-over] [--on-unrelated-failure stop-and-ask|expand-and-fix|ignore-and-merge]"
 allowed-tools: ["Read", "Edit", "Write", "Bash", "Glob", "Grep", "Task", "AskUserQuestion", "Skill"]
 disable-model-invocation: true
 ---
@@ -46,7 +46,7 @@ Keep exactly one active task through planning, implementation, validation, final
 
 **Before loading tasks, ensure project context is resolved:**
 
-0. **Explicit project argument (highest precedence):** If the invocation arguments include `--project <name>` and `<name>` is configured in `.groundwork.yml`, that project is authoritative for this entire run. If they include `--take-over`, remember it: it is forwarded to every resume-gate `check` invocation in this run (see Steps 1.5 and 3). Resolve its root directly from `.groundwork.yml` (`<repo root>/<configured path>`); do not read or consult `{{project_name}}`.
+0. **Explicit project argument (highest precedence):** If the invocation arguments include `--project <name>` and `<name>` is configured in `.groundwork.yml`, that project is authoritative for this entire run. If they include `--take-over`, remember it: it is forwarded to every resume-gate `check` invocation in this run (see Steps 1.5 and 3). If they include `--on-unrelated-failure <mode>` (`stop-and-ask`, `expand-and-fix`, or `ignore-and-merge`), remember it for this entire run: it is forwarded to every Phase C validate invocation and Phase E finalize-task invocation (see Phase C). An invalid mode value → stop the batch with a usage error. Resolve its root directly from `.groundwork.yml` (`<repo root>/<configured path>`); do not read or consult `{{project_name}}`.
    - Do NOT invoke `select-project`, do NOT persist or change the stored selection, and do NOT run the CWD mismatch check below. Other sessions may be running concurrently on different packages and must not be disturbed by a global switch.
    - Substitute the resolved project's paths for the template vars everywhere below: `<project root>/specs` for `{{specs_dir}}` and `<project root>/.groundwork-plans` for `{{plans_dir}}`.
    - Thread the project explicitly through every downstream invocation instead of relying on the shared selection: pass `--project <name>` to validate and finalize-task, call the worktree helper as `node ${CLAUDE_PLUGIN_ROOT}/lib/worktree-identity.js TASK-NNN --project <name>`, and prefix other lib calls with `GROUNDWORK_PROJECT=<name>`.
@@ -244,11 +244,12 @@ Run the shared validation state machine from the task worktree in noninteractive
 Skill(skill="groundwork:validate", args="--noninteractive")
 ```
 
-If Step 0 item 0 resolved an explicit `--project <name>`, include it: `args="--project <name> --noninteractive"`.
+If Step 0 item 0 resolved an explicit `--project <name>`, include it: `args="--project <name> --noninteractive"`. If the invocation carried `--on-unrelated-failure <mode>` other than the default, include it too: `args="--on-unrelated-failure <mode> --noninteractive"` (combine all present flags).
 
 Parse its terminal line:
 
 - `Validation PASSED (...)` → proceed to Phase E.
+- `Validation PASSED-WITH-WAIVERS (...)` (only possible with `--on-unrelated-failure ignore-and-merge`) → proceed to Phase E. Relay the waived-gate lines into the per-task log line and the completion report; never present a waived gate as passed.
 - `Validation INCOMPLETE (...)` or an unparseable result → stop the batch. Report the reason and preserved worktree.
 
 Do not implement a separate reviewer/fixer loop here. The `validate` skill owns the frozen baseline, repair envelopes, causal closure reviews, unworked-finding persistence, and cleanup.
@@ -260,7 +261,7 @@ Invoke the shared finalizer from the validated task worktree:
 Skill(skill="groundwork:finalize-task")
 ```
 
-If Step 0 item 0 resolved an explicit `--project <name>`, include it: `args="[TASK-NNN] --project <name>"`.
+If Step 0 item 0 resolved an explicit `--project <name>`, include it: `args="[TASK-NNN] --project <name>"`. If the invocation carried `--on-unrelated-failure ignore-and-merge`, include that too: `args="[TASK-NNN] --on-unrelated-failure ignore-and-merge"` (combine all present flags) so the finalizer accepts a waived-pass validation state.
 
 Require verified integration into the recorded base branch, complete task status, and cleanup of the merged task worktree/branch before advancing. The finalizer owns commits, status bookkeeping, merge ancestry checks, and cleanup; do not duplicate them here. Any incomplete or unparseable finalization result stops the batch and preserves its worktree.
 

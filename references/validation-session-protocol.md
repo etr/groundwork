@@ -107,6 +107,22 @@ On resume or delegation, continue from that record without repeating the bounded
 
 This is a record-keeping instruction, not a new helper-enforced permission system. It adds no session stage, schema requirement, counter or separate tracking file. Do not edit helper-owned session state or checkpoint a failed gate as `gates-complete`.
 
+## Unrelated-failure modes and waiver receipts
+
+The validate skill's `--on-unrelated-failure <mode>` flag (`stop-and-ask` default, `expand-and-fix`, `ignore-and-merge`) selects the disposition for a gate failure that the bounded diagnostic assessed confidently **Unrelated** — attributable to file paths outside the selected project root. Uncertain, task-related, and setup-broken assessments are never eligible and keep their existing rows' behavior.
+
+- `stop-and-ask` keeps the existing flow: pending decision retained, `Validation INCOMPLETE` with the publication constraint.
+- `expand-and-fix` records the flag value as standing authorization for one expanded repair envelope per unrelated failure (marked `authorization: on-unrelated-failure=expand-and-fix`, scope limited to the failing external surface). The envelope follows the normal fixer transaction below.
+- `ignore-and-merge` records one waiver receipt per waived gate in the coordinator-owned record before the run may continue past the gate.
+
+A waiver receipt is a coordinator-owned record entry (in the coordinator file or gate receipts, not helper-owned session state) shaped:
+
+```json
+{"type":"gate-waiver","gate":"<kebab-gate>","failed_command":"<command>","evidence":"<one-line failure evidence>","assessment":"unrelated","outside_project_root":"<project root the failure is outside of>","authorized_by":"--on-unrelated-failure ignore-and-merge"}
+```
+
+A **waived** gate — a failed gate with a recorded waiver receipt — may transition the session toward `gates-complete` alongside the passing gates; a failed-but-not-waived gate still may not, and the helper's stage rules are unchanged. Waiver receipts are why the terminal result may be `Validation PASSED-WITH-WAIVERS` instead of `PASSED`; a waived gate is never reported as passed, and the finalizer accepting a waived-pass tree must find these receipts in the session record. This extends the record-keeping rule above with the same constraint: no new session stage, schema field, counter, or separate tracking file.
+
 ## Fixer transaction
 
 Write `repair-envelope-iter<N>.json` directly inside `run_dir`, then record the semantic `fixer-inflight` transition before spawning the fixer:

@@ -1,7 +1,7 @@
 ---
 name: just-do-it-swarming
-description: Execute all remaining tasks using agent teams for context isolation. Each task runs in its own session. Pass --project <name> to pin the monorepo package for this whole run. Pass --take-over to resume past a possibly-live prior session without asking. Usage /groundwork:just-do-it-swarming [--project name] [--parallel] [--take-over]
-argument-hint: "[--project name] [--parallel] [--take-over]"
+description: Execute all remaining tasks using agent teams for context isolation. Each task runs in its own session. Pass --project <name> to pin the monorepo package for this whole run. Pass --take-over to resume past a possibly-live prior session without asking. Pass --on-unrelated-failure stop-and-ask|expand-and-fix|ignore-and-merge to choose how validation handles gate failures confidently unrelated to the active project (default stop-and-ask). Usage /groundwork:just-do-it-swarming [--project name] [--parallel] [--take-over] [--on-unrelated-failure mode]
+argument-hint: "[--project name] [--parallel] [--take-over] [--on-unrelated-failure stop-and-ask|expand-and-fix|ignore-and-merge]"
 allowed-tools: ["Read", "Edit", "Write", "Bash", "Glob", "Grep", "Task", "AskUserQuestion", "Skill"]
 disable-model-invocation: true
 ---
@@ -50,7 +50,7 @@ If the user selects "Cancel — I'll switch first": output the switching command
 
 **Before loading tasks, ensure project context is resolved:**
 
-0. **Explicit project argument (highest precedence):** If the invocation arguments include `--project <name>` and `<name>` is configured in `.groundwork.yml`, that project is authoritative for this entire run. Resolve its root directly from `.groundwork.yml` (`<repo root>/<configured path>`); do not read or consult `{{project_name}}`.
+0. **Explicit project argument (highest precedence):** If the invocation arguments include `--project <name>` and `<name>` is configured in `.groundwork.yml`, that project is authoritative for this entire run. Resolve its root directly from `.groundwork.yml` (`<repo root>/<configured path>`); do not read or consult `{{project_name}}`. If the invocation arguments include `--on-unrelated-failure <mode>` (`stop-and-ask`, `expand-and-fix`, or `ignore-and-merge`), remember it for this entire run: it is recorded in each teammate spawn prompt (`ON UNRELATED FAILURE:` line). An invalid mode value → stop the run with a usage error.
    - Do NOT invoke `select-project`, do NOT persist or change the stored selection, and do NOT run the CWD mismatch check below. Other sessions may be running concurrently on different packages and must not be disturbed by a global switch.
    - Substitute the resolved project's paths for the template vars everywhere below: `<project root>/specs` for `{{specs_dir}}` and `<project root>/.groundwork-plans` for `{{plans_dir}}`.
    - Thread the project explicitly through every downstream invocation instead of relying on the shared selection: call the worktree helper as `node ${CLAUDE_PLUGIN_ROOT}/lib/worktree-identity.js TASK-NNN --project <name>`, prefix other lib calls with `GROUNDWORK_PROJECT=<name>`, and record the project in each teammate spawn prompt (`ACTIVE PROJECT:` line) so teammates resolve the same project.
@@ -192,6 +192,8 @@ Create an agent team. Then for each remaining task in dependency order:
    PROJECT ROOT: [absolute path to project root]
    SPECS DIR: {{specs_dir}}
    ACTIVE PROJECT: [project name from Step 0 — teammates must use this project, not change the shared selection]
+   [Only when the invocation carried --on-unrelated-failure <mode>, include the line below]
+   ON UNRELATED FAILURE: [mode — treat this as the embedded workflow's --on-unrelated-failure flag value: thread it into the workflow's Step 4 validate invocation and its merge reporting exactly as its flag parsing specifies]
 
    TASK IDENTIFIER: TASK-NNN
    TASK TITLE: [Title]
@@ -216,6 +218,8 @@ Create an agent team. Then for each remaining task in dependency order:
         Include validation results per agent:
         VALIDATION: code-quality=[N] test-quality=[N] security=[N] spec-alignment=[N] architecture=[N] simplification=[N] housekeeping=[N] performance=[N] design-consistency=[N]
         (where [N] is the number of iterations each agent required to pass)
+        When validation returned PASSED-WITH-WAIVERS, also include one WAIVED line per waived gate
+        (`WAIVED: <gate> — <one-line evidence>`) so the lead can report it; never present a waived gate as passed.
       - Failure: "TASK-NNN: FAILURE — [one-line reason]"
    ```
 

@@ -1,8 +1,8 @@
 ---
 name: work-on
-description: skill to "execute a task", "work on task N", or "implement TASK-NNN" - orchestrates worktree isolation, TDD implementation, validation, and merge. Pass --take-over to resume past a possibly-live prior session without asking (a provably-live worker still refuses).
+description: skill to "execute a task", "work on task N", or "implement TASK-NNN" - orchestrates worktree isolation, TDD implementation, validation, and merge. Pass --take-over to resume past a possibly-live prior session without asking (a provably-live worker still refuses). Pass --on-unrelated-failure stop-and-ask|expand-and-fix|ignore-and-merge to choose how validation handles gate failures confidently unrelated to this task's project (default stop-and-ask).
 requires: plan-task, implement-task, validate
-argument-hint: "[task-number] [--take-over]"
+argument-hint: "[task-number] [--take-over] [--on-unrelated-failure stop-and-ask|expand-and-fix|ignore-and-merge]"
 ---
 
 # Execute Task Skill
@@ -110,7 +110,7 @@ Parse the task identifier from the argument:
 - **Full format** (e.g., `TASK-004`): Use as-is
 - **No argument**: Run `/groundwork:work-on-next-task` to determine the next workable task, then use that ID. If it returns nothing workable, report and stop.
 
-**Flags:** `--take-over` (also accepted anywhere in the argument) authorizes the resume gate to proceed past soft standdowns; thread it into the Step 0 gate invocation.
+**Flags:** `--take-over` (also accepted anywhere in the argument) authorizes the resume gate to proceed past soft standdowns; thread it into the Step 0 gate invocation. `--on-unrelated-failure <mode>` (also accepted anywhere in the argument) selects how Step 4's validation handles gate failures confidently assessed unrelated to this task's project: `stop-and-ask` (default — current behavior), `expand-and-fix` (repair the unrelated failure via the validation fixer), or `ignore-and-merge` (record waiver receipts and proceed). An invalid mode value → stop with a usage error. Thread the mode into the Step 4 validate invocation.
 
 **Error:** Invalid format → "Please specify a task number, e.g. `/groundwork:work-on 4` or `/groundwork:work-on TASK-004`"
 
@@ -201,11 +201,12 @@ This is a hard stop. The user explicitly chose to take over the rest of the work
 **Call the validate skill directly.** Do NOT wrap this in a subagent — this skill runs in the main conversation, which CAN spawn the 9 validation subagents it needs.
 
 1. `cd` into the worktree path from Step 3
-2. Call: `Skill(skill="groundwork:validate")`
+2. Call: `Skill(skill="groundwork:validate")`. When the invocation carried `--on-unrelated-failure <mode>` other than the default, include the flag in that call's arguments: `--on-unrelated-failure <mode>` (combine with any other arguments present)
 3. The validate skill will run 9 verification agents in parallel and fix issues autonomously.
 
 **After validate completes:**
 - All required gates pass and all agents approve → Proceed to Step 5
+- `Validation PASSED-WITH-WAIVERS (...)` (only possible with `--on-unrelated-failure ignore-and-merge`) → Proceed to Step 5. Relay the waived-gate lines from the result into this skill's Step 5 merge question and Step 7 report; never present a waived gate as passed. The same applies to incidental fixes made under `expand-and-fix` — mention them in the merge message.
 - Validation is incomplete because of an incidental or uncertain failure → Finish safe, independent work still within the task, preserve the implementation and valid evidence, then report implementation readiness, validation limits and any publication constraint together. Ask whether/how the user wants the separate issue investigated only once that work is ready. Do not restart validation or expand repair scope automatically. In batch mode, preserve the worktree and return `RESULT: FAILURE | [TASK-NNN] Validation incomplete: ...`.
 - Other validation failure or a stuck in-scope repair → Report the specific blocker and preserve completed work; in batch mode output `RESULT: FAILURE | [TASK-NNN] Validation failed: ...` and stop.
 
@@ -230,6 +231,8 @@ Use `AskUserQuestion` to ask:
 > "Implementation and validation complete for [TASK-NNN]. Would you like me to merge this into [base-branch] now?"
 > - Option 1: "Yes, merge now"
 > - Option 2: "No, I'll merge manually later"
+
+When validation returned `PASSED-WITH-WAIVERS`, prepend the waived-gate summary lines from Step 4 to this question so the user merges with full knowledge. When `expand-and-fix` repaired an unrelated failure, mention the incidental fix in the merge message.
 
 **Wait for user response before proceeding.**
 
@@ -292,7 +295,7 @@ RESULT: FAILURE | [TASK-NNN] [reason for failure]
 Done: [TASK-NNN] merged → <base>. Validation passed in N iter(s).
 ```
 
-If the merge did not happen, replace `merged → <base>` with `pending at <worktree_path>`.
+If the merge did not happen, replace `merged → <base>` with `pending at <worktree_path>`. When validation returned `PASSED-WITH-WAIVERS`, replace `Validation passed in N iter(s)` with `Validation passed with W waived gate(s) in N iter(s)` and list each waived gate on its own line immediately after — never as passed.
 
 ---
 
@@ -313,7 +316,7 @@ Before marking complete, verify ALL:
 - [ ] Plan agent was used (not your own plan)
 - [ ] TDD was followed
 - [ ] All acceptance criteria verified
-- [ ] validate returned PASS (via direct Skill call)
+- [ ] validate returned PASS, or PASSED-WITH-WAIVERS under `--on-unrelated-failure ignore-and-merge` with waiver receipts recorded (via direct Skill call)
 - [ ] All validation fixes were applied by the validation-fixer subagent — zero `Edit`/`Write`/`NotebookEdit` calls and zero file-mutating `Bash` calls (`sed -i`, `awk -i`, `tee`, `>`, `>>`, etc.) by this orchestrator during the validation phase. If you fixed anything yourself instead of dispatching to validation-fixer, that is a violation of the validate hard rule and the task is NOT complete.
 - [ ] Merge completed or user acknowledged worktree location
 

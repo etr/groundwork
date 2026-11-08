@@ -1,7 +1,7 @@
 ---
 name: build-unplanned
-description: Build a feature from description with worktree isolation and TDD. Usage /groundwork:build-unplanned "Add user login"
-argument-hint: "[feature-description]"
+description: Build a feature from description with worktree isolation and TDD. Optionally pass --on-unrelated-failure stop-and-ask|expand-and-fix|ignore-and-merge to choose how validation handles gate failures confidently unrelated to the active project (default stop-and-ask). Usage /groundwork:build-unplanned "Add user login" [--on-unrelated-failure mode]
+argument-hint: "[feature-description] [--on-unrelated-failure stop-and-ask|expand-and-fix|ignore-and-merge]"
 allowed-tools: ["Read", "Edit", "Write", "Bash", "Glob", "Grep", "Task", "Skill", "AskUserQuestion"]
 disable-model-invocation: true
 ---
@@ -142,11 +142,12 @@ Use `AskUserQuestion`:
 ## Step 4: Validate
 
 1. `cd` into the worktree path from Step 3
-2. Call: `Skill(skill="groundwork:validate")`
+2. Call: `Skill(skill="groundwork:validate")`. When the invocation carried `--on-unrelated-failure <mode>` other than the default, include the flag in that call's arguments: `--on-unrelated-failure <mode>`
 3. The validate skill will run 9 verification agents in parallel and fix issues autonomously.
 
 **After validate completes:**
 - All agents approved → Proceed to Step 5
+- `Validation PASSED-WITH-WAIVERS (...)` (only possible with `--on-unrelated-failure ignore-and-merge`) → Proceed to Step 5, relaying the waived-gate lines into the Step 5 merge question; never present a waived gate as passed
 - Validation failed → Report failure and worktree location for investigation, stop
 - Stuck on recurring issue → Report the stuck finding and stop
 

@@ -1,7 +1,7 @@
 ---
 name: validate
-description: This skill should be used when implementation is complete to run multi-agent verification with baseline-determined repair and causal closure review
-argument-hint: "[--project name] [--noninteractive]"
+description: This skill should be used when implementation is complete to run multi-agent verification with baseline-determined repair and causal closure review. Pass --on-unrelated-failure stop-and-ask|expand-and-fix|ignore-and-merge to choose how gate failures confidently unrelated to the active project are handled (default stop-and-ask).
+argument-hint: "[--project name] [--noninteractive] [--on-unrelated-failure stop-and-ask|expand-and-fix|ignore-and-merge]"
 ---
 
 # Validation Loop Skill
@@ -15,6 +15,20 @@ If arguments include `--project <name>`, resolve that project directly from the 
 ## Noninteractive Invocation
 
 If arguments include `--noninteractive`, skip the model recommendation and never call `AskUserQuestion`. Preserve normal non-runner result and commit behavior. When user input would otherwise be required, persist unexecuted findings, preserve the durable session, and return `Validation INCOMPLETE ({N} iter, reason: <reason>)`. Do not restart validation.
+
+## Unrelated-failure Policy
+
+If arguments include `--on-unrelated-failure <mode>`, that mode governs incidental gate failures assessed confidently **Unrelated** to the task (see "Incidental Check Failures"). `mode` is exactly one of:
+
+- `stop-and-ask` (default, also when the flag is absent): record evidence, finish independent work, return `Validation INCOMPLETE` with the publication constraint — current behavior.
+- `expand-and-fix`: standing user authorization to repair the unrelated failure beyond the frozen baseline (see the policy table below).
+- `ignore-and-merge`: record a waiver receipt and continue to the waived pass result without repairing (see the policy table below).
+
+An invalid mode value → stop with a usage error before opening the session.
+
+**Scope of eligibility:** only failures confidently assessed `Unrelated` by the existing bounded diagnostic — i.e. the failing surface is attributable to file paths outside the selected project root resolved in the session prologue (`--project-root`, from `.groundwork.yml`). An `Uncertain` assessment is never eligible: regardless of mode it keeps the existing uncertain row's behavior (stop investigating, finish independent work, surface the pending decision), and in `ignore-and-merge`/`expand-and-fix` mode the run then ends with the `stop-and-ask` outcome (`Validation INCOMPLETE`). Task-related failures and setup failures are never eligible in any mode.
+
+The flag does not apply in runner mode: `GROUNDWORK_RUNNER_MODE=true` keeps the unchanged failure path (`RESULT: FAILURE`), because the runner owns publication decisions.
 
 ## Runner Mode
 
@@ -97,12 +111,20 @@ A failed gate is evidence, not permission to repair its entire owning subsystem.
 |---|---|
 | Caused by the task, or repair required by its accepted baseline | Use the existing in-scope repair and closure process |
 | Required execution setup is broken | Correct supported setup through its owner and repeat affected checks; preserve the failed receipt |
-| Unrelated | Record evidence and continue independent, already-authorized validation work |
-| Causality still uncertain after the bounded check | Keep the assessment uncertain, stop that investigation and continue independent, already-authorized validation work |
+| Unrelated | Record evidence and continue independent, already-authorized validation work, then apply the invocation's unrelated-failure mode (see the policy table below) |
+| Causality still uncertain after the bounded check | Keep the assessment uncertain, stop that investigation and continue independent, already-authorized validation work; never eligible for the unrelated-failure modes |
+
+**Unrelated-failure mode actions** (from `--on-unrelated-failure`; default `stop-and-ask`):
+
+| Mode | Action after the confident Unrelated assessment |
+|---|---|
+| `stop-and-ask` | Current behavior: finish independent work, then return `Validation INCOMPLETE` with the publication constraint |
+| `expand-and-fix` | Build an expanded repair envelope for the unrelated failure — scope limited to the failing external surface and its minimal supporting changes, marked `authorization: on-unrelated-failure=expand-and-fix` — and run it through the existing `validation-fixer` subagent (the orchestrator source-write Hard Rule still applies). Re-run the affected gates afterward as closure evidence. Repairs land in the task worktree/branch so merged main is green; note the incidental fix in the final summary so the calling workflow can mention it in the merge message. If the fixer fails or stuck detection trips on the expanded repair, fall back to the `stop-and-ask` outcome (`Validation INCOMPLETE` with the original unrelated-failure evidence). |
+| `ignore-and-merge` | Record a waiver receipt in the coordinator-owned session record — failed command, failure evidence, causal assessment, path attribution outside the project root, and the authorizing flag value — and continue. Never mark the waived gate as passed; when all other gates pass and reviewers approve, return the `PASSED-WITH-WAIVERS` result below instead of `Validation INCOMPLETE`. |
 
 Required gate membership alone does not expand repair scope. Do not switch to serial full-suite reruns or make unrelated source/threshold changes to chase incidental failures. Relevant task repairs or corrected setup may invalidate covered evidence and require another affected check; delegation, a new review iteration or a restart alone does not.
 
-Keep the failure evidence, assessment, completed diagnostics and pending decision in the existing coordinator-owned record as described in `${CLAUDE_PLUGIN_ROOT}/references/validation-session-protocol.md`. Preserve valid approvals and all failed receipts. Finish independent validation work without adding new checks, then return `Validation INCOMPLETE` (or the existing runner failure result), identifying implementation readiness, verification limits and the publication constraint for the calling workflow. Do not mark failed gates as passed, waive publication rules or enter another repair loop. The calling workflow finishes safe, independent task work before asking the user whether/how to address the separate issue. The orchestrator's source-write restriction still applies.
+Keep the failure evidence, assessment, completed diagnostics and pending decision in the existing coordinator-owned record as described in `${CLAUDE_PLUGIN_ROOT}/references/validation-session-protocol.md`. Preserve valid approvals and all failed receipts. Finish independent validation work without adding new checks, then end the run according to the unrelated-failure mode: `stop-and-ask` returns `Validation INCOMPLETE` (or the existing runner failure result), identifying implementation readiness, verification limits and the publication constraint for the calling workflow; `ignore-and-merge` returns the waived pass result only after waiver receipts are recorded; `expand-and-fix` continues through repair and closure. Do not mark failed gates as passed, waive publication rules without recorded authorization, or enter another repair loop. The calling workflow finishes safe, independent task work before asking the user whether/how to address the separate issue in `stop-and-ask` mode. The orchestrator's source-write restriction still applies.
 
 ## Findings Storage
 
@@ -599,6 +621,14 @@ Validation PASSED ({N} iter, {M} fixed, {K} unworked → <written>)
 ```
 
 Where `<written>` is the path returned by `persist-unworked-findings.js`; omit ` → <written>` if the helper returned status `empty` or `no-findings-files`. Do not echo the per-iteration fix list — findings are accessible via the per-iteration JSON files on disk.
+
+**On a waived pass outside runner mode** (`--on-unrelated-failure ignore-and-merge` with ≥1 recorded waiver receipt; all other gates pass and every reviewer approves; the normal `complete` transition still runs first): emit one line:
+
+```
+Validation PASSED-WITH-WAIVERS ({N} iter, {M} fixed, {K} unworked, {W} unrelated gates waived)
+```
+
+`{W}` is the number of recorded waiver receipts. Follow it with one short line per waived gate — `Waived <gate>: <one-line failure evidence> (outside <project root>)` — so the calling workflow can report what was waived. Never present a waived gate as passed.
 
 Return control to calling skill.
 
