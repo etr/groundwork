@@ -1,7 +1,7 @@
 ---
 name: just-do-it
-description: Execute all remaining tasks in sequence until completion. Pass --project <name> to pin the monorepo package for this whole run. Usage /groundwork:just-do-it [--project name]
-argument-hint: "[--project name]"
+description: Execute all remaining tasks in sequence until completion. Pass --project <name> to pin the monorepo package for this whole run. Pass --take-over to resume past a possibly-live prior session without asking (a provably-live worker still refuses). Usage /groundwork:just-do-it [--project name] [--take-over]
+argument-hint: "[--project name] [--take-over]"
 allowed-tools: ["Read", "Edit", "Write", "Bash", "Glob", "Grep", "Task", "AskUserQuestion", "Skill"]
 disable-model-invocation: true
 ---
@@ -46,7 +46,7 @@ Keep exactly one active task through planning, implementation, validation, final
 
 **Before loading tasks, ensure project context is resolved:**
 
-0. **Explicit project argument (highest precedence):** If the invocation arguments include `--project <name>` and `<name>` is configured in `.groundwork.yml`, that project is authoritative for this entire run. Resolve its root directly from `.groundwork.yml` (`<repo root>/<configured path>`); do not read or consult `{{project_name}}`.
+0. **Explicit project argument (highest precedence):** If the invocation arguments include `--project <name>` and `<name>` is configured in `.groundwork.yml`, that project is authoritative for this entire run. If they include `--take-over`, remember it: it is forwarded to every resume-gate `check` invocation in this run (see Steps 1.5 and 3). Resolve its root directly from `.groundwork.yml` (`<repo root>/<configured path>`); do not read or consult `{{project_name}}`.
    - Do NOT invoke `select-project`, do NOT persist or change the stored selection, and do NOT run the CWD mismatch check below. Other sessions may be running concurrently on different packages and must not be disturbed by a global switch.
    - Substitute the resolved project's paths for the template vars everywhere below: `<project root>/specs` for `{{specs_dir}}` and `<project root>/.groundwork-plans` for `{{plans_dir}}`.
    - Thread the project explicitly through every downstream invocation instead of relying on the shared selection: pass `--project <name>` to validate and finalize-task, call the worktree helper as `node ${CLAUDE_PLUGIN_ROOT}/lib/worktree-identity.js TASK-NNN --project <name>`, and prefix other lib calls with `GROUNDWORK_PROJECT=<name>`.
@@ -92,9 +92,9 @@ Keep exactly one active task through planning, implementation, validation, final
 Killed runs leave worktrees behind. Before presenting the summary:
 
 1. **Sweep:** `node ${CLAUDE_PLUGIN_ROOT}/lib/task-resume.js sweep` (add `--project <name>` in monorepos). Remove every entry in `cleanable` automatically from the repo root (`git worktree remove <absolute path>` then `git branch -d <branch>`, exactly as the protocol specifies); list `needs_review` entries for the user without touching them.
-2. **Gate the first remaining task:** `node ${CLAUDE_PLUGIN_ROOT}/lib/task-resume.js check <TASK-NNN>` (same project flag). It prints one JSON line classifying existing work-in-progress — `resume_at`, `skip_phases`, `live_owner`, and ready-to-run `actions`.
+2. **Gate the first remaining task:** `node ${CLAUDE_PLUGIN_ROOT}/lib/task-resume.js check <TASK-NNN>` (same project flag; append `--take-over` when the invocation carried `--take-over`). It prints one JSON line classifying existing work-in-progress — `resume_at`, `skip_phases`, `live_owner`, `live_owner_reason`, and ready-to-run `actions`.
 
-Follow `${CLAUDE_PLUGIN_ROOT}/references/task-resume-protocol.md` exactly: the standdown rule applies whenever `live_owner` is not `none`, and `conflict` stops the batch with the evidence surfaced.
+Follow `${CLAUDE_PLUGIN_ROOT}/references/task-resume-protocol.md` exactly: the standdown rule applies whenever `live_owner` is not `none` (only `heartbeat-worker-alive` survives `--take-over`), and `conflict` stops the batch with the evidence surfaced.
 
 ### Step 2: Present Summary and Confirm
 
@@ -144,8 +144,9 @@ For each remaining task in dependency order:
 
 2. **Announce start:** "Starting TASK-NNN: [Title]"
 
-3. **Run the resume gate:** `node ${CLAUDE_PLUGIN_ROOT}/lib/task-resume.js check TASK-NNN` (add `--project <name>` in monorepos). Act on the one-line JSON exactly as `${CLAUDE_PLUGIN_ROOT}/references/task-resume-protocol.md` specifies:
-   - `live_owner` not `none` → standdown rule (report and stop the batch).
+3. **Run the resume gate:** `node ${CLAUDE_PLUGIN_ROOT}/lib/task-resume.js check TASK-NNN` (add `--project <name>` in monorepos; append `--take-over` when the batch was invoked with it). Act on the one-line JSON exactly as `${CLAUDE_PLUGIN_ROOT}/references/task-resume-protocol.md` specifies:
+   - `live_owner_reason: heartbeat-worker-alive` → hard standdown (report and stop the batch; even `--take-over` cannot override a provably-live process).
+   - Other `live_owner` values → soft standdown: stop and ask unless `--take-over` was supplied, in which case proceed (the check already resolved it).
    - `resume_at: conflict` → surface the `evidence` and stop the batch; the worktree is preserved.
    - Skip every phase listed in `skip_phases`: when `plan.present` is true, reuse `plan.file` as `plan_file_path` instead of Phase A; when `validate` or beyond is done, jump straight to that phase.
    - `resume_at: done` → run the `clear-checkpoint` action, log the task complete, advance.

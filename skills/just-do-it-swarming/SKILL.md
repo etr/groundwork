@@ -1,7 +1,7 @@
 ---
 name: just-do-it-swarming
-description: Execute all remaining tasks using agent teams for context isolation. Each task runs in its own session. Pass --project <name> to pin the monorepo package for this whole run. Usage /groundwork:just-do-it-swarming [--project name] [--parallel]
-argument-hint: "[--project name] [--parallel]"
+description: Execute all remaining tasks using agent teams for context isolation. Each task runs in its own session. Pass --project <name> to pin the monorepo package for this whole run. Pass --take-over to resume past a possibly-live prior session without asking. Usage /groundwork:just-do-it-swarming [--project name] [--parallel] [--take-over]
+argument-hint: "[--project name] [--parallel] [--take-over]"
 allowed-tools: ["Read", "Edit", "Write", "Bash", "Glob", "Grep", "Task", "AskUserQuestion", "Skill"]
 disable-model-invocation: true
 ---
@@ -89,7 +89,7 @@ If the user selects "Cancel — I'll switch first": output the switching command
    - Topological sort respecting dependencies
    - Blocked tasks cannot execute until dependencies complete
 
-4. **Sweep and resume gate:** Run `node ${CLAUDE_PLUGIN_ROOT}/lib/task-resume.js sweep` (add `--project <name>` in monorepos) and auto-clean only the `cleanable` entries per `${CLAUDE_PLUGIN_ROOT}/references/task-resume-protocol.md`. An `In Progress` task whose `node ${CLAUDE_PLUGIN_ROOT}/lib/task-resume.js check <TASK-NNN>` reports existing work is in flight from a prior session — assign it to a teammate before any `Not Started` task (the embedded workflow's resume gate continues it at the right phase).
+4. **Sweep and resume gate:** Run `node ${CLAUDE_PLUGIN_ROOT}/lib/task-resume.js sweep` (add `--project <name>` in monorepos) and auto-clean only the `cleanable` entries per `${CLAUDE_PLUGIN_ROOT}/references/task-resume-protocol.md`. An `In Progress` task whose `node ${CLAUDE_PLUGIN_ROOT}/lib/task-resume.js check <TASK-NNN>` reports existing work is in flight from a prior session — assign it to a teammate before any `Not Started` task (the embedded workflow's resume gate continues it at the right phase). Append `--take-over` to the `check` when this skill's invocation carried it; a soft standdown then proceeds without asking, while `heartbeat-worker-alive` still stands down.
 
 **Detection:** Check for file first (takes precedence), then directory.
 

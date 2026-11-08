@@ -15,13 +15,15 @@ single classification implementation.
 Before planning or starting any task, run:
 
 ```
-task-resume.js check TASK-NNN [--project <name>] [--base-branch <branch>] [--fresh-window <minutes>]
+task-resume.js check TASK-NNN [--project <name>] [--base-branch <branch>] [--fresh-window <minutes>] [--take-over]
 ```
 
 It prints exactly one JSON line and changes nothing. In monorepos always
 pass `--project <name>`. The base branch defaults to the primary worktree's
 checked-out branch; pass `--base-branch` when HEAD is detached or the base
-is known better from context.
+is known better from context. Append `--take-over` when the user has
+explicitly authorized taking over from a possibly-live prior session (see
+"Take-over override" below).
 
 ## Reading the result
 
@@ -53,14 +55,41 @@ solve autonomously.
 
 ## Standdown rule
 
-- `live_owner: validation-heartbeat` — a validation session for this exact
-  task is running right now (live heartbeat or a fresh open inside its
-  grace window). Do not touch the worktree, do not start a competing run.
-  Report and stop. This rule outranks every other classification.
-- `live_owner: recent-writer` — the checkpoint was written moments ago
-  (default 30 minutes; `--fresh-window` overrides). Another session may
-  still be alive without a heartbeat. Interactive sessions: ask the user
-  before proceeding. Batches: stop and report, listing the evidence.
+`live_owner_reason` names exactly what was detected:
+
+- `heartbeat-worker-alive` — a registered validation heartbeat whose worker
+  identity (pid + process start on this host) **probes as a running
+  process**. A session is genuinely working this task right now. Do not
+  touch the worktree; report and stop. This is a **hard standdown** — even
+  `--take-over` cannot override a provably-live process; stop or kill that
+  session first.
+- `heartbeat-unverifiable` — a fresh heartbeat whose worker identity cannot
+  be probed (record absent, malformed, or a foreign host). A **soft
+  standdown**: by default the gate classifies `conflict` and the run asks
+  before taking over; `--take-over` proceeds. The freshness bound is the
+  gate window (default 30 minutes, `--fresh-window`), not the lock-reap
+  window — a healthy worker beats roughly every 30 seconds, so an
+  unprobeable heartbeat older than the window is treated as stale.
+- `recent-checkpoint` — the checkpoint was written within the gate window
+  (default 30 minutes). Another session may be alive without a heartbeat.
+  Soft standdown: ask by default; `--take-over` proceeds.
+- `none` — no live owner; proceed.
+
+A heartbeat whose worker probes as **dead** (stale process identity) is
+reported as no owner at all — a killed session stops blocking the moment
+its worker is provably gone, no override needed.
+
+## Take-over override
+
+`--take-over` (on the executing skill, or directly on `check`) resolves
+every **soft** standdown without asking: `heartbeat-unverifiable` and
+`recent-checkpoint` proceed, with the override recorded in `evidence` and
+`takeover: true` echoed in the result. The hard case
+(`heartbeat-worker-alive`) still refuses — a live process holds the work,
+and racing it risks two writers on one worktree. `--take-over` never
+bypasses a `conflict` that is not about ownership (plan-mismatch under an
+implementation, or branch/worktree disagreement): those are data
+ambiguities, and only a user decision resolves them.
 
 ## Recording contract (interactive runs)
 

@@ -112,9 +112,11 @@ function sessionSlotDir(root, project, taskId, branch) {
 
 // Fabricates a validation session record in the durable slot layout that
 // lib/validation-session.js writes; the scan path reads exactly these.
+// `worker` may be {pid, processStart} to fabricate a probeable heartbeat.
 function writeSessionRecord(root, { project = '.', taskId = 'TASK-004', branch = 'task/TASK-004',
   stage = 'validated', baseHead, startHead, heartbeat = null, graceUntil = null, runId = null, updatedAt = null }) {
   const crypto = require('crypto');
+  const os = require('os');
   const resolvedRunId = runId || crypto.randomBytes(16).toString('hex').padEnd(32, '0');
   const runDir = path.join(sessionSlotDir(root, project, taskId, branch), `groundwork-validation-${resolvedRunId}`);
   const owner = { terminal: stage === 'validated', epoch: 1 };
@@ -146,9 +148,9 @@ function makeResume() {
   return createTaskResume();
 }
 
-function check(root, { taskId = 'TASK-004', baseBranch = 'main', projectName = '', planFile } = {}) {
+function check(root, { taskId = 'TASK-004', baseBranch = 'main', projectName = '', planFile, takeOver } = {}) {
   return makeResume().classifyTaskResume({
-    repoRoot: root, projectRoot: root, projectName, taskId, baseBranch, planFile,
+    repoRoot: root, projectRoot: root, projectName, taskId, baseBranch, planFile, takeOver,
   });
 }
 
@@ -186,9 +188,15 @@ describe('parseArgs and CLI contract', () => {
 
   test('duplicate and unknown flags are rejected', () => {
     assert.throws(() => parseArgs(['check', 'TASK-004', '--project', 'a', '--project', 'b']), /twice/);
+    assert.throws(() => parseArgs(['check', 'TASK-004', '--take-over', '--take-over']), /twice/);
     assert.throws(() => parseArgs(['check', 'TASK-004', '--bogus']), /unknown option/);
     assert.throws(() => parseArgs(['check', 'TASK-4']), /invalid task id/);
     assert.throws(() => ['frobnicate', 'TASK-004'].join(' ') && parseArgs(['frobnicate', 'TASK-004']), /unknown command/);
+  });
+
+  test('--take-over parses as a boolean flag', () => {
+    assert.strictEqual(parseArgs(['check', 'TASK-004', '--take-over']).takeOver, true);
+    assert.strictEqual(parseArgs(['check', 'TASK-004']).takeOver, undefined);
   });
 
   test('CLI prints exactly one JSON line and errors exit non-zero', () => {
@@ -417,7 +425,7 @@ describe('check: resume_at classification', () => {
     }
   });
 
-  test('conflict (standdown) while a validation heartbeat is live', () => {
+  test('conflict (soft standdown) while a fresh heartbeat cannot be verified', () => {
     const root = tempRepo();
     try {
       initRepo(root);
@@ -427,12 +435,89 @@ describe('check: resume_at classification', () => {
       const nowIso = new Date().toISOString();
       writeSessionRecord(root, {
         baseHead: baseSha, startHead: taskHead, stage: 'review-batch-complete',
-        heartbeat: { registered: true, lastBeat: nowIso, worker: null },
+        heartbeat: { registered: true, lastBeat: nowIso },
       });
       const result = check(root);
       assert.strictEqual(result.live_owner, 'validation-heartbeat');
+      assert.strictEqual(result.live_owner_reason, 'heartbeat-unverifiable');
       assert.strictEqual(result.resume_at, 'conflict');
-      assert.ok(result.evidence.some((line) => line.includes('standdown')));
+      assert.ok(result.evidence.some((line) => line.includes('--take-over')));
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('--take-over resolves the unverifiable heartbeat without asking', () => {
+    const root = tempRepo();
+    try {
+      initRepo(root);
+      const worktree = makeTaskWorktree(root);
+      const baseSha = git(root, 'rev-parse', 'HEAD');
+      const taskHead = git(worktree, 'rev-parse', 'HEAD');
+      const nowIso = new Date().toISOString();
+      writeSessionRecord(root, {
+        baseHead: baseSha, startHead: taskHead, stage: 'review-batch-complete',
+        heartbeat: { registered: true, lastBeat: nowIso },
+      });
+      const result = check(root, { takeOver: true });
+      assert.strictEqual(result.takeover, true);
+      assert.strictEqual(result.live_owner_reason, 'heartbeat-unverifiable');
+      assert.strictEqual(result.resume_at, 'validate');
+      assert.ok(result.evidence.some((line) => line.includes('standdown overridden')));
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('a killed session stops blocking once its worker probes dead', () => {
+    const root = tempRepo();
+    try {
+      initRepo(root);
+      const worktree = makeTaskWorktree(root);
+      const baseSha = git(root, 'rev-parse', 'HEAD');
+      const taskHead = git(worktree, 'rev-parse', 'HEAD');
+      const nowIso = new Date().toISOString();
+      writeSessionRecord(root, {
+        baseHead: baseSha, startHead: taskHead, stage: 'review-batch-complete',
+        heartbeat: {
+          registered: true, lastBeat: nowIso,
+          host: os.hostname(), pid: 4194303, processStart: 'proc:1',
+        },
+      });
+      const result = check(root);
+      assert.strictEqual(result.live_owner, 'none');
+      assert.strictEqual(result.validation_session.heartbeat_worker_alive, false);
+      assert.strictEqual(result.resume_at, 'validate');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('a provably-live worker is a hard standdown even with --take-over', () => {
+    const root = tempRepo();
+    try {
+      initRepo(root);
+      const worktree = makeTaskWorktree(root);
+      const baseSha = git(root, 'rev-parse', 'HEAD');
+      const taskHead = git(worktree, 'rev-parse', 'HEAD');
+      const { spawn } = require('child_process');
+      const live = spawn('sleep', ['30'], { stdio: 'ignore', detached: true });
+      const { processStartIdentity } = require(path.join(PLUGIN_ROOT, 'lib', 'process-identity'));
+      const start = processStartIdentity(live.pid);
+      const nowIso = new Date().toISOString();
+      writeSessionRecord(root, {
+        baseHead: baseSha, startHead: taskHead, stage: 'review-batch-complete',
+        heartbeat: {
+          registered: true, lastBeat: nowIso,
+          host: os.hostname(), pid: live.pid, processStart: start,
+        },
+      });
+      const result = check(root, { takeOver: true });
+      assert.strictEqual(result.live_owner_reason, 'heartbeat-worker-alive');
+      assert.strictEqual(result.validation_session.heartbeat_worker_alive, true);
+      assert.strictEqual(result.resume_at, 'conflict');
+      assert.ok(result.evidence.some((line) => line.includes('cannot override a live process')));
+      process.kill(live.pid, 'SIGKILL');
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -448,7 +533,7 @@ describe('check: resume_at classification', () => {
       const staleBeat = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
       writeSessionRecord(root, {
         baseHead: baseSha, startHead: taskHead, stage: 'review-batch-complete',
-        heartbeat: { registered: true, lastBeat: staleBeat, worker: null },
+        heartbeat: { registered: true, lastBeat: staleBeat },
       });
       const result = check(root);
       assert.strictEqual(result.live_owner, 'none');
@@ -468,8 +553,13 @@ describe('check: resume_at classification', () => {
       recordImplemented(root, worktree);
       const result = check(root);
       assert.strictEqual(result.live_owner, 'recent-writer');
+      assert.strictEqual(result.live_owner_reason, 'recent-checkpoint');
       // Soft signal only: classification still proceeds.
       assert.strictEqual(result.resume_at, 'validate');
+      // And --take-over records the override instead of leaving it implicit.
+      const overridden = check(root, { takeOver: true });
+      assert.strictEqual(overridden.resume_at, 'validate');
+      assert.ok(overridden.evidence.some((line) => line.includes('standdown overridden')));
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

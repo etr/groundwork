@@ -1,8 +1,8 @@
 ---
 name: work-on
-description: skill to "execute a task", "work on task N", or "implement TASK-NNN" - orchestrates worktree isolation, TDD implementation, validation, and merge.
+description: skill to "execute a task", "work on task N", or "implement TASK-NNN" - orchestrates worktree isolation, TDD implementation, validation, and merge. Pass --take-over to resume past a possibly-live prior session without asking (a provably-live worker still refuses).
 requires: plan-task, implement-task, validate
-argument-hint: "[task-number]"
+argument-hint: "[task-number] [--take-over]"
 ---
 
 # Execute Task Skill
@@ -76,8 +76,9 @@ If the user selects "Cancel — I'll switch first": output the switching command
 
 1. **Check skip flag:** If session context contains `GROUNDWORK_EXECUTE_SKIP_TO_STEP_SEVEN=true`, set `plan_file_path = $GROUNDWORK_EXECUTE_PLAN_FILE` and skip directly to Step 3 (Implementation). Do NOT read the plan file's contents into this orchestrator's context — the implement-task skill will pass the path to the executor agent.
 
-2. **Run the resume gate:** `node ${CLAUDE_PLUGIN_ROOT}/lib/task-resume.js check <TASK-NNN>` (add `--project <name>` in monorepos; run it after the task identifier is known from Step 1 if the ID was not supplied). The one-line JSON classifies any existing work-in-progress for this task. Act on it exactly as `${CLAUDE_PLUGIN_ROOT}/references/task-resume-protocol.md` specifies:
-   - `live_owner` not `none` → standdown rule: report and stop.
+2. **Run the resume gate:** `node ${CLAUDE_PLUGIN_ROOT}/lib/task-resume.js check <TASK-NNN>` (add `--project <name>` in monorepos; append `--take-over` when the invocation carried it; run it after the task identifier is known from Step 1 if the ID was not supplied). The one-line JSON classifies any existing work-in-progress for this task. Act on it exactly as `${CLAUDE_PLUGIN_ROOT}/references/task-resume-protocol.md` specifies:
+   - `live_owner_reason: heartbeat-worker-alive` → hard standdown: report and stop (not overridable).
+   - Other `live_owner` values → soft standdown: stop and ask unless `--take-over` was supplied, in which case proceed.
    - `resume_at: conflict` → surface the `evidence`, preserve the worktree, and stop for a user decision.
    - Skip every phase in `skip_phases`: reuse `plan.file` instead of Step 2 when `plan.present`; jump to Step 4 (validation) or Step 5 (merge) when that much is already done.
    - `resume_at: done` → run the `clear-checkpoint` action and report the task complete.
@@ -108,6 +109,8 @@ Parse the task identifier from the argument:
 - **Numeric** (e.g., `4`): Interpret as `TASK-004` (zero-padded to 3 digits)
 - **Full format** (e.g., `TASK-004`): Use as-is
 - **No argument**: Run `/groundwork:work-on-next-task` to determine the next workable task, then use that ID. If it returns nothing workable, report and stop.
+
+**Flags:** `--take-over` (also accepted anywhere in the argument) authorizes the resume gate to proceed past soft standdowns; thread it into the Step 0 gate invocation.
 
 **Error:** Invalid format → "Please specify a task number, e.g. `/groundwork:work-on 4` or `/groundwork:work-on TASK-004`"
 
