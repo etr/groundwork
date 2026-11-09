@@ -281,7 +281,7 @@ Full planning-to-implementation workflow:
 ```
 /groundwork:design-product           # Define requirements (PRD with EARS format)
 /groundwork:design-architecture      # Design technical approach and decisions
-/groundwork:ux-design                # Establish design system (for UI projects)
+/groundwork:ux-design                # Establish design system — web, TUI, or mobile app UIs
 /groundwork:create-tasks             # Generate implementation tasks
 /groundwork:work-on-next-task        # Start executing tasks with TDD
 ```
@@ -325,7 +325,7 @@ Define what to build and how to build it.
 | `/groundwork:design-product` | `[product-name]` | Create or update PRD with EARS requirements | Starting a new project or adding features |
 | `/groundwork:design-architecture` | `[feature-name]` | Design technical architecture with decision records | After PRD exists, need technical design |
 | `/groundwork:swarm-design-architecture` | `[feature-name]` | Parallel adversarial architecture design with agent teams | Multiple viable tech options, need balanced comparison |
-| `/groundwork:ux-design` | `[product-name]` | Establish design system — foundations, brand, UX patterns | Need visual/UX consistency for UI projects |
+| `/groundwork:ux-design` | `[product-name]` | Establish design system — foundations, brand, UX patterns for web, TUI, or mobile app surfaces | Need visual/UX consistency for UI projects |
 | `/groundwork:create-tasks` | `[filter]` | Generate implementation tasks from PRD + architecture | After specs exist, ready to plan implementation |
 | `/groundwork:setup-repo` | — | Configure repo — detect single-project or monorepo | First time using Groundwork in a repo |
 
@@ -434,7 +434,7 @@ Full planning through implementation with continuous synchronization:
 ```
 /groundwork:design-product              # 1. Define requirements
 /groundwork:design-architecture         # 2. Design technical approach
-/groundwork:ux-design                   # 3. Establish design system (UI projects)
+/groundwork:ux-design                   # 3. Establish design system — web/TUI/mobile (UI projects)
 /groundwork:create-tasks                # 4. Generate task list
 /groundwork:work-on-next-task           # 5. Execute tasks one by one (repeat)
 /groundwork:source-product-specs-from-code   # 6. Sync specs if implementation diverged

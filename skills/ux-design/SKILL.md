@@ -1,6 +1,6 @@
 ---
 name: ux-design
-description: Create design system with foundations, brand identity, and UX patterns. Usage /groundwork:ux-design
+description: Create design system with foundations, brand identity, and UX patterns for web, TUI, or mobile app surfaces. Usage /groundwork:ux-design
 argument-hint: "[product-name]"
 allowed-tools: ["Read", "Edit", "Write", "Glob", "Grep", "Task", "Skill"]
 ---
@@ -12,6 +12,8 @@ Establishes a complete design system through guided collaboration: foundations, 
 **Accessibility standard:** Design to the bar your patterns will be reviewed against. Treat `${CLAUDE_PLUGIN_ROOT}/references/checklists/accessibility.md` as the WCAG 2.1 AA standard your color choices, components, focus behavior, and patterns must meet — the same checklist `design-consistency-checker` enforces.
 
 **Anti-slop standard:** Real content or clearly-labeled placeholders, working controls, and no unreasoned default shapes. Treat `${CLAUDE_PLUGIN_ROOT}/references/checklists/design-slop.md` as the catalog of fabricated-content and default-shape patterns the design system must steer implementations away from — the same checklist `design-consistency-checker` reviews against.
+
+**Modality standard:** Design for the declared modality — **web** (default), **tui**, or **mobile app**. Resolve it at Step 0b and record it in the design system header. Steps 3–8 below state web defaults; the per-modality guides (`${CLAUDE_PLUGIN_ROOT}/references/design-system/tui-design-guide.md`, `${CLAUDE_PLUGIN_ROOT}/references/design-system/mobile-design-guide.md`) override them where the modality differs. The accessibility bar is the WCAG core plus the matching modality dialect in the accessibility checklist.
 
 ## Pre-flight: Model Recommendation
 
@@ -107,6 +109,18 @@ The tonal direction is derived from the product's persona, vision, and competiti
      - **Single project** → Proceed normally (specs will be created at `{{specs_dir}}/`)
      - **Monorepo** → Invoke `Skill(skill="groundwork:setup-repo")` to create `.groundwork.yml`, then continue.
 
+## Step 0b: Resolve Modality
+
+Determine which surface this design system targets — this parameterizes Steps 3–8.
+
+1. **Detect from architecture:** Read `{{specs_dir}}/architecture.md` (and the PRD if needed) for the UI stack:
+   - **tui** — Textual, Bubble Tea/Lip Gloss, Ratatui, Ink, tview, curses/ncurses, or a terminal rendering package
+   - **mobile** — SwiftUI, Jetpack Compose, React Native, Flutter, Expo, Kotlin Multiplatform
+   - **web** — React/Vue/Svelte/Angular/HTML+CSS/Next (or no UI stack declared)
+2. **Confirm:** If detection is ambiguous or the product targets multiple surfaces, ask via `AskUserQuestion` which surface is primary. For mobile, confirm target platforms and native vs cross-platform from the architecture doc; ask only if it doesn't say.
+3. **Declare:** The modality is written into the `{{specs_dir}}/design_system.md` header (`Modality: web | tui | mobile`) — `design-consistency-checker` and `design-task-alignment-checker` read it to select their review dialect.
+4. **Load the track guide:** `tui` → `${CLAUDE_PLUGIN_ROOT}/references/design-system/tui-design-guide.md`; `mobile` → `${CLAUDE_PLUGIN_ROOT}/references/design-system/mobile-design-guide.md`; `web` → none (this document is the web track). Where a guide gives modality-specific rules, the guide wins over the web defaults below.
+
 ## Prerequisites
 
 Check for PRD first. Look for `{{specs_dir}}/product_specs.md` (single file) or `{{specs_dir}}/product_specs/` (directory). If neither exists, prompt user to run `/groundwork:design-product` first.
@@ -135,7 +149,7 @@ Extract design-relevant context from PRD + a few targeted questions.
 > "Before we define the design system, a few quick questions:
 > 1. Do you have existing brand colors/fonts, or starting fresh?
 > 2. Any specific accessibility requirements? (WCAG level, legal compliance)
-> 3. Is this mobile-first, desktop-first, or balanced?"
+> 3. Surface scope — web: mobile-first, desktop-first, or balanced? tui: target terminals, minimum color support (16/256/truecolor), alt-screen vs inline? mobile: target platforms, phone/tablet/foldable?"
 
 Move on quickly after gathering constraints.
 
@@ -169,6 +183,8 @@ Also derive a **tonal direction** from the PRD's persona and vision. Avoid vague
 
 Define foundational token categories without waiting for approval on each:
 
+**Modality check:** the token categories below are the **web defaults**. For `tui`, the vocabulary is color slots / text styles / cell spacing / borders / glyphs — `tui-design-guide.md` → Tokens. For `mobile`, it is logical units (pt/dp) / touch targets / safe areas / system text styles — `mobile-design-guide.md` → Tokens. The primitive→semantic two-layer principle applies to every modality.
+
 **Spacing Scale (4px base):**
 - `--space-1`: 4px through `--space-16`: 64px
 
@@ -199,6 +215,7 @@ Before proposing options, confirm the **tonal direction** established in Step 2.
 Propose 2-4 complete visual identity options, each pairing a color strategy with typography that suits its personality. Draw from the product context, personas, and design principles.
 
 **Color System Guidance:**
+- **Modality first:** for `tui`, every option must state its palette strategy (semantic ANSI slots / truecolor brand / hybrid with fallback map) and the comparison renders against light and dark reference themes — `tui-design-guide.md` → Palette Strategy. For `mobile`, every option states its brand-vs-platform posture and ships dark-mode variants in the comparison — `mobile-design-guide.md` → The Identity Decision. OKLCH applies to fixed-RGB palettes; pure ANSI-slot strategies don't need it.
 - **Use OKLCH color space** for palette generation — perceptually uniform (unlike HSL where "50% lightness" varies wildly across hues). Define palettes in OKLCH, output hex/RGB for implementation.
 - **Tinted neutrals:** Never use pure gray. Add a subtle brand hue to the neutral scale (chroma ~0.01 in OKLCH). Creates warmth and cohesion without visible color.
 - **Never pure black or white:** `#000000` and `#ffffff` don't exist in nature. Use tinted near-black/near-white from the neutral scale.
@@ -212,6 +229,7 @@ See `${CLAUDE_PLUGIN_ROOT}/references/design-system/color-and-contrast-guide.md`
 - Do not copy palettes from famous brands (see "Colors to Avoid as Primary" in color reference)
 - Do not let all options converge on the same personality — if they all feel "clean and minimal," the exercise failed
 - At least one option should use a characterful or unexpected font pairing
+- For `tui`, each option's "Fonts:" line becomes "Text styles:" (the bold/dim/reverse ramp — tui guide → Typography); for `mobile`, it becomes the type-ramp decision (system Dynamic Type vs custom family — mobile guide → Typography)
 
 > "Based on [context] and our **[tonal direction]** direction, here are identity options to compare:
 >
@@ -314,7 +332,7 @@ Semantic colors (propose based on chosen palette temperature):
 
 Neutral palette: Define gray scale for text, backgrounds, borders based on chosen primary color temperature.
 
-Type scale based on chosen body font:
+Type scale based on chosen body font (web default — `tui`: the text-style ramp; `mobile`: system text styles + optional brand family that scales with Dynamic Type; see the modality guides → Typography):
 
 | Token | Size | Usage |
 |-------|------|-------|
@@ -415,6 +433,11 @@ Present functional pattern recommendations for immediate approval, plus 2-3 name
 >
 > I'll generate a visual comparison so you can see these atmosphere directions side-by-side."
 
+**Modality pattern sets:** The six pattern categories above apply to every modality, but their content differs — replace the web defaults (breakpoints, toast/banner layering, hover) with:
+
+- **tui** — Navigation: panes + keybindings + command palette. Loading: pane-chrome spinners/progress. Errors: status line vs log pane. Empty: per-pane designed states. Forms: line-editing vs key-driven. Responsive: the degradation ladder (full → collapsed → single pane → line mode) with an 80×24 floor. Motion: spinner/progress discipline only. Per the tui guide (`tui-design-guide.md`): Layout & Screen Architecture, Interaction, Motion.
+- **mobile** — Navigation: tab bar / stack / sheet architecture (the primary UXD). Loading: skeleton or system progress + designed offline states. Errors: inline and non-blocking. Forms: keyboard-aware layout. Responsive: adaptive layout for tablet/foldable. Motion: platform conventions, Reduce Motion honored. Per the mobile guide (`mobile-design-guide.md`): Navigation & Layout, Interaction & Motion, App-Specific Patterns.
+
 **Motion Design Principles (inform atmosphere choice):**
 - **100/300/500 rule:** Instant feedback 100-150ms, state transitions 200-300ms, layout shifts 300-500ms, entrances 500-800ms.
 - **Exit faster than enter:** Exit animations at ~75% of entrance duration.
@@ -432,6 +455,8 @@ See `${CLAUDE_PLUGIN_ROOT}/references/design-system/motion-design-guide.md` for 
 - **Undo over confirm dialogs** — users click through confirmations without reading. Provide undo for reversible actions instead.
 - **Touch targets 44px minimum** — even if the visual element is smaller, the tap area must be 44px.
 
+The eight-state model and `:focus-visible` guidance above are web-shaped: for `tui`, states recast to selected/focused/dim with no hover and keyboard-only as the floor (tui guide → Interaction); for `mobile`, use platform a11y-focus semantics and the 44pt/48dp target floor (mobile guide → Tokens, Interaction).
+
 See `${CLAUDE_PLUGIN_ROOT}/references/design-system/interaction-design-guide.md` for roving tabindex, skip links, native dialog/popover usage, and gesture discoverability.
 
 **Handle Feedback:**
@@ -441,7 +466,7 @@ See `${CLAUDE_PLUGIN_ROOT}/references/design-system/interaction-design-guide.md`
 
 #### Step 7b: Generate Atmosphere Comparison (`{{specs_dir}}/atmosphere-comparison.html`)
 
-Generate a self-contained HTML file that renders the same identity (colors, fonts) under each atmosphere direction side-by-side, with mini page layouts showing how each atmosphere *feels* in practice.
+Generate a self-contained HTML file that renders the same identity (colors, fonts) under each atmosphere direction side-by-side, with mini page layouts showing how each atmosphere *feels* in practice. In every modality the mock must double as an implementation reference — token names and values visible in the file, not just visual impressions: for `tui`, terminal-frame mocks (monospace grid, token + hex + ANSI-fallback values, 80×24 plus one degraded size, light/dark variants); for `mobile`, phone-frame mocks at the smallest supported width, dp-annotated, with dark variants. See the modality guides → Comparison & Preview Artifacts.
 
 **Architecture — data-driven, single render function:**
 
@@ -476,6 +501,8 @@ Generate a self-contained HTML file that renders the same identity (colors, font
 - User likes elements from multiple → Regenerate a mixed option
 
 #### Step 7c: Propose Layout Architecture + Generate Comparison (`{{specs_dir}}/layout-comparison.html`)
+
+**Web-specific step — adapt for tui/mobile:** scroll choreography has no tui/mobile equivalent; run this step as a **screen architecture comparison** instead — `tui`: pane-layout + degradation-ladder candidates; `mobile`: navigation-architecture (tab/stack/sheet) candidates. Same file mechanics (data-driven, single render function, decision helper table).
 
 Based on tonal direction, product type, and atmosphere choice, propose 2-3 layout architecture strategies. Each strategy is a coherent bundle of spatial decisions combining:
 
@@ -550,7 +577,7 @@ See `${CLAUDE_PLUGIN_ROOT}/references/design-system/layout-architecture-guide.md
 
 #### Step 7d: Generate Pattern Showcase (`{{specs_dir}}/pattern-showcase.html`)
 
-Generate a single-page preview of the complete finalized system — identity + chosen atmosphere + all functional patterns in one responsive page. This is NOT a comparison — one full-width layout showing how everything works together.
+Generate a single-page preview of the complete finalized system — identity + chosen atmosphere + all functional patterns in one responsive page. This is NOT a comparison — one full-width layout showing how everything works together. For `tui`/`mobile`, the showcase demonstrates the chosen screen architecture (pane layout / navigation architecture) in the modality's mock form.
 
 **Architecture — data-driven, single render function:**
 
@@ -588,7 +615,7 @@ Generate a single-page preview of the complete finalized system — identity + c
 
 ## Step 8: Document Design System
 
-Create `{{specs_dir}}/design_system.md` using template in `${CLAUDE_PLUGIN_ROOT}/references/design-system/design-system-template.md`.
+Create `{{specs_dir}}/design_system.md` using template in `${CLAUDE_PLUGIN_ROOT}/references/design-system/design-system-template.md`. Record the resolved modality in the document header — the template's modality notes and the per-modality guides override its web defaults.
 
 Populate all sections:
 1. **Foundations** - DP-NNN principles, accessibility level, tokens
@@ -600,7 +627,7 @@ Delete `{{specs_dir}}/pattern-showcase.html` after the design system document is
 
 ### Step 8b: Generate UX Preview (`{{specs_dir}}/ux-preview.html`)
 
-After writing `{{specs_dir}}/design_system.md`, generate a persistent visual reference from the finalized documented decisions. This is similar in structure to the pattern-showcase but serves as a developer reference — it includes token names, hex values, and font names alongside the visual demonstrations.
+After writing `{{specs_dir}}/design_system.md`, generate a persistent visual reference from the finalized documented decisions. This is similar in structure to the pattern-showcase but serves as a developer reference — it includes token names, hex values, and font names alongside the visual demonstrations. For `tui`/`mobile`, follow the modality guide's preview-artifact spec so the file works as an implementation reference (token names, color values with ANSI/dp annotations, cell/device dimensions).
 
 **Architecture — data-driven, single render function:**
 
@@ -713,3 +740,5 @@ Each decision follows a lightweight format:
 - `${CLAUDE_PLUGIN_ROOT}/references/design-system/ux-writing-guide.md` - Button labels, error formulas, empty states, terminology, text expansion
 - `${CLAUDE_PLUGIN_ROOT}/references/design-system/layout-architecture-guide.md` - Section geometry, scroll architecture, navigation, content choreography, typography as architecture (~35 patterns)
 - `${CLAUDE_PLUGIN_ROOT}/references/design-system/layout-examples.md` - 7 curated strategy bundles combining layout patterns into coherent layouts
+- `${CLAUDE_PLUGIN_ROOT}/references/design-system/tui-design-guide.md` - TUI track: palette strategy, cell tokens, screen architecture, TUI accessibility, terminal-frame mocks
+- `${CLAUDE_PLUGIN_ROOT}/references/design-system/mobile-design-guide.md` - Mobile track: brand-vs-platform, pt/dp tokens, navigation architecture, mobile accessibility, phone-frame mocks

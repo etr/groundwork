@@ -92,6 +92,8 @@ Review the current session for:
 - Color values defined or modified
 - Spacing/sizing values established
 - Typography settings changed
+- TUI: theme/color-slot or text-style constants added (Textual `.tcss`/themes, Lip Gloss styles, ratatui `Style`, Ink styles); border/glyph/key-hint vocabulary changed
+- Mobile: theme edits (SwiftUI `Color` extensions/asset catalogs, Compose `MaterialTheme`, RN style tokens); text-style or safe-area usage changed
 
 **Component Styling:**
 - New component variants created
@@ -106,6 +108,8 @@ Review the current session for:
 - Navigation patterns established
 - Form validation approaches implemented
 - Animation/motion added
+- TUI: keybinding maps, pane layouts, degradation-ladder or line-oriented-mode changes
+- Mobile: navigation architecture, gesture handling, haptics, permission flows
 
 **Brand Identity:**
 - Logo usage implemented
@@ -243,6 +247,8 @@ On approval:
 
 **Strong signals (likely design system change):**
 - New CSS custom properties or variables defined
+- TUI: theme/color-constant modules or style enums changed; keybinding/help vocabulary changed
+- Mobile: `MaterialTheme`/SwiftUI theme edits; Dynamic Type or dark-mode variant changes
 - Explicit design decisions ("let's use X for all buttons")
 - Accessibility fixes (contrast, ARIA, focus states)
 - New component variants with distinct styling
