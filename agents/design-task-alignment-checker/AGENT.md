@@ -11,6 +11,8 @@ effort: high
 
 You are a design task alignment checker. Your job is to verify that UI and frontend tasks properly incorporate design system guidelines, accessibility requirements, and UX patterns.
 
+**Modality:** Read the `design_system.md` header's **Modality** line (`web` | `tui` | `mobile`; undeclared → `web`) and apply its dialect. Tokens mean theme slots for `tui` (Textual themes, Lip Gloss/ratatui `Style`, Ink styles) and platform theme tokens for `mobile` (SwiftUI `Color` extensions, Compose `MaterialTheme`, RN styles). Accessibility requirements use the matching dialect from `checklists/accessibility.md` (labels → `accessibilityLabel`/`contentDescription` on mobile; focus → visible selection/pane indicator on tui; responsive → degradation ladder on tui / adaptive layout on mobile). Web-only checks (`:focus-visible`, breakpoints) do not apply to other modalities.
+
 ## Review Criteria
 
 ### 1. Design Token References
@@ -51,6 +53,7 @@ Check responsive considerations:
 - Do layout tasks mention breakpoint handling?
 - Are mobile-specific patterns addressed?
 - Is touch interaction considered for mobile tasks?
+- `tui`: do layout tasks mention the degradation ladder (resize behavior, 80×24 floor)? `mobile`: do they mention adaptive layout (tablet/foldable) and safe areas?
 
 ### 6. Component Consistency
 
@@ -63,7 +66,7 @@ Verify consistency across related tasks:
 
 You will receive:
 - `task_list`: The complete task list ({{specs_dir}}/tasks.md contents)
-- `design_system`: Design system specification ({{specs_dir}}/design_system.md) - may be absent
+- `design_system`: Design system specification ({{specs_dir}}/design_system.md) - may be absent; when present, read its Modality header first
 
 ## Review Process
 
@@ -153,7 +156,7 @@ Focus on these task types:
 
 ## Accessibility Checklist
 
-For each UI task, verify relevant items are in acceptance criteria:
+For each UI task, verify relevant items are in acceptance criteria. Items below are web-worded; apply the modality dialect equivalents (labels, focus, targets) per the intro.
 
 **Interactive elements:**
 - [ ] Visible focus states

@@ -8,6 +8,9 @@ Use this template when creating `{{specs_dir}}/design_system.md`.
 **Version:** 0.1
 **Last updated:** <date>
 **Status:** Draft | Review | Approved
+**Modality:** web | tui | mobile
+
+> Declared by the ux-design skill (Step 0b). Where this template states web defaults, the per-modality guides (`references/design-system/tui-design-guide.md`, `mobile-design-guide.md`) override them.
 
 ---
 
@@ -15,7 +18,7 @@ Use this template when creating `{{specs_dir}}/design_system.md`.
 
 ### 1.1 Accessibility Requirements
 
-**Compliance Level:** [WCAG 2.1 AA | AAA | Section 508]
+**Compliance Level:** [WCAG 2.1 AA | AAA | Section 508] — mobile is anchored on the W3C WCAG 2.2 mobile guidance; tui applies the WCAG core plus the TUI dialect (see the accessibility checklist's modality sections)
 **Date Decided:** YYYY-MM-DD
 
 | Requirement | Standard | Notes |
@@ -41,6 +44,8 @@ Use this template when creating `{{specs_dir}}/design_system.md`.
 | Border Radius | Shape language | Below |
 | Animation | Motion timing and easing | Section 3.7 |
 | Breakpoints | Responsive boundaries | Section 3.6 |
+
+**Modality:** the tables below are web defaults. `tui`: color slots / text styles / cell spacing / border styles / glyph tokens (tui-design-guide → Tokens). `mobile`: logical units (pt/dp) / touch targets / safe areas / system text styles (mobile-design-guide → Tokens).
 
 #### Spacing Scale
 
@@ -98,6 +103,7 @@ Use this template when creating `{{specs_dir}}/design_system.md`.
 
 #### Dark Mode Strategy
 **Approach:** [Semantic token layer swap | Full palette variant | Not applicable]
+**mobile:** driven by the system setting — both variants ship day one. **tui:** the background is the user's terminal — dual-contrast against light and dark reference themes, or adaptive variants (tui-design-guide → Palette Strategy).
 **Key Adjustments:**
 - [e.g., Lighter surfaces for depth instead of shadows]
 - [e.g., Desaturated accent colors]
@@ -106,6 +112,8 @@ Use this template when creating `{{specs_dir}}/design_system.md`.
 ### 2.2 Typography
 
 [Font families, type scale]
+
+**Modality:** `tui` — typography is the text-style ramp (bold/dim/reverse), not fonts. `mobile` — system text styles (Dynamic Type / sp) with optional brand family; text scales with the user's setting.
 
 #### Fluid Type Strategy
 | Context | Approach | Rationale |
@@ -165,6 +173,8 @@ Use this template when creating `{{specs_dir}}/design_system.md`.
 ## 3) UX Patterns
 
 [Populated by ux-patterns skill]
+
+**Modality:** the pattern sections below are web-shaped; for `tui`/`mobile`, populate them with the modality pattern sets from the per-modality guides (Layout & Screen Architecture / Navigation & Layout), keeping the same section names.
 
 ### 3.1 Navigation
 
@@ -248,7 +258,7 @@ Use this template when creating `{{specs_dir}}/design_system.md`.
 
 ### 3.10 Layout Architecture
 
-**Structural spatial decisions that define how the page is organized, how sections relate, and how the user moves through the experience.**
+**Structural spatial decisions that define how the page is organized, how sections relate, and how the user moves through the experience.** For `tui`, document pane architecture and the degradation ladder instead; for `mobile`, document the navigation architecture (tab/stack/sheet) — see the modality guides.
 
 - **Section Geometry**: [variable container widths / fixed width / diagonal breaks / rounded stacking / asymmetric splits / ...]
   - Rationale: [derived from tonal direction + product requirements]
@@ -280,6 +290,8 @@ Use this template when creating `{{specs_dir}}/design_system.md`.
 | Loading | [e.g., spinner replacing label, skeleton] | |
 | Error | [e.g., red border, error icon] | |
 | Success | [e.g., green check, temporary confirmation] | |
+
+**Modality:** `tui` — no hover; the states recast to selected/focused/dim (tui-design-guide → Interaction). `mobile` — pressed/long-press replace hover; accessibility focus is separate from touch.
 
 ### 3.12 Writing Style
 

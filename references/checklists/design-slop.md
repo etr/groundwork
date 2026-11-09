@@ -2,7 +2,7 @@
 
 Criteria for detecting generic "AI slop" in generated UI and copy: the default shapes, fabricated content, and copy tells that mark output as machine-generated. Read by the `ux-design` skill (design to avoid these) and the `design-consistency-checker` agent (review against them).
 
-This checklist is **direction-independent**: it applies with and without a `design_system.md`. It is a filter, not a style guide — no colors, fonts, or layouts are prescribed, and no technique is banned outright. Project-specific decisions (palette, typography, layout patterns) come from the project's `design_system.md`; WCAG criteria live in `checklists/accessibility.md` and are not repeated here. Distilled from [anti-slop](https://github.com/miqdadbadjuber/anti-slop) (MIT).
+This checklist is **direction-independent**: it applies with and without a `design_system.md`, and across modalities — the core groups apply to web, tui, and mobile alike; the per-modality shape lists extend Group B. It is a filter, not a style guide — no colors, fonts, or layouts are prescribed, and no technique is banned outright. Project-specific decisions (palette, typography, layout patterns) come from the project's `design_system.md`; WCAG criteria live in `checklists/accessibility.md` and are not repeated here. Distilled from [anti-slop](https://github.com/miqdadbadjuber/anti-slop) (MIT).
 
 ## How to apply
 
@@ -30,11 +30,15 @@ The shapes generated UI reaches for by default. Each is allowed with a purpose; 
 
 **Visual & color:** blue-purple / blue-cyan gradient family as the primary treatment · glassmorphism on every surface · glow on cards + buttons + badges at once · everything pill-shaped · every component floating in soft shadow · background grids, dot patterns, blueprint lines · one accent color spread across everything · 5+ colors with no system
 
-**Layout templates:** the hero + 2 CTAs + feature grid + testimonials + FAQ + CTA + footer order · identical copy-paste feature cards · bento-grid mosaic as the default section · styled fake terminal window as the hero visual · "How It Works" always exactly 3 numbered steps · "Trusted By" logo bar with generic logos · exactly 3 pricing tiers with the middle highlighted · 4-column template footer (Product / Company / Resources / Legal) · every section the same centered-title + card-grid composition
+**Layout templates:** the hero + 2 CTAs + feature grid + testimonials + FAQ + CTA + footer order · identical copy-paste feature cards · bento-grid mosaic as the default section · styled fake terminal window as the hero visual (a marketing-site costume — not a violation for TUI products, where a terminal frame **is** the product surface and its design artifacts) · "How It Works" always exactly 3 numbered steps · "Trusted By" logo bar with generic logos · exactly 3 pricing tiers with the middle highlighted · 4-column template footer (Product / Company / Resources / Legal) · every section the same centered-title + card-grid composition
 
 **Decorative elements:** generic AI icons (sparkle, star, lightning, robot, orb) · the uniform single-library icon look (thin-stroke rounded set) chosen for the library, not the content · arrows (→ / ↗) on every button · capsule badges ("AI Powered", "Beta") marking nothing · pulsing status dots beside headings that track no state · monospace headings and uppercase wide-tracked labels as a "technical" costume · stock illustrations unconnected to the product
 
 **Dashboard shapes:** sidebar + top bar + four stat cards + a chart + a table, chosen before asking what the screen is for · table columns (Name / Status / Date / Actions) from the component rather than the decision the user makes · empty/loading/error states that say nothing ("No data available" with no cause and no next action)
+
+**TUI shapes (tui modality):** ASCII-art logo/banner splash on startup of a professional tool · emoji as the icon system in ops/dev tools · double-line borders on every pane · truecolor gradients on surfaces when target terminals vary · "hacker" costume (green-on-black, glitch effects) without a product reason · key-hint bars that show every binding on every screen instead of `?`-help · decorative spinner art (20-frame spinners on an ssh tool)
+
+**Mobile shapes (mobile modality):** onboarding carousel of padding slides before any value · splash/logo animation on every launch · hamburger menu for ≤5 destinations · bottom navigation with 6+ items or a "More" tab · dead settings toggles in shipped screens · star-rating prompt interrupting the first session · the pixel-identical skin on iOS and Android with no adaptation decision recorded · web-ported idioms (hover tooltips, pointer-precision targets)
 
 ## Group C — Copy Tells (minor; clusters)
 
