@@ -346,13 +346,13 @@ Execute tasks and build features.
 
 | Skill | Args | Description | When to Use |
 |---------|------|-------------|-------------|
-| `/groundwork:work-on` | `[task-number]` | Execute a specific task with worktree isolation and TDD | Want to work on a specific task by number |
-| `/groundwork:work-on-next-task` | — | Execute the next unblocked task automatically | Working through tasks sequentially |
-| `/groundwork:plan-task` | `[task-number-or-description]` | Plan a task or feature without implementing | Want to review a plan before committing to implementation |
-| `/groundwork:implement-task` | `[task-number-or-plan-path]` | Implement a previously planned task | Resume implementation after reviewing a plan |
-| `/groundwork:just-do-it` | — | Execute all remaining tasks in dependency order | Want batch execution inside the current session |
-| `/groundwork:just-do-it-swarming` | `[--parallel]` | Execute all tasks using agent teams for context isolation | Large batches where context accumulation is a concern |
-| `/groundwork:build-unplanned` | `[description]` | Build feature from description — no task definitions needed | Quick feature without formal planning |
+| `/groundwork:work-on` | `[task-number] [--take-over] [--on-unrelated-failure mode]` | Execute a specific task with worktree isolation and TDD | Want to work on a specific task by number |
+| `/groundwork:work-on-next-task` | `[--take-over] [--on-unrelated-failure mode]` | Execute the next unblocked task automatically | Working through tasks sequentially |
+| `/groundwork:plan-task` | `[task-number-or-description] [--project name]` | Plan a task or feature without implementing | Want to review a plan before committing to implementation |
+| `/groundwork:implement-task` | `[task-number-or-plan-path] [--project name]` | Implement a previously planned task | Resume implementation after reviewing a plan |
+| `/groundwork:just-do-it` | `[--project name] [--take-over] [--on-unrelated-failure mode]` | Execute all remaining tasks in dependency order | Want batch execution inside the current session |
+| `/groundwork:just-do-it-swarming` | `[--project name] [--parallel] [--take-over] [--on-unrelated-failure mode]` | Execute all tasks using agent teams for context isolation | Large batches where context accumulation is a concern |
+| `/groundwork:build-unplanned` | `[description] [--on-unrelated-failure mode]` | Build feature from description — no task definitions needed | Quick feature without formal planning |
 | `/groundwork:select-project` | `[project-name]` | Switch to a different project in a monorepo | Working across multiple projects |
 
 ### Debugging Skills
@@ -370,8 +370,8 @@ Validate code quality and spec alignment.
 
 | Skill | Args | Description | When to Use |
 |---------|------|-------------|-------------|
-| `/groundwork:validate` | — | Re-run 9-agent verification on current changes | Verify code quality after manual changes |
-| `/groundwork:finalize-task` | `[task-id] [--project name]` | Commit, merge, and clean up a validated task worktree | Completing the workflow manually phase by phase |
+| `/groundwork:validate` | `[--project name] [--noninteractive] [--on-unrelated-failure mode]` | Re-run 9-agent verification on current changes | Verify code quality after manual changes |
+| `/groundwork:finalize-task` | `[task-id] [--project name] [--on-unrelated-failure mode]` | Commit, merge, and clean up a validated task worktree | Completing the workflow manually phase by phase |
 | `/groundwork:check-specs-alignment` | `[context]` | Audit code alignment with PRD and architecture | Periodic drift detection |
 
 ### Review Skills
@@ -411,9 +411,21 @@ Plugin management and reference.
 | Skill | Args | Description | When to Use |
 |---------|------|-------------|-------------|
 | `/groundwork:handoff` | `[focus]` | Produce a compact handoff document transferring context, state, and next objective | Ending a session or passing work to another agent |
+| `/groundwork:statusline` | `[install\|uninstall]` | Install or remove Groundwork's optional statusline (requires `jq` and `curl`) | Wanting task/PR state in the Claude Code statusline |
 | `/groundwork:skills` | — | List all available Groundwork skills | Discovering available capabilities |
 | `/groundwork:groundwork-check` | — | Validate plugin installation | Troubleshooting issues |
 | `/groundwork:groundwork-help` | — | Show all skills | Quick reference |
+
+### Common Execution Flags
+
+Task-executing and validation skills share these optional flags (each skill's Args column above shows which ones it accepts):
+
+| Flag | Meaning |
+|------|---------|
+| `--project <name>` | Pin the monorepo project for this invocation instead of using the persisted selection |
+| `--take-over` | Resume an in-flight task past a possibly-live prior session without asking (the resume gate still refuses when the prior worker is provably alive) |
+| `--on-unrelated-failure stop-and-ask\|expand-and-fix\|ignore-and-merge` | How validation handles gate failures confidently assessed unrelated to the active project. `stop-and-ask` (default) pauses for a decision; `expand-and-fix` has the validation fixer repair the unrelated failure; `ignore-and-merge` records waiver receipts and proceeds — `validate` returns `PASSED-WITH-WAIVERS`, and `finalize-task` merges such a tree only when it also receives `ignore-and-merge` |
+| `--noninteractive` | (`validate` only) Never prompt: when user input would be required, persist unexecuted findings and return `Validation INCOMPLETE` |
 
 ## Model Recommendations
 
@@ -423,7 +435,7 @@ Skills vary in complexity. The table below lists the minimum model tier recommen
 |------|---------------|----------|
 | **Opus (1M)** | Opus at high effort | `/groundwork:design-product`, `/groundwork:design-architecture`, `/groundwork:ux-design`, `/groundwork:create-tasks`, `/groundwork:debug`, `/groundwork:swarm-debug`, `/groundwork:swarm-design-architecture`, `/groundwork:design-it-twice`, `/groundwork:doubt-driven-development` |
 | **Sonnet+** | Sonnet or Opus at high effort | `/groundwork:work-on`, `/groundwork:work-on-next-task`, `/groundwork:just-do-it`, `/groundwork:just-do-it-swarming`, `/groundwork:build-unplanned`, `/groundwork:validate`, `/groundwork:finalize-task`, `/groundwork:check-specs-alignment`, `/groundwork:review-pr`, `/groundwork:source-product-specs-from-code`, `/groundwork:source-architecture-from-code`, `/groundwork:source-ux-design-from-code`, `/groundwork:domain-modeling`, `/groundwork:vertical-slice`, `/groundwork:instrument-observability`, `/groundwork:staged-rollout`, `/groundwork:ship` |
-| **Any** | No requirement | `/groundwork:setup-repo`, `/groundwork:select-project`, `/groundwork:handoff`, `/groundwork:skills`, `/groundwork:groundwork-help`, `/groundwork:groundwork-check` |
+| **Any** | No requirement | `/groundwork:setup-repo`, `/groundwork:select-project`, `/groundwork:handoff`, `/groundwork:statusline`, `/groundwork:skills`, `/groundwork:groundwork-help`, `/groundwork:groundwork-check` |
 
 ## Workflows
 
