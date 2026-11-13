@@ -59,10 +59,24 @@ solve autonomously.
 
 - `heartbeat-worker-alive` — a registered validation heartbeat whose worker
   identity (pid + process start on this host) **probes as a running
-  process**. A session is genuinely working this task right now. Do not
-  touch the worktree; report and stop. This is a **hard standdown** — even
+  process** and whose owner anchor (when recorded) also probes live. A
+  session is genuinely working this task right now. Do not touch the
+  worktree; report and stop. This is a **hard standdown** — even
   `--take-over` cannot override a provably-live process; stop or kill that
-  session first.
+  session first. When the evidence names a persisted capability file
+  (`manual-capability-<run_id>.json` beside the run directory, or
+  `runner-capability.json`), `heartbeat-stop --capability-file` stops a
+  crashed session's worker directly and the next `open` reclaims — no
+  staleness wait, no kill needed.
+- `heartbeat-orphaned` — the worker provably beats on, but its recorded
+  owner anchor (the harness session or runner it was spawned to represent)
+  is provably dead: an orphaned loop, not a live owner. **Not a standdown**
+  — `live_owner` stays `none` and classification proceeds (typically
+  `validate` with a `resume-validation-session` action). Reclaiming mints a
+  successor epoch, revokes the orphan's capability, and it exits on its
+  next beat; anchored workers also self-stop (`owner-gone`) within two
+  beats of the anchor dying. `validation_session.heartbeat_worker_pid`
+  names the loop process.
 - `heartbeat-unverifiable` — a fresh heartbeat whose worker identity cannot
   be probed (record absent, malformed, or a foreign host). A **soft
   standdown**: by default the gate classifies `conflict` and the run asks
@@ -75,9 +89,10 @@ solve autonomously.
   Soft standdown: ask by default; `--take-over` proceeds.
 - `none` — no live owner; proceed.
 
-A heartbeat whose worker probes as **dead** (stale process identity) is
-reported as no owner at all — a killed session stops blocking the moment
-its worker is provably gone, no override needed.
+A heartbeat whose worker probes as **dead** (stale process identity), or
+whose worker beats on while its owner anchor is provably dead (orphaned
+loop), is reported as no owner at all — a killed session stops blocking
+the moment its worker is provably gone, no override needed.
 
 ## Take-over override
 

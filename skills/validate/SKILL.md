@@ -241,13 +241,15 @@ node ${CLAUDE_PLUGIN_ROOT}/lib/validation-session.js heartbeat-stop \
   --run-dir "<run_dir>" --capability-file "<capability_file>"
 ```
 
+The worker records its own process identity plus an **owner anchor** — the process whose death means this session is dead (your harness session here; the runner in runner mode, injected through the environment). It anchors automatically; nothing extra to pass. If the anchor dies, the worker self-stops (`owner-gone`) within two beats, so a crashed session cannot wedge its slot behind a leaked loop — and the resume gate reports an anchored dead session as `heartbeat-orphaned` (no standdown, reclaim immediately).
+
 - `created`: initialize iteration 1, freeze the baseline, start the heartbeat worker, and run the initial audit.
 - `resumed`: your capability was accepted. Restart the heartbeat worker if it is not running, read the recorded coordinator file, and continue from its recorded stage. Do not restart the initial audit or discard carried approvals.
 - `reclaimed`: the prior owner was provably stale and you now hold a successor capability and epoch. Start the heartbeat worker before continuing.
 - `recovered`: confirm the prior fixer is no longer running, preserve the current worktree, read the recorded repair envelope, and rerun it. A `fixer-prepared` session resumes the same fixer scope without worktree comparison or restoration.
 - `completed`: replay the stored validation metrics and exact action/commit receipt, emit the normal final result, and stop without gates, reviewers, or fixers.
 
-**Ownership refusal:** if `open` fails with "already active", another orchestration holds a live session for this task/branch. Do not work around it: report `RESULT: FAILURE` with the helper's message (it names the holder's heartbeat and the exact `abandon --force` command). Only run `abandon --force` when the user confirms the session is dead — and note that a live owner (fresh heartbeat or startup grace) can never be force-abandoned; wait out its staleness window and reclaim instead.
+**Ownership refusal:** if `open` fails with "already active", another orchestration holds a live session for this task/branch. Do not work around it: report `RESULT: FAILURE` with the helper's message (it names the holder's heartbeat and the exact `abandon --force` command). Only run `abandon --force` when the user confirms the session is dead — and note that a live owner (fresh heartbeat or startup grace) can never be force-abandoned. If the holder session is dead but its worker leaked, stop the worker directly with `heartbeat-stop --run-dir <run_dir> --capability-file <capability_file>` (the persisted capability file beside the run directory); the session turns stale without waiting out the window and the next `open` reclaims.
 
 An incomplete reviewer batch has no checkpoint. Rerun only the pending batch for the recorded stage and iteration, using the same assigned artifact names. You will pass `{findings_dir}/findings-{agent}-iter{N}.json` to every agent invocation and reference these files in step 4.2 and step 5.5. Retain the directory after completion.
 

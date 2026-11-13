@@ -145,7 +145,8 @@ For each remaining task in dependency order:
 2. **Announce start:** "Starting TASK-NNN: [Title]"
 
 3. **Run the resume gate:** `node ${CLAUDE_PLUGIN_ROOT}/lib/task-resume.js check TASK-NNN` (add `--project <name>` in monorepos; append `--take-over` when the batch was invoked with it). Act on the one-line JSON exactly as `${CLAUDE_PLUGIN_ROOT}/references/task-resume-protocol.md` specifies:
-   - `live_owner_reason: heartbeat-worker-alive` → hard standdown (report and stop the batch; even `--take-over` cannot override a provably-live process).
+   - `live_owner_reason: heartbeat-worker-alive` → hard standdown (report and stop the batch; even `--take-over` cannot override a provably-live process). If the evidence includes a paste-ready `heartbeat-stop` command, offer it to the user — the owning session may be dead with its worker leaked.
+   - `live_owner_reason: heartbeat-orphaned` → not a standdown: the heartbeat worker beats on but its owning session is provably dead; proceed with the classification (reclaiming revokes the orphan's capability and it exits on its next beat).
    - Other `live_owner` values → soft standdown: stop and ask unless `--take-over` was supplied, in which case proceed (the check already resolved it).
    - `resume_at: conflict` → surface the `evidence` and stop the batch; the worktree is preserved.
    - Skip every phase listed in `skip_phases`: when `plan.present` is true, reuse `plan.file` as `plan_file_path` instead of Phase A; when `validate` or beyond is done, jump straight to that phase.

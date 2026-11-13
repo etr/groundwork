@@ -4690,6 +4690,47 @@ describe('four-phase orchestration', () => {
     }
   });
 
+  test('the validate phase carries the runner anchor environment for its heartbeat worker', () => {
+    const { runTasks, processStartIdentity } = require(RUNNER);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-anchor-env-'));
+    const worktree = path.join(root, '.worktrees', 'TASK-004');
+    try {
+      initRepo(root);
+      let validateEnv = null;
+      runTasks(
+        { command: 'task', harness: 'claude', repo: root, project: null, tasks: ['TASK-004'], dryRun: false },
+        {
+          pluginRoot: PLUGIN_ROOT,
+          log: () => {},
+          invokePhase(input) {
+            if (input.phase === 'plan') {
+              writePlan(root);
+              return 'RESULT: PLANNED | plan_file_path=.groundwork-plans/TASK-004-plan.md | identifier=TASK-004 | branch_prefix=task';
+            }
+            if (input.phase === 'implement') {
+              const taskFile = path.join(worktree, 'specs', 'tasks.md');
+              fs.writeFileSync(taskFile, fs.readFileSync(taskFile, 'utf8').replace('Not Started', 'In Progress'));
+              write(path.join(worktree, 'feature.txt'), 'implemented\n');
+              return implementationReceipt(input, worktree);
+            }
+            if (input.phase === 'validate') {
+              validateEnv = input.env || {};
+              return validated(input);
+            }
+            return finalizeMock(input, root, worktree, 'TASK-004', 'task/TASK-004', 'main');
+          },
+        }
+      );
+      // The runner names itself as the anchor so a validate-phase heartbeat
+      // worker cannot outlive the orchestrator that owns the run.
+      assert.ok(validateEnv, 'validate phase never ran');
+      assert.strictEqual(validateEnv.GROUNDWORK_VALIDATION_ANCHOR_PID, String(process.pid));
+      assert.strictEqual(validateEnv.GROUNDWORK_VALIDATION_ANCHOR_START, processStartIdentity(process.pid));
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('runner prepares the linked task worktree before planning and plans from its project root', () => {
     const { runTasks } = require(RUNNER);
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-run-prepared-worktree-'));

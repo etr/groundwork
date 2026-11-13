@@ -3537,7 +3537,16 @@ function runTasks(options, dependencies = {}) {
               beginPhase('validate');
               let validationStartHead;
               const validationReceiptToken = crypto.randomBytes(24).toString('hex');
-              const validationEnv = { ...taskEnv };
+              const validationEnv = {
+                ...taskEnv,
+                // The heartbeat worker the validate skill spawns inside this
+                // phase anchors to the runner itself: if the runner dies, the
+                // worker self-stops and the session turns stale instead of
+                // beating forever behind a dead orchestrator. Process identity
+                // is public data — the capability never travels via env.
+                GROUNDWORK_VALIDATION_ANCHOR_PID: String(process.pid),
+                GROUNDWORK_VALIDATION_ANCHOR_START: processStartIdentity(process.pid),
+              };
               if (!validateInput.validationRunId) delete validationEnv.GROUNDWORK_VALIDATION_RUN_ID;
               const validationPhaseInput = {
                 ...validateInput,

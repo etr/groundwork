@@ -77,7 +77,8 @@ If the user selects "Cancel — I'll switch first": output the switching command
 1. **Check skip flag:** If session context contains `GROUNDWORK_EXECUTE_SKIP_TO_STEP_SEVEN=true`, set `plan_file_path = $GROUNDWORK_EXECUTE_PLAN_FILE` and skip directly to Step 3 (Implementation). Do NOT read the plan file's contents into this orchestrator's context — the implement-task skill will pass the path to the executor agent.
 
 2. **Run the resume gate:** `node ${CLAUDE_PLUGIN_ROOT}/lib/task-resume.js check <TASK-NNN>` (add `--project <name>` in monorepos; append `--take-over` when the invocation carried it; run it after the task identifier is known from Step 1 if the ID was not supplied). The one-line JSON classifies any existing work-in-progress for this task. Act on it exactly as `${CLAUDE_PLUGIN_ROOT}/references/task-resume-protocol.md` specifies:
-   - `live_owner_reason: heartbeat-worker-alive` → hard standdown: report and stop (not overridable).
+   - `live_owner_reason: heartbeat-worker-alive` → hard standdown: report and stop (not overridable). If the evidence includes a paste-ready `heartbeat-stop` command, offer it to the user — the owning session may be dead with its worker leaked.
+   - `live_owner_reason: heartbeat-orphaned` → not a standdown: the heartbeat worker beats on but its owning session is provably dead; proceed with the classification (reclaiming revokes the orphan's capability and it exits on its next beat).
    - Other `live_owner` values → soft standdown: stop and ask unless `--take-over` was supplied, in which case proceed.
    - `resume_at: conflict` → surface the `evidence`, preserve the worktree, and stop for a user decision.
    - Skip every phase in `skip_phases`: reuse `plan.file` instead of Step 2 when `plan.present`; jump to Step 4 (validation) or Step 5 (merge) when that much is already done.

@@ -608,7 +608,7 @@ function openOperation(repo, extra = {}) {
   };
 }
 
-function spawnHeartbeatWorker(runDir, ownerToken, env = {}) {
+function spawnHeartbeatWorker(runDir, ownerToken, env = {}, extraArgs = []) {
   // The capability travels on a private inherited fd — never argv or env.
   // It must be delivered synchronously: the test loops below block the
   // event loop with Atomics.wait, so an async pipe write to child.stdin
@@ -618,7 +618,7 @@ function spawnHeartbeatWorker(runDir, ownerToken, env = {}) {
   const capabilityFd = fs.openSync(capabilityFile, 'r');
   try {
     return spawn(process.execPath, [
-      HELPER, 'heartbeat-loop', '--run-dir', runDir,
+      HELPER, 'heartbeat-loop', '--run-dir', runDir, ...extraArgs,
     ], { env: { ...process.env, ...env }, stdio: [capabilityFd, 'ignore', 'inherit'] });
   } finally {
     fs.closeSync(capabilityFd);
@@ -778,6 +778,80 @@ describe('capability ownership lifecycle (multi-process)', () => {
         const after = heartbeatState(created.runDir).lastBeat;
         assert.notStrictEqual(after, before, 'beats must advance while the worker is live');
         assert.throws(() => helper.openValidationSession(identity(repo)), /already active/);
+      } finally {
+        killAndWait(worker);
+      }
+    } finally {
+      fs.rmSync(repo.root, { recursive: true, force: true });
+    }
+  });
+
+  test('a spawned worker anchors to its spawning process and stays live while it lives', () => {
+    const helper = require(HELPER);
+    const repo = fixture();
+    try {
+      const created = helper.openValidationSession(identity(repo));
+      const worker = spawnHeartbeatWorker(created.runDir, created.ownerToken, {
+        GROUNDWORK_VALIDATION_BEAT_MS: '100',
+      });
+      try {
+        waitFor(() => heartbeatState(created.runDir).registered, 15000, 'heartbeat registration');
+        const beat = heartbeatState(created.runDir);
+        // The worker is spawned directly by this test process (node, not a
+        // shell): the ancestry walk anchors to this process.
+        assert.ok(beat.anchor, 'worker must record an owner anchor');
+        assert.strictEqual(beat.anchor.pid, process.pid);
+        assert.strictEqual(beat.anchor.origin, 'ancestry');
+        assert.strictEqual(helper.heartbeatAnchorAlive(beat), true);
+        const state = JSON.parse(
+          fs.readFileSync(path.join(created.runDir, '.validation-session.json'), 'utf8'),
+        );
+        assert.strictEqual(helper.sessionLiveness(state), 'live');
+        assert.throws(() => helper.openValidationSession(identity(repo)), /already active/);
+      } finally {
+        killAndWait(worker);
+      }
+    } finally {
+      fs.rmSync(repo.root, { recursive: true, force: true });
+    }
+  });
+
+  test('an anchored worker self-stops when its owner dies and the session turns stale without waiting', () => {
+    const helper = require(HELPER);
+    const processIdentity = require(path.resolve(__dirname, '..', 'lib', 'process-identity.js'));
+    const repo = fixture();
+    try {
+      const created = helper.openValidationSession(identity(repo));
+      // The anchor is a short-lived process: capture its identity, kill it,
+      // and the worker — started with the explicit flag pair — must conclude
+      // within two beats that its owning session is gone.
+      const anchor = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], { stdio: 'ignore' });
+      const anchorStart = processIdentity.processStartIdentity(anchor.pid);
+      killAndWait(anchor);
+
+      const worker = spawnHeartbeatWorker(created.runDir, created.ownerToken, {
+        GROUNDWORK_VALIDATION_BEAT_MS: '100',
+      }, ['--owner-pid', String(anchor.pid), '--owner-process-start', anchorStart]);
+      try {
+        waitFor(() => heartbeatState(created.runDir).registered, 15000, 'heartbeat registration');
+        const registered = heartbeatState(created.runDir);
+        assert.strictEqual(registered.anchor.pid, anchor.pid);
+        assert.strictEqual(registered.anchor.origin, 'flag');
+
+        waitFor(() => {
+          const beat = heartbeatState(created.runDir);
+          return beat.stopped && beat.stopReason === 'owner-gone';
+        }, 15000, 'owner-gone self-stop');
+        waitFor(() => !processAlive(worker.pid), 15000, 'worker exit after owner-gone');
+
+        // No staleness wait: the dead anchor (and the exited worker) make the
+        // session reclaimable immediately.
+        const state = JSON.parse(
+          fs.readFileSync(path.join(created.runDir, '.validation-session.json'), 'utf8'),
+        );
+        assert.strictEqual(helper.sessionLiveness(state), 'stale');
+        const reclaimed = helper.openValidationSession(identity(repo));
+        assert.strictEqual(reclaimed.status, 'reclaimed');
       } finally {
         killAndWait(worker);
       }
@@ -1106,6 +1180,163 @@ describe('capability ownership lifecycle (multi-process)', () => {
     } finally {
       fs.rmSync(repo.root, { recursive: true, force: true });
     }
+  });
+});
+
+describe('owner anchor (orphan detection)', () => {
+  test('an orphaned worker (beating, dead anchor) is stale even while provably alive', () => {
+    const helper = require(HELPER);
+    const processIdentity = require(path.resolve(__dirname, '..', 'lib', 'process-identity.js'));
+    const now = new Date().toISOString();
+    const liveHeartbeat = {
+      registered: true,
+      pid: process.pid,
+      host: os.hostname(),
+      processStart: processIdentity.processStartIdentity(process.pid),
+      startedAt: now,
+      lastBeat: now,
+      graceUntil: now,
+      stopped: false,
+    };
+    const withAnchor = (anchor) => ({
+      stage: 'review-batch-complete',
+      owner: { terminal: false, heartbeat: { ...liveHeartbeat, anchor } },
+    });
+
+    // Live worker + provably dead anchor: an orphaned loop, stale immediately.
+    const deadAnchor = { pid: 424242, host: os.hostname(), processStart: 'proc:1', origin: 'ancestry' };
+    assert.strictEqual(helper.sessionLiveness(withAnchor(deadAnchor)), 'stale');
+    assert.strictEqual(helper.heartbeatAnchorAlive({ ...liveHeartbeat, anchor: deadAnchor }), false);
+    // Live worker + live anchor (this test process): live.
+    const liveAnchor = { pid: process.pid, host: os.hostname(), processStart: liveHeartbeat.processStart, origin: 'ancestry' };
+    assert.strictEqual(helper.sessionLiveness(withAnchor(liveAnchor)), 'live');
+    assert.strictEqual(helper.heartbeatAnchorAlive({ ...liveHeartbeat, anchor: liveAnchor }), true);
+    // Foreign-host anchor: never probed, never reaped while fresh.
+    assert.strictEqual(helper.sessionLiveness(withAnchor({ ...deadAnchor, host: 'definitely-not-this-host' })), 'live');
+    // Malformed anchor: undecidable, the recorded beat governs.
+    assert.strictEqual(helper.sessionLiveness(withAnchor({ pid: 'x', host: os.hostname() })), 'live');
+    assert.strictEqual(helper.heartbeatAnchorAlive({ ...liveHeartbeat, anchor: { pid: 'x', host: os.hostname() } }), null);
+    // No anchor at all (legacy registration): previous semantics.
+    assert.strictEqual(helper.sessionLiveness(withAnchor(null)), 'live');
+    assert.strictEqual(helper.heartbeatAnchorAlive(liveHeartbeat), null);
+  });
+
+  test('a stopped heartbeat can be re-registered by the same owner (resumed restart)', () => {
+    const helper = require(HELPER);
+    const repo = fixture();
+    try {
+      const created = helper.openValidationSession(identity(repo));
+      const stopped = helper.heartbeatStop(created.runDir, created.ownerToken, 'manual');
+      assert.strictEqual(stopped.owner.heartbeat.stopped, true);
+      assert.strictEqual(stopped.owner.heartbeat.stopReason, 'manual');
+
+      // A stop is not terminal: the same capability may restart the worker.
+      const restarted = helper.heartbeatRegister(created.runDir, created.ownerToken, null);
+      const beat = restarted.owner.heartbeat;
+      assert.strictEqual(beat.registered, true);
+      assert.strictEqual(beat.stopped, false);
+      assert.strictEqual(beat.stopReason, null);
+      assert.strictEqual(beat.pid, process.pid);
+      assert.strictEqual(beat.anchor, null, 'an in-process register with no anchor clears any prior anchor');
+    } finally {
+      fs.rmSync(repo.root, { recursive: true, force: true });
+    }
+  });
+
+  test('owner anchor resolution: flags, environment, ancestry walk', () => {
+    const helper = require(HELPER);
+    const processIdentity = require(path.resolve(__dirname, '..', 'lib', 'process-identity.js'));
+    const selfStart = processIdentity.processStartIdentity(process.pid);
+
+    // Explicit pair wins and is trusted verbatim.
+    assert.deepStrictEqual(
+      helper.resolveOwnerAnchor({ ownerPid: '424242', ownerProcessStart: 'proc:99' }),
+      { pid: 424242, processStart: 'proc:99', origin: 'flag' },
+    );
+    // Flag pid without a start is probed: a dead pid refuses to start.
+    assert.throws(() => helper.resolveOwnerAnchor({ ownerPid: '424242' }), /not running/);
+    // A live flag pid probes its identity.
+    assert.deepStrictEqual(
+      helper.resolveOwnerAnchor({ ownerPid: String(process.pid) }),
+      { pid: process.pid, processStart: selfStart, origin: 'flag' },
+    );
+    // Invalid pid spelling is rejected rather than guessed.
+    assert.throws(() => helper.resolveOwnerAnchor({ ownerPid: 'zero' }), /positive integer/);
+
+    const previousPid = process.env.GROUNDWORK_VALIDATION_ANCHOR_PID;
+    const previousStart = process.env.GROUNDWORK_VALIDATION_ANCHOR_START;
+    process.env.GROUNDWORK_VALIDATION_ANCHOR_PID = String(process.pid);
+    process.env.GROUNDWORK_VALIDATION_ANCHOR_START = selfStart;
+    try {
+      // The runner-provided environment pair anchors when no flags are given.
+      assert.deepStrictEqual(helper.resolveOwnerAnchor({}), { pid: process.pid, processStart: selfStart, origin: 'env' });
+      // Garbage environment falls through to the ancestry walk (never throws).
+      process.env.GROUNDWORK_VALIDATION_ANCHOR_PID = 'not-a-number';
+      delete process.env.GROUNDWORK_VALIDATION_ANCHOR_START;
+      const walked = helper.resolveOwnerAnchor({});
+      assert.ok(
+        walked === null || (walked.origin === 'ancestry' && Number.isInteger(walked.pid)),
+        `unexpected walk result: ${JSON.stringify(walked)}`,
+      );
+    } finally {
+      if (previousPid === undefined) delete process.env.GROUNDWORK_VALIDATION_ANCHOR_PID;
+      else process.env.GROUNDWORK_VALIDATION_ANCHOR_PID = previousPid;
+      if (previousStart === undefined) delete process.env.GROUNDWORK_VALIDATION_ANCHOR_START;
+      else process.env.GROUNDWORK_VALIDATION_ANCHOR_START = previousStart;
+    }
+  });
+
+  test('firstNonShellAncestor skips shells and wrappers and stops conservatively', () => {
+    const processIdentity = require(path.resolve(__dirname, '..', 'lib', 'process-identity.js'));
+    const chain = {
+      100: { ppid: 200, name: 'bash' },
+      200: { ppid: 300, name: '/usr/bin/env' },
+      300: { ppid: 1, name: 'zcode-cli' },
+    };
+    const identityOf = (pid) => (pid === 300 ? 'identity-of-300' : 'other');
+    const seams = {
+      ancestorSnapshot: (pid) => chain[pid] || null,
+      processStartIdentity: identityOf,
+    };
+
+    // Past the shell and the env wrapper, onto the first real ancestor.
+    assert.deepStrictEqual(
+      processIdentity.firstNonShellAncestor(100, 8, seams),
+      { pid: 300, processStart: 'identity-of-300' },
+    );
+    // Shells all the way to init: no anchor.
+    const shells = { 100: { ppid: 200, name: 'zsh' }, 200: { ppid: 1, name: 'sh' } };
+    assert.strictEqual(
+      processIdentity.firstNonShellAncestor(100, 8, {
+        ancestorSnapshot: (pid) => shells[pid] || null,
+        processStartIdentity: identityOf,
+      }),
+      null,
+    );
+    // A non-shell ancestor whose identity cannot be probed: null, never guessed.
+    assert.strictEqual(
+      processIdentity.firstNonShellAncestor(100, 8, {
+        ancestorSnapshot: () => ({ ppid: 1, name: 'node' }),
+        processStartIdentity: () => null,
+      }),
+      null,
+    );
+    // An unprobeable step stops the walk.
+    assert.strictEqual(
+      processIdentity.firstNonShellAncestor(100, 8, {
+        ancestorSnapshot: () => null,
+        processStartIdentity: identityOf,
+      }),
+      null,
+    );
+    // init is never an anchor and is never probed.
+    assert.strictEqual(
+      processIdentity.firstNonShellAncestor(1, 8, {
+        ancestorSnapshot: () => { throw new Error('must not probe init'); },
+        processStartIdentity: identityOf,
+      }),
+      null,
+    );
   });
 });
 

@@ -523,6 +523,107 @@ describe('check: resume_at classification', () => {
     }
   });
 
+  test('an orphaned worker (beating, dead anchor) is not a standdown', () => {
+    const root = tempRepo();
+    try {
+      initRepo(root);
+      const worktree = makeTaskWorktree(root);
+      const baseSha = git(root, 'rev-parse', 'HEAD');
+      const taskHead = git(worktree, 'rev-parse', 'HEAD');
+      const { spawn } = require('child_process');
+      const live = spawn('sleep', ['30'], { stdio: 'ignore', detached: true });
+      const { processStartIdentity } = require(path.join(PLUGIN_ROOT, 'lib', 'process-identity'));
+      const start = processStartIdentity(live.pid);
+      const nowIso = new Date().toISOString();
+      writeSessionRecord(root, {
+        baseHead: baseSha, startHead: taskHead, stage: 'review-batch-complete',
+        heartbeat: {
+          registered: true, lastBeat: nowIso,
+          host: os.hostname(), pid: live.pid, processStart: start,
+          anchor: { pid: 4194303, host: os.hostname(), processStart: 'proc:1', origin: 'ancestry' },
+        },
+      });
+      const result = check(root);
+      // The worker provably beats on, but its owning session is provably
+      // dead: an orphan is not a live owner, so no standdown of any kind.
+      assert.strictEqual(result.live_owner, 'none');
+      assert.strictEqual(result.live_owner_reason, 'heartbeat-orphaned');
+      assert.strictEqual(result.validation_session.heartbeat_worker_alive, true);
+      assert.strictEqual(result.validation_session.heartbeat_anchor_alive, false);
+      assert.strictEqual(result.validation_session.heartbeat_worker_pid, live.pid);
+      assert.strictEqual(result.resume_at, 'validate');
+      assert.ok(result.evidence.some((line) => line.includes('orphan')));
+      process.kill(live.pid, 'SIGKILL');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('a hard standdown with a persisted capability file offers the paste-ready stop recipe', () => {
+    const root = tempRepo();
+    try {
+      initRepo(root);
+      const worktree = makeTaskWorktree(root);
+      const baseSha = git(root, 'rev-parse', 'HEAD');
+      const taskHead = git(worktree, 'rev-parse', 'HEAD');
+      const { spawn } = require('child_process');
+      const live = spawn('sleep', ['30'], { stdio: 'ignore', detached: true });
+      const { processStartIdentity } = require(path.join(PLUGIN_ROOT, 'lib', 'process-identity'));
+      const start = processStartIdentity(live.pid);
+      const nowIso = new Date().toISOString();
+      const record = writeSessionRecord(root, {
+        baseHead: baseSha, startHead: taskHead, stage: 'review-batch-complete',
+        heartbeat: {
+          registered: true, lastBeat: nowIso,
+          host: os.hostname(), pid: live.pid, processStart: start,
+        },
+      });
+      // Legacy-style record: a live worker, no anchor, and the manual
+      // capability file a real open persists beside the run directory.
+      const capabilityFile = path.join(path.dirname(record.runDir), `manual-capability-${record.state.runId}.json`);
+      fs.mkdirSync(path.dirname(capabilityFile), { recursive: true });
+      fs.writeFileSync(capabilityFile, '0123456789abcdef0123456789abcdef0123456789abcdef01\n', { mode: 0o600 });
+      const result = check(root, { takeOver: true });
+      assert.strictEqual(result.live_owner_reason, 'heartbeat-worker-alive');
+      assert.strictEqual(result.resume_at, 'conflict');
+      assert.ok(result.evidence.some((line) => line.includes('heartbeat-stop') && line.includes(capabilityFile)),
+        `expected the stop recipe in evidence: ${JSON.stringify(result.evidence)}`);
+      process.kill(live.pid, 'SIGKILL');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('a hard standdown without a capability file advises killing the leaked worker', () => {
+    const root = tempRepo();
+    try {
+      initRepo(root);
+      const worktree = makeTaskWorktree(root);
+      const baseSha = git(root, 'rev-parse', 'HEAD');
+      const taskHead = git(worktree, 'rev-parse', 'HEAD');
+      const { spawn } = require('child_process');
+      const live = spawn('sleep', ['30'], { stdio: 'ignore', detached: true });
+      const { processStartIdentity } = require(path.join(PLUGIN_ROOT, 'lib', 'process-identity'));
+      const start = processStartIdentity(live.pid);
+      const nowIso = new Date().toISOString();
+      writeSessionRecord(root, {
+        baseHead: baseSha, startHead: taskHead, stage: 'review-batch-complete',
+        heartbeat: {
+          registered: true, lastBeat: nowIso,
+          host: os.hostname(), pid: live.pid, processStart: start,
+        },
+      });
+      const result = check(root);
+      assert.strictEqual(result.live_owner_reason, 'heartbeat-worker-alive');
+      assert.strictEqual(result.resume_at, 'conflict');
+      assert.ok(result.evidence.some((line) => line.includes('kill the worker') && line.includes(String(live.pid))),
+        `expected the kill advice in evidence: ${JSON.stringify(result.evidence)}`);
+      process.kill(live.pid, 'SIGKILL');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('a stale heartbeat does not stand down', () => {
     const root = tempRepo();
     try {
@@ -728,6 +829,39 @@ describe('sweep', () => {
       const result = makeResume().sweepTaskWorktrees({ repoRoot: root, projectRoot: root, projectName: '' });
       assert.strictEqual(result.cleanable.length, 0);
       assert.strictEqual(result.ignored_live.length, 1);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('an orphaned validation session stops blocking the sweep and is named in needs_review', () => {
+    const root = tempRepo();
+    try {
+      initRepo(root);
+      const worktree = makeTaskWorktree(root);
+      setStatus(worktree, 'TASK-004', 'Complete');
+      git(worktree, 'add', '-A');
+      git(worktree, 'commit', '-m', 'TASK-004: Mark task complete');
+      const baseSha = git(root, 'rev-parse', 'HEAD');
+      const taskHead = git(worktree, 'rev-parse', 'HEAD');
+      const { spawn } = require('child_process');
+      const live = spawn('sleep', ['30'], { stdio: 'ignore', detached: true });
+      const { processStartIdentity } = require(path.join(PLUGIN_ROOT, 'lib', 'process-identity'));
+      const start = processStartIdentity(live.pid);
+      writeSessionRecord(root, {
+        baseHead: baseSha, startHead: taskHead, stage: 'review-batch-complete',
+        heartbeat: {
+          registered: true, lastBeat: new Date().toISOString(),
+          host: os.hostname(), pid: live.pid, processStart: start,
+          anchor: { pid: 4194303, host: os.hostname(), processStart: 'proc:1', origin: 'ancestry' },
+        },
+      });
+      const result = makeResume().sweepTaskWorktrees({ repoRoot: root, projectRoot: root, projectName: '' });
+      assert.strictEqual(result.ignored_live.length, 0, `expected no ignored_live: ${JSON.stringify(result)}`);
+      assert.strictEqual(result.cleanable.length, 0);
+      assert.strictEqual(result.needs_review.length, 1);
+      assert.match(result.needs_review[0].reason, /orphaned validation worker/);
+      process.kill(live.pid, 'SIGKILL');
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

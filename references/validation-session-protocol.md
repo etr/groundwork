@@ -14,11 +14,16 @@ A validation session (schema version 2) is owned by a **bearer capability**, not
 - Liveness is a **heartbeat worker**, not the brief `open` process. Start it before long gate/reviewer/fixer work and stop it through trap/finalization handling:
 
 ```text
-validation-session.js heartbeat-loop --run-dir <run_dir> --capability-file <file>
+validation-session.js heartbeat-loop --run-dir <run_dir> --capability-file <file> [--owner-pid <pid> --owner-process-start <identity>]
 validation-session.js heartbeat-stop --run-dir <run_dir> --capability-file <file>
 ```
 
 The loop registers its PID and process-start identity, emits one `{"status":"heartbeat-ready"}` line, refreshes the lease each interval (default 15 s, `GROUNDWORK_VALIDATION_BEAT_MS`), and exits when the session completes, its stop is recorded, or its capability is revoked by a successor. A session is **live** while its registered worker's last beat is inside the staleness window (default 2 h, `GROUNDWORK_VALIDATION_STALE_MS`). A just-opened or just-reclaimed session is protected by a startup grace window (default 60 s, `GROUNDWORK_VALIDATION_GRACE_MS`) until its worker registers.
+
+- **Owner anchor (orphan detection):** the worker also records an *anchor* — the process whose death means the owning session is dead. Resolution order: explicit `--owner-pid`/`--owner-process-start`, then the runner-provided `GROUNDWORK_VALIDATION_ANCHOR_PID` + `GROUNDWORK_VALIDATION_ANCHOR_START` environment pair (the runner passes its own identity to its validate-phase children — public process identity only, never the capability), then a bounded walk to the nearest non-shell ancestor (the harness process for an interactive session; shells and wrappers like `env`/`nohup` are skipped). A worker that resolves no anchor (fully detached spawn) records none. Two rules follow from the anchor:
+  - A still-beating worker whose recorded anchor is **provably dead** (identity mismatch or process gone — foreign hosts and malformed records are never probed) is an **orphan**: the session is treated as stale immediately, fresh beat notwithstanding, in both the lock's takeover view and the resume gate. The lease follows the owning session, not the loop it spawned. The worker itself self-stops after two consecutive dead-anchor beats (`heartbeat.stopReason: "owner-gone"`, loop exit 0), so a leaked loop converts itself into a stale session within two beat intervals — no waiting out the 2 h window, no killing.
+  - Re-registering after an orderly stop is how a resumed session restarts its worker: a stop is not terminal, the same epoch and capability authenticate the re-register, and the new registration replaces the worker identity, the anchor, and the stop fields.
+
 
 - **Takeover:** a stale owner (no fresh heartbeat, grace expired) is reclaimed by simply opening again — under the slot lock the claimant revalidates staleness, mints epoch+1 with a fresh capability, and revokes the old one. An old worker or orchestrator holding the previous capability can no longer write. A stale `fixer-inflight` session is recovered as `fixer-prepared` for the successor.
 - **Redaction:** the token never appears in state JSON, status output, reporter events, error text, or diagnostics. Runner mode persists its continuity capability only in a private `runner-capability.json` (mode 0600) beside the slot — never in reporter artifacts.
