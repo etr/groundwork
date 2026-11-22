@@ -106,7 +106,7 @@ The general slop checklist applies; the authoritative mobile shape list lives in
 - The same pixel-identical skin on iOS and Android (the cross-platform tell) with no adaptation decision recorded
 - Web-ported idioms: hover tooltips, tiny text links, pointer-precision targets
 
-## Comparison & Preview Artifacts (Steps 5, 7b, 7d, 8b)
+## Comparison & Preview Artifacts (Steps 5, 7b, 7c, 7d, 8b, 8c)
 
 All comparison/preview artifacts remain self-contained HTML, rendered as **phone-frame mocks** that double as implementation references for the building agent:
 
@@ -115,6 +115,8 @@ All comparison/preview artifacts remain self-contained HTML, rendered as **phone
 - Light and dark variants side by side (dark is not optional in comparisons)
 - System states shown: keyboard raised over the form, largest Dynamic Type on the key screen
 - When platform postures diverge (e.g., iOS sheet vs Android bottom-sheet), render both columns rather than averaging them
+
+**Wireframes (Step 8c)** follow the same mock form per screen: each screen of the app as a phone-frame mock — navigation architecture (tab bar/stack/sheet), content, and actions composed from the chosen patterns. Variant states (empty/loading/error/offline) are separate frames applying the Step 7 patterns; form screens show the keyboard raised; key screens show dark variants. Where iOS and Android postures diverge on a screen, render both frames — the wireframe set is the screen blueprint the building agent implements against.
 
 ## Sources
 

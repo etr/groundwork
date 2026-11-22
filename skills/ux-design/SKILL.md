@@ -78,10 +78,14 @@ The tonal direction is derived from the product's persona, vision, and competiti
 - **Output:**
   - `{{specs_dir}}/design_system.md`
   - `{{specs_dir}}/ux-preview.html` (visual reference, regenerated when design system changes)
-- **Transient:**
-  - `{{specs_dir}}/design-comparison.html` (color/font comparison, deleted after identity is chosen)
-  - `{{specs_dir}}/atmosphere-comparison.html` (atmosphere comparison, deleted after atmosphere is chosen)
-  - `{{specs_dir}}/pattern-showcase.html` (complete system preview, deleted after Step 8 documentation)
+  - `{{specs_dir}}/wireframes.html` (screen-by-screen wireframes of the app's experiences, Step 8c)
+- **Design exploration (retained):**
+  - `{{specs_dir}}/proposed-designs/design-comparison.html` (color/font comparison, kept as record of the identity choice)
+  - `{{specs_dir}}/proposed-designs/atmosphere-comparison.html` (atmosphere comparison, kept as record of the atmosphere choice)
+  - `{{specs_dir}}/proposed-designs/layout-comparison.html` (layout architecture comparison, kept as record of the layout choice)
+  - `{{specs_dir}}/proposed-designs/pattern-showcase.html` (complete system preview, kept as the pre-documentation reference)
+
+  Comparison and showcase artifacts are generated **directly into `{{specs_dir}}/proposed-designs/`** and never deleted — they are the visual evidence behind the decision log. Files in `proposed-designs/` reflect the options as they were when the decision was made; they are historical proposals, not the current system (that's `design_system.md` + `ux-preview.html`).
 
 ## Step 0: Resolve Project Context
 
@@ -265,7 +269,7 @@ Aim for 2-4 candidates total (avoids decision fatigue). Include user-provided co
 
 ### Step 5: Generate Visual Comparison
 
-Generate `{{specs_dir}}/design-comparison.html` — a self-contained file that renders identical UI components under each candidate identity option, side-by-side, with a decision helper table.
+Generate `{{specs_dir}}/proposed-designs/design-comparison.html` — a self-contained file that renders identical UI components under each candidate identity option, side-by-side, with a decision helper table.
 
 **Architecture — data-driven, single render function:**
 
@@ -311,7 +315,7 @@ Generate `{{specs_dir}}/design-comparison.html` — a self-contained file that r
 
 **After generating:**
 
-> "I've generated the visual comparison at `{{specs_dir}}/design-comparison.html`. Open it in your browser to see the identity options side-by-side."
+> "I've generated the visual comparison at `{{specs_dir}}/proposed-designs/design-comparison.html`. Open it in your browser to see the identity options side-by-side."
 
 **Handle evaluation feedback:**
 - User picks a winner → Document as BRD decisions, define semantic colors and type scale, proceed to Step 6
@@ -354,7 +358,7 @@ Type scale based on chosen body font (web default — `tui`: the text-style ramp
 
 See `${CLAUDE_PLUGIN_ROOT}/references/design-system/typography-guide.md` for OpenType features, dark mode typography adjustments, and font selection anti-patterns.
 
-Delete `{{specs_dir}}/design-comparison.html` after the palette and typography are documented.
+Keep `{{specs_dir}}/proposed-designs/design-comparison.html` as the record of the identity decision — link it from the BRD decision entry (e.g., "See `proposed-designs/design-comparison.html` for rejected options").
 
 ### Step 6: Brand Voice & UX Writing
 
@@ -464,7 +468,7 @@ See `${CLAUDE_PLUGIN_ROOT}/references/design-system/interaction-design-guide.md`
 - User questions a pattern → Explain reasoning, adjust if needed
 - User has strong atmosphere preference already → Skip 7b, go to 7d
 
-#### Step 7b: Generate Atmosphere Comparison (`{{specs_dir}}/atmosphere-comparison.html`)
+#### Step 7b: Generate Atmosphere Comparison (`{{specs_dir}}/proposed-designs/atmosphere-comparison.html`)
 
 Generate a self-contained HTML file that renders the same identity (colors, fonts) under each atmosphere direction side-by-side, with mini page layouts showing how each atmosphere *feels* in practice. In every modality the mock must double as an implementation reference — token names and values visible in the file, not just visual impressions: for `tui`, terminal-frame mocks (monospace grid, token + hex + ANSI-fallback values, 80×24 plus one degraded size, light/dark variants); for `mobile`, phone-frame mocks at the smallest supported width, dp-annotated, with dark variants. See the modality guides → Comparison & Preview Artifacts.
 
@@ -493,14 +497,14 @@ Generate a self-contained HTML file that renders the same identity (colors, font
 
 **After generating:**
 
-> "Open `{{specs_dir}}/atmosphere-comparison.html` to see the atmosphere directions side-by-side. Same identity in every column — different feel."
+> "Open `{{specs_dir}}/proposed-designs/atmosphere-comparison.html` to see the atmosphere directions side-by-side. Same identity in every column — different feel."
 
 **Handle evaluation feedback:**
-- User picks a winner → Document as UXD decisions, delete file, proceed to 7d
+- User picks a winner → Document as UXD decisions (linking `proposed-designs/atmosphere-comparison.html` for the rejected directions), proceed to 7d
 - User wants tweaks → Regenerate with adjustments
 - User likes elements from multiple → Regenerate a mixed option
 
-#### Step 7c: Propose Layout Architecture + Generate Comparison (`{{specs_dir}}/layout-comparison.html`)
+#### Step 7c: Propose Layout Architecture + Generate Comparison (`{{specs_dir}}/proposed-designs/layout-comparison.html`)
 
 **Web-specific step — adapt for tui/mobile:** scroll choreography has no tui/mobile equivalent; run this step as a **screen architecture comparison** instead — `tui`: pane-layout + degradation-ladder candidates; `mobile`: navigation-architecture (tab/stack/sheet) candidates. Same file mechanics (data-driven, single render function, decision helper table).
 
@@ -543,13 +547,13 @@ See `${CLAUDE_PLUGIN_ROOT}/references/design-system/layout-architecture-guide.md
 
 5. **Self-contained** — all CSS/JS inline, Google Fonts via `<link>`, no external dependencies.
 
-**Tell the user** to open `{{specs_dir}}/layout-comparison.html` in their browser, then present the choice:
+**Tell the user** to open `{{specs_dir}}/proposed-designs/layout-comparison.html` in their browser, then present the choice:
 
 **Present via AskUserQuestion:**
 ```json
 {
   "questions": [{
-    "question": "I've generated a visual comparison at {{specs_dir}}/layout-comparison.html — open it in your browser to see each strategy rendered. Which layout architecture fits your product best?",
+    "question": "I've generated a visual comparison at {{specs_dir}}/proposed-designs/layout-comparison.html — open it in your browser to see each strategy rendered. Which layout architecture fits your product best?",
     "header": "Layout arch",
     "options": [
       {
@@ -575,7 +579,7 @@ See `${CLAUDE_PLUGIN_ROOT}/references/design-system/layout-architecture-guide.md
 - User wants tweaks → Adjust the comparison file and re-present
 - User wants elements from multiple → Propose a hybrid, regenerate comparison showing the hybrid alongside the originals, verify pattern compatibility using the guide's combination warnings
 
-#### Step 7d: Generate Pattern Showcase (`{{specs_dir}}/pattern-showcase.html`)
+#### Step 7d: Generate Pattern Showcase (`{{specs_dir}}/proposed-designs/pattern-showcase.html`)
 
 Generate a single-page preview of the complete finalized system — identity + chosen atmosphere + all functional patterns in one responsive page. This is NOT a comparison — one full-width layout showing how everything works together. For `tui`/`mobile`, the showcase demonstrates the chosen screen architecture (pane layout / navigation architecture) in the modality's mock form.
 
@@ -604,7 +608,7 @@ Generate a single-page preview of the complete finalized system — identity + c
 
 **After generating:**
 
-> "Open `{{specs_dir}}/pattern-showcase.html` to see the complete system in action. Scroll through and hover over elements to feel the interaction character."
+> "Open `{{specs_dir}}/proposed-designs/pattern-showcase.html` to see the complete system in action. Scroll through and hover over elements to feel the interaction character."
 
 **Handle evaluation feedback:**
 - User approves → Proceed to Step 8
@@ -623,7 +627,7 @@ Populate all sections:
 3. **UX Patterns** - Navigation, loading, errors, forms, responsive, motion
 4. **Decision Log** - All decisions with context and rationale
 
-Delete `{{specs_dir}}/pattern-showcase.html` after the design system document is written.
+`{{specs_dir}}/proposed-designs/pattern-showcase.html` stays in place — it is the pre-documentation reference showing the system as approved in 7d.
 
 ### Step 8b: Generate UX Preview (`{{specs_dir}}/ux-preview.html`)
 
@@ -671,6 +675,43 @@ Present summary for review, then write the file.
 > **UX Patterns:** [Nav type], [Loading strategy], [Error approach], [Motion character]
 >
 > Ready to document this in `{{specs_dir}}/design_system.md`?"
+
+### Step 8c: Generate App Wireframes (`{{specs_dir}}/wireframes.html`)
+
+The system-level artifacts show *how components look and behave*; this step shows *how the app composes them* — a wireframe of every screen the product's experience consists of, rendered with the finalized design system. This is where pattern gaps surface: compositing patterns onto real screens exposes states nobody defined (a settings screen needs a destructive-action pattern, a list screen needs bulk selection).
+
+**Modality check:** web defaults below. For `tui`, each screen is a terminal-frame mock per the tui guide; for `mobile`, a phone-frame mock per the mobile guide — see `Comparison & Preview Artifacts` in the modality guides.
+
+**1. Derive the screen inventory from the PRD and architecture:**
+- Personas + features/EARS requirements → the screens that make up each experience (onboarding, home/dashboard, core feature screens, settings, …)
+- Architecture doc → surface constraints that split or merge screens
+- Every screen gets its **primary state** (happy path). Screens on primary flows also get their **key variant states** — empty, loading, error — applying the pattern decisions from Step 7
+- Cap the first pass at ~8–12 screens; note anything deferred
+
+**2. Confirm the inventory** via `AskUserQuestion` before generating — let the user add missing screens, drop low-priority ones, or trim variant states.
+
+**3. Generate a single self-contained `{{specs_dir}}/wireframes.html`** — hi-fi, rendered with the documented tokens (not grayscale boxes). The value is flow and layout composition, and the file doubles as an implementation reference for task work. Same data-driven architecture as the other artifacts:
+
+1. **JS screens array** — each entry: `id`, `name`, `flow` (which experience it belongs to), `variant` (primary/empty/loading/error, where applicable), `notes` (what this screen must accomplish), `content` (real placeholder content from the product domain — no lorem ipsum)
+
+2. **Screen-switcher navigation** — sidebar or top nav listing screens grouped by flow, variant states nested under their screen
+
+3. **Single `renderScreen(screen)` function** — composites the chosen patterns (navigation pattern, layout architecture from Step 7c, card treatment, forms, empty/loading/error patterns) onto each screen's actual layout
+
+4. **Screen annotations** — each screen shows its name, flow, variant label, and a one-line note of which patterns it exercises
+
+5. **Self-contained** — CSS/JS inline, tokens as CSS custom properties from the documented system, Google Fonts via `<link>`. Responsive. `prefers-reduced-motion` respected.
+
+**Maintenance:** `{{specs_dir}}/wireframes.html` is regenerated whenever the design system changes, same as `ux-preview.html` (`source-ux-design-from-code` does both).
+
+**After generating:**
+
+> "Open `{{specs_dir}}/wireframes.html` to walk through every screen of the app — use the switcher to move between flows and states."
+
+**Handle evaluation feedback:**
+- User spots a missing screen → add it to the screens array, regenerate
+- User spots a pattern gap (a state or interaction no pattern covers) → record it as a UXD decision in `{{specs_dir}}/design_system.md`, regenerate
+- User wants layout changes → adjust the affected screen entries, regenerate
 
 ## Step 9: Suggest Next Step
 

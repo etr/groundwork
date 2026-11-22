@@ -111,7 +111,7 @@ The general slop checklist applies; the authoritative TUI shape list lives in `c
 - Key-hint bars that grow to show every binding on every screen instead of `?`-help
 - Spinners with 20 art frames; decorative frame-by-frame animations on ssh tools
 
-## Comparison & Preview Artifacts (Steps 5, 7b, 7d, 8b)
+## Comparison & Preview Artifacts (Steps 5, 7b, 7c, 7d, 8b, 8c)
 
 All comparison/preview artifacts remain self-contained HTML, rendered as **terminal-frame mocks**: a monospace grid inside terminal chrome. They must double as implementation references for the building agent:
 
@@ -120,6 +120,8 @@ All comparison/preview artifacts remain self-contained HTML, rendered as **termi
 - Render each candidate at 80×24 **and** one degraded size (e.g., 60×20 collapsed ladder rung)
 - Show light-bg and dark-bg variants side by side when the palette strategy is hybrid
 - WCAG contrast computed inline against the named reference themes (same as the web comparison files)
+
+**Wireframes (Step 8c)** follow the same mock form per screen: each screen of the app as a terminal-frame mock — pane layout, key-hint bar, status line all composed from the chosen patterns. Screens on primary flows render at 80×24 **and** their degradation-ladder rung (a screen that only works full-screen is a finding, not a wireframe). Variant states (empty/loading/error) are separate frames applying the Step 7 patterns. Same cell/token/ANSI triple-labeling, so the file is the screen blueprint the building agent implements against — not an impression.
 
 ## Sources
 

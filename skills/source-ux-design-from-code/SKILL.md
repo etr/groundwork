@@ -236,7 +236,8 @@ On approval:
 4. Maintain decision ID sequences (find highest DP/BRD/UXD-NNN, increment)
 5. Update "Last updated" timestamp
 6. If `{{specs_dir}}/ux-preview.html` exists, regenerate it to reflect the updated design system decisions
-7. Update "Status" if appropriate
+7. If `{{specs_dir}}/wireframes.html` exists, regenerate it too — the wireframes composite the design system onto the app's screens and go stale on any token/pattern change (Step 8c of `ux-design` for the format; screens and flows come from the PRD, so only regenerate screens that still exist)
+8. Update "Status" if appropriate
 
 **Important:**
 - New decisions get the next available ID in their prefix sequence
