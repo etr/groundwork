@@ -133,7 +133,7 @@ After:   [  ✓ Saved       ] → returns to [Save Changes]
 
 ```
 ┌─────────────────────────────────────────────────┐
-│ ⚠ Your session expired. [Log in again]    [×]  │
+│ ⚠ Your session expired. [Sign in]        [×]  │
 └─────────────────────────────────────────────────┘
 │                                                 │
 │              Normal page content                │
@@ -266,7 +266,7 @@ Step 1 of 3: Account Details
 │    │ This action cannot be   │       │
 │    │ undone.                 │       │
 │    │                         │       │
-│    │    [Cancel] [Delete]    │       │
+│    │    [ Keep ] [Delete]    │       │
 │    └─────────────────────────┘       │
 │                                      │
 └──────────────────────────────────────┘
@@ -281,7 +281,7 @@ Step 1 of 3: Account Details
 │ This action cannot be undone.       │
 │                                     │
 ├─────────────────────────────────────┤
-│    [Cancel]        [Delete]         │
+│    [ Keep ]       [Delete]         │
 └─────────────────────────────────────┘
 ```
 
@@ -537,7 +537,7 @@ A deliberate "not everyone, not yet" landing surface. Instead of a sign-up form,
 │    │  [ What brings you here  ]   │         │
 │    │  [ Who referred you      ]   │         │
 │    │                              │         │
-│    │            [ Submit ]        │         │
+│    │            [ Apply   ]        │         │
 │    └──────────────────────────────┘         │
 │                                             │
 │                       spring cohort · 4/7   │

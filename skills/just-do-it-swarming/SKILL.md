@@ -1,6 +1,6 @@
 ---
 name: just-do-it-swarming
-description: Execute all remaining tasks using agent teams for context isolation. Each task runs in its own session. Pass --project <name> to pin the monorepo package for this whole run. Pass --take-over to resume past a possibly-live prior session without asking. Pass --on-unrelated-failure stop-and-ask|expand-and-fix|ignore-and-merge to choose how validation handles gate failures confidently unrelated to the active project (default stop-and-ask). Usage /groundwork:just-do-it-swarming [--project name] [--parallel] [--take-over] [--on-unrelated-failure mode]
+description: Execute all remaining tasks with agent teams (one session per task). Optional flags - --project <name> pins the monorepo package for the whole run; --parallel runs independent tasks concurrently; --take-over resumes past a possibly-live prior session without asking; --on-unrelated-failure stop-and-ask|expand-and-fix|ignore-and-merge - how validation treats gate failures unrelated to the active project (default stop-and-ask).
 argument-hint: "[--project name] [--parallel] [--take-over] [--on-unrelated-failure stop-and-ask|expand-and-fix|ignore-and-merge]"
 allowed-tools: ["Read", "Edit", "Write", "Bash", "Glob", "Grep", "Task", "AskUserQuestion", "Skill"]
 disable-model-invocation: true
@@ -8,70 +8,50 @@ disable-model-invocation: true
 
 # Swarming Batch Task Execution
 
-Executes all remaining tasks using **agent teams** for context isolation. Each task runs in a separate teammate session with its own context window. Teammates are full Claude Code sessions that can spawn subagents (Plan, task-executor, 9 validators), solving the context accumulation problem of inline batch execution.
+Executes all remaining tasks using **agent teams** for context isolation. Each task runs in a separate teammate session with its own context window. Teammates are full Claude Code sessions that can spawn subagents (Plan, task-executor, the validation agents), solving the context accumulation problem of inline batch execution.
 
 **When to use this vs `/groundwork:just-do-it`:**
 - Use **this** (`/groundwork:just-do-it-swarming`) for large batches (>5 tasks) where context accumulation is a concern
 - Use **`/groundwork:just-do-it`** for small batches or when agent teams are not available
 
-**Requirement:** Agent teams must be enabled (`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1"` in settings.json `env` section).
+**Requirement:** Agent teams must be enabled. Step 2.5 verifies this and shows how to enable them.
 
 **Model:** Teammates spawn with `model: "opus"` for extended context.
 
 ## Pre-flight: Model Recommendation
 
-**Your current effort level is `{{effort_level}}`.**
+**Your current effort level is `{{effort_level}}`.** Skip this step silently if effort is `high`, `xhigh`, or `max` (the scale is `low` < `medium` < `high` < `xhigh` < `max`, so `xhigh` and `max` are already above `high`) AND you are Sonnet or Opus. Otherwise ask via `AskUserQuestion` (header "Model check"; options "Continue anyway" / "Cancel — I'll switch first"):
 
-Skip this step silently if effort is `high`, `xhigh`, or `max` (the scale is `low` < `medium` < `high` < `xhigh` < `max`, so `xhigh` and `max` are already above `high`) AND you are Sonnet or Opus.
-If effort is `low` or `medium` (i.e. below `high`), you MUST show the recommendation prompt — regardless of model.
-If you are not Sonnet or Opus, you MUST show the recommendation prompt - regardless of effort level.
+> "Do you want to switch? Team orchestration with worktree coordination across agents benefits from consistent reasoning.
+>
+> Recommended: Sonnet or Opus at high effort.
+>
+> To switch: cancel, run `/effort high` (and `/model sonnet` if on Haiku), then re-invoke this skill."
 
-Otherwise → use `AskUserQuestion`:
-
-```json
-{
-  "questions": [{
-    "question": "Do you want to switch? Team orchestration with worktree coordination across agents benefits from consistent reasoning.\n\nTo switch: cancel, run `/effort high` (and `/model sonnet` if on Haiku), then re-invoke this skill.",
-    "header": "Recommended: Sonnet or Opus at high effort",
-    "options": [
-      { "label": "Continue" },
-      { "label": "Cancel — I'll switch first" }
-    ],
-    "multiSelect": false
-  }]
-}
-```
-
-If the user selects "Cancel — I'll switch first": output the switching commands above and stop. Do not proceed with the skill.
+If the user selects "Cancel — I'll switch first": output the switching commands and stop. Do not proceed with the skill. Ask once per conversation: a skill invoked by another skill skips this step when the recommendation was already shown. In a non-interactive run (`--noninteractive`, `GROUNDWORK_RUNNER_MODE=true`, or `GROUNDWORK_BATCH_MODE=true`), skip the prompt and continue on the current model.
 
 ## Workflow
 
 ### Step 0: Resolve Project Context
 
-**Before loading tasks, ensure project context is resolved:**
-
 0. **Explicit project argument (highest precedence):** If the invocation arguments include `--project <name>` and `<name>` is configured in `.groundwork.yml`, that project is authoritative for this entire run. Resolve its root directly from `.groundwork.yml` (`<repo root>/<configured path>`); do not read or consult `{{project_name}}`. If the invocation arguments include `--on-unrelated-failure <mode>` (`stop-and-ask`, `expand-and-fix`, or `ignore-and-merge`), remember it for this entire run: it is recorded in each teammate spawn prompt (`ON UNRELATED FAILURE:` line). An invalid mode value → stop the run with a usage error.
-   - Do NOT invoke `select-project`, do NOT persist or change the stored selection, and do NOT run the CWD mismatch check below. Other sessions may be running concurrently on different packages and must not be disturbed by a global switch.
+   - Do NOT invoke `select-project` — it is interactive setup for a single session, so never run it when an explicit `--project` was provided — and do NOT persist or change the stored selection. Other sessions may be running concurrently on different packages and must not be disturbed by a global switch. (The CWD mismatch check below skips itself for an explicit `--project`.)
    - Substitute the resolved project's paths for the template vars everywhere below: `<project root>/specs` for `{{specs_dir}}` and `<project root>/.groundwork-plans` for `{{plans_dir}}`.
    - Thread the project explicitly through every downstream invocation instead of relying on the shared selection: call the worktree helper as `node ${CLAUDE_PLUGIN_ROOT}/lib/worktree-identity.js TASK-NNN --project <name>`, prefix other lib calls with `GROUNDWORK_PROJECT=<name>`, and record the project in each teammate spawn prompt (`ACTIVE PROJECT:` line) so teammates resolve the same project.
    - Then skip directly to Step 1.
 1. **Monorepo check:** Does `.groundwork.yml` exist at the repo root?
    - If yes → Is `{{project_name}}` non-empty?
-     - If empty → Invoke `Skill(skill="groundwork:select-project")` to select a project, then restart this skill. (`select-project` is interactive setup for a single session — never run it when an explicit `--project` was provided; item 0 already resolved the project in that case.)
+     - If empty → Invoke `Skill(skill="groundwork:select-project")` to select a project, then restart this skill.
      - If set → Project is `{{project_name}}`, specs at `{{specs_dir}}/`.
    - If no → Continue (single-project repo).
-2. **CWD mismatch check (monorepo only):**
-   - Skip if not in monorepo mode or if the project was just selected in item 1 above.
-   - If CWD is the repo root → fine, proceed.
-   - Check which project's path CWD falls inside (compare against all projects in `.groundwork.yml`).
-   - If CWD is inside the selected project's path → fine, proceed.
-   - If CWD is inside a different project's path → warn via `AskUserQuestion`:
+2. **CWD mismatch check (monorepo only):** skip it when the project was just selected or the invocation carried an explicit `--project`.
+   - Compare CWD against the project paths in `.groundwork.yml`: the repo root or the selected project's path → fine, proceed; no project's path → proceed without warning (shared directory).
+   - A different project's path → with `--noninteractive`, keep the selected project and continue; otherwise warn via `AskUserQuestion`:
      > "You're working from `<cwd>` (inside **[cwd-project]**), but the selected Groundwork project is **[selected-project]** (`[selected-project-path]/`). What would you like to do?"
      > - "Switch to [cwd-project]"
      > - "Stay with [selected-project]"
      If the user switches, invoke `Skill(skill="groundwork:select-project")`.
-   - If CWD doesn't match any project → proceed without warning (shared directory).
-3. Proceed with the resolved project context. All `{{specs_dir}}/` paths will resolve to the correct location.
+3. Proceed with the resolved project context.
 
 ### Step 1: Load and Analyze Tasks
 
@@ -91,7 +71,7 @@ If the user selects "Cancel — I'll switch first": output the switching command
 
 4. **Sweep and resume gate:** Run `node ${CLAUDE_PLUGIN_ROOT}/lib/task-resume.js sweep` (add `--project <name>` in monorepos) and auto-clean only the `cleanable` entries per `${CLAUDE_PLUGIN_ROOT}/references/task-resume-protocol.md`. An `In Progress` task whose `node ${CLAUDE_PLUGIN_ROOT}/lib/task-resume.js check <TASK-NNN>` reports existing work is in flight from a prior session — assign it to a teammate before any `Not Started` task (the embedded workflow's resume gate continues it at the right phase). Append `--take-over` to the `check` when this skill's invocation carried it; a soft standdown then proceeds without asking, while `heartbeat-worker-alive` still stands down.
 
-**Detection:** Check for file first (takes precedence), then directory.
+**Detection:** Check for a single file first (it takes precedence), then a directory. Read a directory as all its `.md` files recursively — `_index.md` first, then numerically-prefixed files, then alphabetically.
 
 ### Step 2: Present Summary and Confirm
 
@@ -108,7 +88,7 @@ Present a summary to the user:
 
 Each task runs in a **separate teammate session** with its own context window:
 - Teammates are full Claude Code sessions with the complete system prompt
-- Each teammate can spawn subagents (Plan, task-executor, 9 validation agents)
+- Each teammate can spawn subagents (Plan, task-executor, the validation agents)
 - Context is fully isolated between tasks — no accumulation in the lead's conversation
 - Changes merged after each task completes
 
@@ -310,7 +290,7 @@ Clean up the agent team, then report:
 - Lead context remained clean throughout execution
 
 ### Next Steps
-- Run `/source-product-specs-from-code` to update specs with any implementation changes
+- Run `/groundwork:source-product-specs-from-code` to update specs with any implementation changes
 - Plan next phase if milestone complete
 - Review merged changes with `git log --oneline -10`
 ```

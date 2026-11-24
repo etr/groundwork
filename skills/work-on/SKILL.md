@@ -1,6 +1,6 @@
 ---
 name: work-on
-description: skill to "execute a task", "work on task N", or "implement TASK-NNN" - orchestrates worktree isolation, TDD implementation, validation, and merge. Pass --take-over to resume past a possibly-live prior session without asking (a provably-live worker still refuses). Pass --on-unrelated-failure stop-and-ask|expand-and-fix|ignore-and-merge to choose how validation handles gate failures confidently unrelated to this task's project (default stop-and-ask).
+description: Execute a task ("execute a task", "work on task N", "implement TASK-NNN") - plan, implement with TDD in an isolated worktree, validate, merge. Optional flags - --take-over resumes past a possibly-live prior session without asking; --on-unrelated-failure stop-and-ask|expand-and-fix|ignore-and-merge - how validation treats gate failures unrelated to the active project (default stop-and-ask).
 requires: plan-task, implement-task, validate
 argument-hint: "[task-number] [--take-over] [--on-unrelated-failure stop-and-ask|expand-and-fix|ignore-and-merge]"
 ---
@@ -26,29 +26,15 @@ Wait for completion, a concrete blocker, or a required decision. Do not request 
 
 ## Pre-flight: Model Recommendation
 
-**Your current effort level is `{{effort_level}}`.**
+**Your current effort level is `{{effort_level}}`.** Skip this step silently if effort is `high`, `xhigh`, or `max` (the scale is `low` < `medium` < `high` < `xhigh` < `max`, so `xhigh` and `max` are already above `high`) AND you are Sonnet or Opus. Otherwise ask via `AskUserQuestion` (header "Model check"; options "Continue anyway" / "Cancel — I'll switch first"):
 
-Skip this step silently if effort is `high`, `xhigh`, or `max` (the scale is `low` < `medium` < `high` < `xhigh` < `max`, so `xhigh` and `max` are already above `high`) AND you are Sonnet or Opus.
-If effort is `low` or `medium` (i.e. below `high`), you MUST show the recommendation prompt — regardless of model.
-If you are not Sonnet or Opus, you MUST show the recommendation prompt — regardless of effort level.
+> "Do you want to switch? Task execution benefits from consistent multi-domain reasoning.
+>
+> Recommended: Sonnet or Opus at high effort.
+>
+> To switch: cancel, run `/effort high` (and `/model sonnet` if on Haiku), then re-invoke this skill."
 
-Otherwise → use `AskUserQuestion`:
-
-```json
-{
-  "questions": [{
-    "question": "Task execution benefits from consistent multi-domain reasoning.\n\nRecommended: Sonnet or Opus at high effort.\n\nTo switch: cancel, run `/effort high` (and `/model sonnet` if on Haiku), then re-invoke.",
-    "header": "Effort check",
-    "options": [
-      { "label": "Continue anyway" },
-      { "label": "Cancel — I'll switch first" }
-    ],
-    "multiSelect": false
-  }]
-}
-```
-
-If the user selects "Cancel — I'll switch first": output the switching commands and stop. Do not proceed with the skill.
+If the user selects "Cancel — I'll switch first": output the switching commands and stop. Do not proceed with the skill. Ask once per conversation: a skill invoked by another skill skips this step when the recommendation was already shown. In a non-interactive run (`--noninteractive`, `GROUNDWORK_RUNNER_MODE=true`, or `GROUNDWORK_BATCH_MODE=true`), skip the prompt and continue on the current model.
 
 ## Plan Mode Handling
 
@@ -74,7 +60,7 @@ If the user selects "Cancel — I'll switch first": output the switching command
 
 ## Step 0: Resolve Context
 
-1. **Check skip flag:** If session context contains `GROUNDWORK_EXECUTE_SKIP_TO_STEP_SEVEN=true`, set `plan_file_path = $GROUNDWORK_EXECUTE_PLAN_FILE` and skip directly to Step 3 (Implementation). Do NOT read the plan file's contents into this orchestrator's context — the implement-task skill will pass the path to the executor agent.
+1. **Check skip flag:** If session context contains `GROUNDWORK_EXECUTE_SKIP_TO_STEP_SEVEN=true`, set `plan_file_path = $GROUNDWORK_EXECUTE_PLAN_FILE` and treat Steps 1-2 as done (the plan already exists; see *Plan Mode Handling*): run the rest of this step, then go straight to Step 3 (Implementation). Do NOT read the plan file's contents into this orchestrator's context — the implement-task skill will pass the path to the executor agent.
 
 2. **Run the resume gate:** `node ${CLAUDE_PLUGIN_ROOT}/lib/task-resume.js check <TASK-NNN>` (add `--project <name>` in monorepos; append `--take-over` when the invocation carried it; run it after the task identifier is known from Step 1 if the ID was not supplied). The one-line JSON classifies any existing work-in-progress for this task. Act on it exactly as `${CLAUDE_PLUGIN_ROOT}/references/task-resume-protocol.md` specifies:
    - `live_owner_reason: heartbeat-worker-alive` → hard standdown: report and stop (not overridable). If the evidence includes a paste-ready `heartbeat-stop` command, offer it to the user — the owning session may be dead with its worker leaked.
@@ -91,17 +77,13 @@ If the user selects "Cancel — I'll switch first": output the switching command
      - If empty → Invoke `Skill(skill="groundwork:select-project")` to select a project, then restart this skill.
      - If set → Project is `{{project_name}}`, specs at `{{specs_dir}}/`.
    - If no → Continue (single-project repo).
-4. **CWD mismatch check (monorepo only):**
-   - Skip if not in monorepo mode or if the project was just selected above.
-   - If CWD is the repo root → fine, proceed.
-   - Check which project's path CWD falls inside (compare against all projects in `.groundwork.yml`).
-   - If CWD is inside the selected project's path → fine, proceed.
-   - If CWD is inside a different project's path → warn via `AskUserQuestion`:
+4. **CWD mismatch check (monorepo only):** skip it when the project was just selected or the invocation carried an explicit `--project`.
+   - Compare CWD against the project paths in `.groundwork.yml`: the repo root or the selected project's path → fine, proceed; no project's path → proceed without warning (shared directory).
+   - A different project's path → with `--noninteractive`, keep the selected project and continue; otherwise warn via `AskUserQuestion`:
      > "You're working from `<cwd>` (inside **[cwd-project]**), but the selected Groundwork project is **[selected-project]** (`[selected-project-path]/`). What would you like to do?"
      > - "Switch to [cwd-project]"
      > - "Stay with [selected-project]"
      If the user switches, invoke `Skill(skill="groundwork:select-project")`.
-   - If CWD doesn't match any project → proceed without warning (shared directory).
 
 ## Step 1: Parse Task Identifier
 
@@ -160,11 +142,11 @@ Call `Skill(skill="groundwork:implement-task")` with `task_id` and `plan_file_pa
 
 **Skip this step entirely if `GROUNDWORK_BATCH_MODE=true`** — proceed directly to Step 4.
 
-In interactive mode, the orchestrator's context now holds the plan summary and the executor result. Validation runs 9 reviewer agents and may iterate through a fix loop, which compounds context further. Offer the user a chance to stop here so they can clear context before validation begins.
+In interactive mode, the orchestrator's context now holds the plan summary and the executor result. Validation runs the reviewer agents and may iterate through a fix loop, which compounds context further. Offer the user a chance to stop here so they can clear context before validation begins.
 
 Use `AskUserQuestion` to ask:
 
-> "Implementation complete for [TASK-NNN]. Validation runs 9 reviewer agents next and can compound context. Clear context before validation?"
+> "Implementation complete for [TASK-NNN]. Validation runs the reviewer agents next and can compound context. Clear context before validation?"
 > - Option 1: "Continue to validation now"
 > - Option 2: "Stop here — I'll clear and resume manually"
 
@@ -185,7 +167,7 @@ Use `AskUserQuestion` to ask:
     2. `cd <worktree_path>`
     3. Run `/groundwork:validate`
 
-    After validation passes, merge manually from the project root:
+    When ready to merge (commit any uncommitted validation fixes inside the worktree first — the fixer never commits):
 
         cd <project_root>
         git checkout <base_branch>
@@ -199,11 +181,11 @@ This is a hard stop. The user explicitly chose to take over the rest of the work
 
 ## Step 4: Validate
 
-**Call the validate skill directly.** Do NOT wrap this in a subagent — this skill runs in the main conversation, which CAN spawn the 9 validation subagents it needs.
+**Call the validate skill directly.** Do NOT wrap this in a subagent — this skill runs in the main conversation, which CAN spawn the validation subagents it needs.
 
 1. `cd` into the worktree path from Step 3
 2. Call: `Skill(skill="groundwork:validate")`. When the invocation carried `--on-unrelated-failure <mode>` other than the default, include the flag in that call's arguments: `--on-unrelated-failure <mode>` (combine with any other arguments present)
-3. The validate skill will run 9 verification agents in parallel and fix issues autonomously.
+3. The validate skill will run its reviewer agents in parallel and fix issues autonomously.
 
 **After validate completes:**
 - All required gates pass and all agents approve → Proceed to Step 5
@@ -237,18 +219,7 @@ When validation returned `PASSED-WITH-WAIVERS`, prepend the waived-gate summary 
 
 **Wait for user response before proceeding.**
 
-**If merging:**
-
-1. **Commit validation repairs first.** The validation fixer edits files but never commits. Check the task worktree (`git -C <worktree-path> status --porcelain`); if anything is uncommitted, commit it on the task branch (`git -C <worktree-path> add -A && git -C <worktree-path> commit -m "<TASK-NNN>: validation fixes"`), so the merge carries the repairs and removing the worktree loses nothing.
-2. Ensure you are in the project root (cd out of worktree if needed)
-3. Checkout base branch: `git checkout <base-branch>`
-4. Merge: `git merge --no-ff <branch> -m "Merge <branch>: [Task Title]"`
-5. If success: Remove worktree and delete branch:
-   ```bash
-   git worktree remove <worktree-path from the execution context>
-   git branch -d <branch>
-   ```
-6. If conflicts: Report conflicts and keep worktree for manual resolution
+**If merging:** Follow `${CLAUDE_PLUGIN_ROOT}/references/task-merge-sequence.md` with the worktree path, branch, and base branch from the execution context: commit the validation repairs on the task branch first (the fixer never commits), merge from the project root with `--no-ff`, then remove the worktree and delete the branch. On a conflict, abort, keep the worktree, and report as below.
 
 **If not merging or conflicts occurred:**
 
@@ -262,9 +233,10 @@ Report worktree location and manual merge instructions:
 
 When ready to merge (commit any uncommitted validation fixes inside the worktree first — the fixer never commits):
 ```bash
-git checkout [base-branch]
+cd <project_root>
+git checkout <base_branch>
 git merge --no-ff <branch>
-git worktree remove <worktree-path>
+git worktree remove <worktree_path>
 git branch -d <branch>
 ```
 

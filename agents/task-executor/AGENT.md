@@ -38,17 +38,15 @@ Keep notes concise and actionable. Focus on facts that save time on the next tas
 
 ### 0. Read Inputs
 
-If the calling prompt supplies `PLAN FILE: <path>`, Read that file before beginning TDD — it contains your validated implementation plan. If the prompt supplies `TASK: task_id` and `tasks_path`, Read the `### <task_id>:` section from `tasks_path` for goal, action items, acceptance criteria, and test seams (when recorded). Seams were chosen at planning time with the human in the room: write tests at the recorded seams, and when none is recorded or a recorded seam cannot reach the behavior, choose the highest existing seam yourself and note the choice — never ask about seams. The orchestrator passes paths instead of inlined content to keep its context lean — never ask the caller for task or plan details.
+If the calling prompt supplies `PLAN FILE: <path>`, Read that file before beginning TDD — it contains your validated implementation plan. If the prompt supplies `TASK: task_id` and `tasks_path`, Read the `### <task_id>:` section from `tasks_path` for goal, action items, acceptance criteria, and test seams (when recorded); the seam rules in the preloaded `test-driven-development` skill apply, and you never ask about seams. The orchestrator passes paths instead of inlined content to keep its context lean — never ask the caller for task or plan details.
 
 ### 1. Create Worktree
 
 Follow the `use-git-worktree` skill instructions to create an isolated worktree:
 
-1. Determine the worktree directory (prefer `.worktrees/`)
-2. Ensure it is gitignored
-3. Create the branch and worktree exactly as that skill's Step 3 resolves them (it runs the shared worktree-identity helper): use the returned `path` and `branch` **verbatim** — they are project-qualified in monorepos (`task/<project>/TASK-NNN`, `<repo>/.worktrees/<project>-TASK-NNN`). Never derive `task/<identifier>` shapes by hand; a handcrafted unqualified branch can collide with another project's task.
-4. Run project setup (npm install, etc.)
-5. Verify baseline tests pass
+1. Create the branch and worktree exactly as that skill's Step 3 resolves them (it runs the shared worktree-identity helper): use the returned `path` and `branch` **verbatim** — they are project-qualified in monorepos (`task/<project>/TASK-NNN`, `<repo>/.worktrees/<project>-TASK-NNN`). Never derive `task/<identifier>` shapes by hand; a handcrafted unqualified branch can collide with another project's task.
+2. Run project setup (npm install, etc.)
+3. Verify baseline tests pass
 
 If the calling prompt supplies `WORKTREE PATH` and `TASK BRANCH`, use that exact registered path and use that exact branch instead of choosing either. Do not ask for a different location. If that path already exists and `RESUME EXISTING WORKTREE=true`, verify it is the registered worktree for the expected task branch, then reuse it instead of creating a branch or worktree. Inspect its commits, status, plan progress, and tests. Do not repeat completed plan items; continue TDD for only the remaining or incomplete work.
 
@@ -56,14 +54,7 @@ Use the identifier provided in the prompt (e.g., `TASK-004` or `FEATURE-slug`).
 
 ### 2. Implement with TDD
 
-Follow the `test-driven-development` skill instructions strictly:
-
-For each action item:
-1. **RED** — Write a failing test that describes the desired behavior
-2. **Verify RED** — Run the test, confirm it fails for the expected reason
-3. **GREEN** — Write minimal code to make the test pass
-4. **Verify GREEN** — Run the test, confirm it passes and all other tests still pass
-5. **REFACTOR** — Clean up while keeping tests green
+Follow the `test-driven-development` skill instructions strictly for each action item: its full red-green-refactor cycle with every test watched failing first, and its verification checklist before you finish.
 
 **Iron Law:** No production code without a failing test first. No exceptions.
 

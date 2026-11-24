@@ -1,6 +1,6 @@
 ---
 name: split-specs
-description: This skill should be used when converting a single-file spec to directory-based format for better organization of large specifications
+description: Use when converting a single-file spec to directory-based format for better organization of large specifications
 ---
 
 # Split Specifications Skill

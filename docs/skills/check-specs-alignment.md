@@ -1,6 +1,6 @@
 # `check-specs-alignment`
 
-> **Run it:** `/groundwork:check-specs-alignment [alignment-context]` · **Tier:** user-run or model-invoked · **Reads:** the PRD, the architecture, the task catalog if present, the codebase · **Writes:** nothing itself — an Alignment Report in the conversation, then a choice of how to resolve
+> **Run it:** `/groundwork:check-specs-alignment [context]` · **Tier:** user-run or model-invoked · **Reads:** the PRD, the architecture, the task catalog if present, the codebase · **Writes:** nothing itself — an Alignment Report in the conversation, then a choice of how to resolve
 
 ## What it does
 
@@ -27,6 +27,10 @@ The skill does not decide. `Deviated` means the implementation differs from the 
 
 The third part of the report, produced when a task catalog exists. It lists tasks recorded `Complete` with no trace of their goal or acceptance criteria in the code, and tasks still `Not Started` or `Blocked` whose criteria the code already satisfies — there the status is stale, not the code. Without a task catalog the section reads "No task catalog".
 
+**Can it check one requirement or one component instead of everything?**
+
+Yes. Pass the scope as the argument — a requirement or decision ID (`/groundwork:check-specs-alignment PRD-AUTH-REQ-002`), a task ID, a feature name, or a path. The report is limited to that scope and says in one line what was left unchecked.
+
 **It says "Cannot check alignment - missing specs".**
 
 It needs the PRD and the architecture; the task list is read only if it exists. The message lists what is missing and the skill that creates each: `/groundwork:design-product` for the PRD, `/groundwork:design-architecture` for the architecture, `/groundwork:create-tasks` for tasks.
@@ -34,8 +38,8 @@ It needs the PRD and the architecture; the task list is read only if it exists. 
 ## It's working if
 
 - The report has three sections: PRD Alignment, Architecture Alignment, and Task Status Consistency.
-- Every PRD requirement carries one of four statuses — `Implemented`, `Partial`, `Not Implemented`, `Deviated` — and its Notes cell says where the evidence was found or what is missing.
-- Each of the first two sections ends in a summary count, such as `X/Y requirements implemented, Z partial, W not implemented, V deviated`.
+- Every PRD requirement carries one of four statuses — `Implemented`, `Partially Implemented`, `Not Implemented`, `Deviated` — and its Notes cell says where the evidence was found or what is missing.
+- Each of the first two sections ends in a summary count, such as `X/Y requirements implemented, Z partially implemented, W not implemented, V deviated`.
 - Undocumented Features and Undocumented Components are each listed, or say "None detected".
 - Task Status Consistency names the tasks in each row, or reads "No task catalog".
 - The report ends with the three resolution options.

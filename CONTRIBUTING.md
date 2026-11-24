@@ -44,7 +44,8 @@ If you are an agent about to file an issue here on someone's behalf, re-read thi
 3. **Route it.** Add the skill to the lifecycle map in `skills/using-groundwork/SKILL.md`; `tests/router-parity.test.js` fails until it is there.
 4. **Document it.** Add a row to the README and a page in `docs/skills/` (see *Docs pages* in `docs/developing-skills.md`).
 5. **Describe the change.** Run `npx changeset` and summarize what changed for users; the release folds these into `CHANGELOG.md`.
-6. **Credit what you borrowed.** A pattern adapted from another project gets a one-line credit comment in the skill body and an entry under *Attribution* in the README.
+6. **Shared blocks come from one source.** If the change touches a block many skills carry (the Pre-flight recommendation, Step 0, the merge snippet, the task format, spec detection, auto-split thresholds), edit its source in `lib/sync-shared-blocks.js` or `lib/shared-blocks-specs.js` and run `node lib/sync-shared-blocks.js`. `tests/shared-blocks.test.js` fails on a hand-edited copy.
+7. **Credit what you borrowed.** A pattern adapted from another project gets a one-line credit comment in the skill body and an entry under *Attribution* in the README.
 
 ### Cutting a release
 

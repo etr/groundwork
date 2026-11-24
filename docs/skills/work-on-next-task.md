@@ -17,7 +17,7 @@ Finds the next task to work on and hands it to `work-on`, which runs the whole w
 
 **The first thing it asked was whether to switch model or effort.**
 
-That is the pre-flight check, not a failure. The prompt appears whenever your effort level is below `high` or your model is not Sonnet or Opus. "Continue" runs as you are; "Cancel — I'll switch first" prints the switching commands and stops.
+That is the pre-flight check, not a failure. The prompt appears whenever your effort level is below `high` or your model is not Sonnet or Opus. "Continue anyway" runs as you are; "Cancel — I'll switch first" prints the switching commands and stops. The question is asked once per conversation — a skill invoked by another skill skips it once it has been shown — and a non-interactive run (a batch or the runner) skips it too.
 
 **It asked me to choose instead of starting the lowest-numbered task.**
 

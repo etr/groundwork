@@ -316,6 +316,32 @@ test('accepts reviewer findings with nullable file and line metadata', () => {
   }
 });
 
+test('accepts an optional cleared_invariants list on a review', () => {
+  const reviews = defaultReviews();
+  reviews[0].cleared_invariants = ['Token contract preserved: lib/example.js:1 keeps the semantic token names'];
+  const artifacts = createArtifacts({ reviews });
+  try {
+    const result = validate(artifacts, ['--check-findings']);
+    assert.strictEqual(result.status, 0, result.stderr);
+    assert.deepStrictEqual(JSON.parse(result.stdout).finding_ids, [
+      'code-quality-reviewer-iter1-1',
+      'security-reviewer-iter1-3',
+    ]);
+  } finally {
+    fs.rmSync(artifacts.dir, { recursive: true, force: true });
+  }
+});
+
+test('rejects a cleared_invariants field that is not an array of non-empty strings', () => {
+  for (const bad of ['cleared', [''], ['ok', 7]]) {
+    const reviews = defaultReviews();
+    reviews[0].cleared_invariants = bad;
+    withArtifacts({ reviews }, (result) => {
+      expectRejected(result, 'cleared invariants must be an array of non-empty strings');
+    });
+  }
+});
+
 test('accepts an approve verdict with major findings', () => {
   const reviews = defaultReviews();
   reviews[0].verdict = 'approve';

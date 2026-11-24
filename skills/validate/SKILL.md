@@ -1,6 +1,6 @@
 ---
 name: validate
-description: This skill should be used when implementation is complete to run multi-agent verification with baseline-determined repair and causal closure review. Pass --on-unrelated-failure stop-and-ask|expand-and-fix|ignore-and-merge to choose how gate failures confidently unrelated to the active project are handled (default stop-and-ask).
+description: Use when implementation is complete - runs multi-agent verification with baseline-determined repair and causal closure review. Optional flags - --noninteractive returns Validation INCOMPLETE instead of asking; --on-unrelated-failure stop-and-ask|expand-and-fix|ignore-and-merge - how validation treats gate failures unrelated to the active project (default stop-and-ask).
 argument-hint: "[--project name] [--noninteractive] [--on-unrelated-failure stop-and-ask|expand-and-fix|ignore-and-merge]"
 ---
 
@@ -60,29 +60,15 @@ GROUNDWORK_RUNNER_EVENT {"v":1,"type":"next","text":"launch closure review"}
 
 ## Pre-flight: Model Recommendation
 
-**Your current effort level is `{{effort_level}}`.**
+**Your current effort level is `{{effort_level}}`.** Skip this step silently if effort is `high`, `xhigh`, or `max` (the scale is `low` < `medium` < `high` < `xhigh` < `max`, so `xhigh` and `max` are already above `high`) AND you are Sonnet or Opus. Otherwise ask via `AskUserQuestion` (header "Model check"; options "Continue anyway" / "Cancel — I'll switch first"):
 
-Skip this step silently if effort is `high`, `xhigh`, or `max` (the scale is `low` < `medium` < `high` < `xhigh` < `max`, so `xhigh` and `max` are already above `high`) AND you are Sonnet or Opus.
-If effort is `low` or `medium` (i.e. below `high`), you MUST show the recommendation prompt — regardless of model.
-If you are not Sonnet or Opus, you MUST show the recommendation prompt - regardless of effort level.
+> "Do you want to switch? Fix loop management and domain spillover judgment across the reviewer agents benefits from consistent reasoning.
+>
+> Recommended: Sonnet or Opus at high effort.
+>
+> To switch: cancel, run `/effort high` (and `/model sonnet` if on Haiku), then re-invoke this skill."
 
-Unless `--noninteractive` is set, use `AskUserQuestion`:
-
-```json
-{
-  "questions": [{
-    "question": "Do you want to switch? Fix loop management and domain spillover judgment across 9 agents benefits from consistent reasoning.\n\nTo switch: cancel, run `/effort high` (and `/model sonnet` if on Haiku), then re-invoke this skill.",
-    "header": "Recommended: Sonnet or Opus at high effort",
-    "options": [
-      { "label": "Continue" },
-      { "label": "Cancel — I'll switch first" }
-    ],
-    "multiSelect": false
-  }]
-}
-```
-
-If the user selects "Cancel — I'll switch first": output the switching commands above and stop. Do not proceed with the skill.
+If the user selects "Cancel — I'll switch first": output the switching commands and stop. Do not proceed with the skill. Ask once per conversation: a skill invoked by another skill skips this step when the recommendation was already shown. In a non-interactive run (`--noninteractive`, `GROUNDWORK_RUNNER_MODE=true`, or `GROUNDWORK_BATCH_MODE=true`), skip the prompt and continue on the current model.
 
 ## Hard Rule
 
@@ -189,25 +175,19 @@ Before invoking this skill, ensure:
 
 ## Step 0: Resolve Project Context
 
-**Before loading specs, ensure project context is resolved:**
-
 1. **Monorepo check:** Does `.groundwork.yml` exist at the repo root?
    - If yes → Is `{{project_name}}` non-empty?
      - If empty → Invoke `Skill(skill="groundwork:select-project")` to select a project, then restart this skill.
      - If set → Project is `{{project_name}}`, specs at `{{specs_dir}}/`.
    - If no → Continue (single-project repo).
-2. **CWD mismatch check (monorepo only):**
-   - Skip if not in monorepo mode or if the project was just selected in item 1 above.
-   - If CWD is the repo root → fine, proceed.
-   - Check which project's path CWD falls inside (compare against all projects in `.groundwork.yml`).
-   - If CWD is inside the selected project's path → fine, proceed.
-   - If CWD is inside a different project's path → with `--noninteractive`, keep the explicitly selected project and continue; otherwise warn via `AskUserQuestion`:
+2. **CWD mismatch check (monorepo only):** skip it when the project was just selected or the invocation carried an explicit `--project`.
+   - Compare CWD against the project paths in `.groundwork.yml`: the repo root or the selected project's path → fine, proceed; no project's path → proceed without warning (shared directory).
+   - A different project's path → with `--noninteractive`, keep the selected project and continue; otherwise warn via `AskUserQuestion`:
      > "You're working from `<cwd>` (inside **[cwd-project]**), but the selected Groundwork project is **[selected-project]** (`[selected-project-path]/`). What would you like to do?"
      > - "Switch to [cwd-project]"
      > - "Stay with [selected-project]"
      If the user switches, invoke `Skill(skill="groundwork:select-project")`.
-   - If CWD doesn't match any project → proceed without warning (shared directory).
-3. Proceed with the resolved project context. All `{{specs_dir}}/` paths will resolve to the correct location.
+3. Proceed with the resolved project context.
 
 ## Workflow
 
@@ -340,7 +320,7 @@ Use Agent tool to launch all agents in parallel:
 | `groundwork:cloud-infrastructure-reviewer:cloud-infrastructure-reviewer` | `changed_file_paths`, `diff_stat`, `task_definition`, `architecture_path` |
 | `groundwork:conventions-reviewer:conventions-reviewer` | `changed_file_paths`, `diff_stat`, `task_definition` |
 
-**Each agent prompt MUST include both of these lines** (in addition to the agent-specific context above):
+**Each agent prompt MUST include all of the following lines** (in addition to the agent-specific context above):
 
 ```
 review_mode: initial-audit
@@ -363,7 +343,7 @@ The full review (including the `findings[]` array) lives only in the file at `fi
 
 ### 3. Aggregate Results
 
-Parse each agent's compact one-line JSON response. Read `verdict`, `score`, `summary`, severity counts, and `findings_file`. For each `request-changes` review, read only its critical/major finding objects once. Normalize each into a closure record containing its global ID, invariant, evidence, affected surface, and required outcome. Do not load minor or approved finding bodies.
+Parse each agent's compact one-line JSON response. Read `verdict`, `score`, `summary`, severity counts, `findings_file`, and `cleared_invariants`; keep each reviewer's list beside its aggregation row, because it decides who re-runs after a repair. For each `request-changes` review, read only its critical/major finding objects once. Normalize each into a closure record containing its global ID, invariant, evidence, affected surface, and required outcome. Do not load minor or approved finding bodies.
 
 Before the human-readable iteration summary, emit exactly one completion marker. Include every active agent from this iteration in launch order with only its parsed verdict:
 
@@ -512,7 +492,7 @@ Continue until every valid baseline finding is closed and all impacted reviewers
    prior_findings: [<closure records assigned to this reviewer>]
    repair_claims: [<exact claims and evidence for those findings>]
    repair_delta: <files and hunks changed by this fixer pass>
-   disturbed_invariants: [<previously cleared invariants touched by the delta>]
+   disturbed_invariants: [<entries from this reviewer's own `cleared_invariants` that the repair delta touches>]
    verify_only: [<specific closure questions and tests>]
    closed_scope: [<unchanged or unrelated surfaces not open to discovery>]
    blocking_rule: Repair-caused blockers require origin introduced-by-fix, exposed-by-fix, or invalidated-prior-assumption plus a causal reference. A concrete initial-audit-miss inside the frozen baseline may also block. Scope expansion cannot.

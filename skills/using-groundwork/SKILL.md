@@ -1,6 +1,6 @@
 ---
 name: using-groundwork
-description: This skill should be used when starting any conversation - establishes how to find and use skills, requiring Skill tool invocation before ANY response including clarifying questions
+description: Use when starting any conversation - establishes how to find and use skills, requiring Skill tool invocation before ANY response including clarifying questions
 user-invocable: false
 ---
 
@@ -59,7 +59,7 @@ Find the work, invoke the skill. **Dispatch tier matters:**
 | Generate a PRD/specs from scratch | `/groundwork:design-product` (user runs) |
 | Clarify or stress-test a feature request | `understanding-feature-requests` (auto) |
 | Design or reverse-engineer UX | `/groundwork:ux-design`, `/groundwork:source-ux-design-from-code` (user runs) |
-| Reverse-engineer specs/architecture from existing code | `/groundwork:source-product-specs-from-code`, `/groundwork:source-architecture-from-code` (user runs) |
+| Update existing specs or architecture from decisions made in a session | `/groundwork:source-product-specs-from-code`, `/groundwork:source-architecture-from-code` (user runs) |
 | Build/maintain the domain glossary | `domain-modeling` (auto) |
 
 ### Plan / Architect
@@ -135,15 +135,14 @@ These thoughts mean STOP—you're rationalizing:
 | "I'll just do this one thing first" | Check BEFORE doing anything. |
 | "This feels productive" | Undisciplined action wastes time. Skills prevent this. |
 | "I know what that means" | Knowing the concept ≠ using the skill. Invoke it. |
-| "I'll just start working on the task" | Task execution REQUIRES the work-on skill. Invoke it first. |
-| "Let me implement this task" | Always invoke work-on skill - it handles worktree isolation. |
+| "Let me implement this task" | Invoke `work-on` — it plans, isolates the worktree, validates, and merges. (`implement-task` is the implementation step alone, for a task that is already planned.) |
 
 ## Skill Priority
 
 When multiple skills could apply, use this order:
 
 1. **Process skills first** (design-product, design-architecture) - these determine HOW to approach the task
-2. **Implementation skills second** (tasks, test-driven-development) - these guide execution
+2. **Implementation skills second** (create-tasks, work-on, test-driven-development) - these guide execution
 
 "Let's build X" -> the process skill comes first: recommend `/groundwork:design-product` (user-run) and let the user start it; once requirements exist, the implementation skills follow.
 
@@ -156,11 +155,7 @@ Before planning, size the effort:
 
 ## Skill Types
 
-**Rigid**: follow exactly, don't adapt away discipline
-
-**Flexible**: adapt principles to context.
-
-The skill itself tells you which type it is.
+A skill whose discipline must survive pressure says so in its first lines: `**This is a rigid skill.** Follow steps exactly.` (today `test-driven-development` and `debug`). Follow those exactly. Every other skill is applied as written and adapted only where it says adaptation is allowed.
 
 ## Monorepo Awareness
 

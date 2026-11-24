@@ -44,7 +44,7 @@ The shapes generated UI reaches for by default. Each is allowed with a purpose; 
 
 Prose patterns that mark text as machine-written. Button labels, error formulas, and empty-state copy are owned by `design-system/ux-writing-guide.md`; these are the tells beyond them:
 
-- **Empty vocabulary:** unlock, elevate, empower, delve, seamless, cutting-edge, revolutionary, game-changer (see the guide's "AI-trade-show voice" list)
+- **Empty vocabulary (the "AI-trade-show voice"):** unlock, elevate, empower, delve, seamless, cutting-edge, revolutionary, game-changer, transform, at scale, end-to-end. This list is the single source; the UX writing guide points here
 - **Significance inflation:** "the future of X", "a pivotal moment", "ushering in a new era"
 - **Weasel attribution:** "experts say", "industry observers" with no one named
 - **Chatbot artifacts:** "I hope this helps", "Let me know if you have questions" pasted into deliverables

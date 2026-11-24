@@ -74,6 +74,7 @@ Skills replaced the old commands layer. Three tiers, set via frontmatter:
 1. Create `skills/<skill-name>/SKILL.md`
 2. Add YAML frontmatter with `name` and `description`; set the invocation tier (see table above)
 3. Write the skill content following existing patterns
+   If it carries a block other skills share (the Pre-flight recommendation, Step 0, the manual-merge snippet, the task format, spec detection, auto-split thresholds), register it in `USAGE` in `lib/sync-shared-blocks.js` and run `node lib/sync-shared-blocks.js` instead of pasting a copy; `tests/shared-blocks.test.js` fails on an unregistered copy.
 4. Test with `/groundwork:<skill-name>` or the Skill tool
 5. Finish it: add its row to the lifecycle map in `skills/using-groundwork/SKILL.md` (`tests/router-parity.test.js` fails until you do), its row in the README, a page under `docs/skills/`, and a changeset. `CONTRIBUTING.md` → *Making a change* has the full checklist.
 
@@ -128,7 +129,9 @@ Hooks are defined in `hooks/hooks.json` and use `${CLAUDE_PLUGIN_ROOT}` for port
 | `lib/external-runner-manifest.js` | Checked manifest of the exported standalone runner runtime; validates its transitive import closure |
 | `lib/state-dir.js` | Prints the harness-resolved state directory so bash hooks/statusline cannot diverge from Node writers |
 | `lib/worktree-identity.js` | Single source of truth for task worktree paths and branch names (project-qualified in monorepos); CLI for skills, factory for the runner |
+| `lib/task-resume.js` | Single-source resume classification shared by the runner and interactive skills: runner checkpoint IO, task-catalog parsing, the existing-worktree classifier, and the `check`/`sweep`/`record`/`clear` CLI behind the resume gate (`references/task-resume-protocol.md`) |
 | `lib/plan-check.js` | Verifies a legacy repo-root plan's recorded project before adoption |
+| `lib/sync-shared-blocks.js`, `lib/shared-blocks-specs.js` | Single source for the blocks many skills carry verbatim (Pre-flight, Step 0, the merge snippet, the task format, spec detection, auto-split thresholds, shared dispatch-prompt parts); renders them into the skills — `tests/shared-blocks.test.js` fails on drift |
 | `lib/transform-agents.js` | Rewrites `Agent()` calls when exporting skills to other harnesses |
 | `lib/filter-zcode-hooks.js` | Filters hooks.json to the hook events ZCode supports (marketplace bundle) |
 | `lib/utils.js` | Shared helpers |

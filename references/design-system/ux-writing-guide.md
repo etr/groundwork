@@ -95,7 +95,7 @@ For loading states, be specific: "Saving your draft..." not "Loading...". For lo
 
 ## Voice Archetypes
 
-Five recurring voices observed across the 59-brand survey. Pick one deliberately — the one that matches your tonal direction — and avoid drift between product surfaces.
+The recurring voices observed across the 59-brand survey, one archetype per section. Pick one deliberately — the one that matches your tonal direction — and avoid drift between product surfaces.
 
 ### Technical (precise, dense with proper nouns, assumes expertise)
 
@@ -139,7 +139,7 @@ Canonical example: Claude — *"Tackle any big, bold, bewildering challenge with
 
 - **Don't mix archetypes on the same surface.** A technical product page with an aspirational headline reads as marketing-department override, and users can tell.
 - **Quoted testimonials are how ambitious brands dodge their own voice rules** — if you need "our customer processed $4.2B", put it in their quote, not your headline. It lets you cite metrics while keeping your own copy terse.
-- **Avoid the AI-trade-show voice**: "Unlock", "Empower", "Transform", "At scale", "End-to-end", "Seamless", "Cutting-edge". Most of the 59 brands have banned at least two of these from their copy.
+- **Avoid the AI-trade-show voice**: every word on the *empty vocabulary* list in `design-slop.md` (the list both this guide and `design-consistency-checker` apply). Most of the 59 brands have banned at least two of them from their copy.
 
 ---
 

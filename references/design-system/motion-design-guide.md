@@ -17,7 +17,7 @@ The brain buffers sensory input for ~80ms to synchronize perception. Anything un
 
 ## Easing: Exponential Curves
 
-Don't use `ease` (the CSS default) — it's a compromise that's rarely optimal. Don't use `linear` — it feels mechanical and artificial.
+Don't use `ease` (the CSS default) — it's a compromise that's rarely optimal. Don't use `linear` — it feels mechanical and artificial. The one exception is continuous motion such as a marquee, where constant speed is the point.
 
 | Context | Curve | CSS Value |
 |---------|-------|-----------|

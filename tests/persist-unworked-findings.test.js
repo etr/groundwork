@@ -397,5 +397,45 @@ describe('committed ledgers redact quoted credentials', () => {
   });
 });
 
+describe('findings without a line or file render no placeholder location', () => {
+  const { spawnSync } = require('child_process');
+
+  test('a null line or null file never reaches the ledger as ":null"', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-unworked-null-'));
+    const findingsDir = path.join(root, 'findings');
+    const specsDir = path.join(root, 'specs');
+    fs.mkdirSync(findingsDir);
+    fs.mkdirSync(specsDir);
+    fs.writeFileSync(path.join(findingsDir, 'findings-housekeeper-iter1.json'), JSON.stringify({
+      agent: 'housekeeper',
+      iteration: 1,
+      findings: [
+        { id: 1, severity: 'minor', category: 'docs', file: 'specs/tasks.md', line: null,
+          finding: 'TASK-003 is still marked In Progress', recommendation: 'Mark it Complete', disposition: 'actionable' },
+        { id: 2, severity: 'minor', category: 'spec', file: null, line: null,
+          finding: 'No glossary term covers the new queue entity', recommendation: 'Add one', disposition: 'actionable' },
+        { id: 3, severity: 'minor', category: 'tasks', file: 'specs/tasks.md', line: 12,
+          finding: 'A located finding keeps its file:line form', recommendation: 'Fix it', disposition: 'actionable' },
+      ],
+    }));
+    try {
+      const result = spawnSync(
+        process.execPath,
+        [PERSIST, '--findings-dir', findingsDir, '--specs-dir', specsDir, '--task-id', 'null-loc'],
+        { encoding: 'utf8' }
+      );
+      assert.strictEqual(result.status, 0, result.stderr);
+      const markdown = fs.readFileSync(JSON.parse(result.stdout).written, 'utf8');
+      assert.ok(!markdown.includes(':null'), `a null reached the ledger:\n${markdown}`);
+      assert.ok(!markdown.includes('``'), `an empty location reached the ledger:\n${markdown}`);
+      assert.match(markdown, /\*\*housekeeper\*\* \| `specs\/tasks\.md` \| docs/, 'a file without a line shows the file alone');
+      assert.match(markdown, /\*\*housekeeper\*\* \| spec\b/, 'no file and no line shows the category alone');
+      assert.match(markdown, /`specs\/tasks\.md:12`/, 'a located finding keeps file:line');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exitCode = 1;

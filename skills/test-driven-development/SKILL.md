@@ -1,10 +1,12 @@
 ---
 name: test-driven-development
-description: This skill should be used when implementing any feature or bugfix, before writing implementation code
+description: Use when implementing any feature or bugfix, before writing implementation code - drives the red-green-refactor cycle with tests written at the recorded seams and watched failing first
 user-invocable: false
 ---
 
 # Test-Driven Development (TDD)
+
+**This is a rigid skill.** Follow steps exactly.
 
 ## Overview
 
@@ -225,6 +227,8 @@ Catch lint violations NOW — before the next action item adds more code on top.
 
 Next failing test for next feature.
 
+A second worked example (a bug fix, start to finish) is in `${CLAUDE_PLUGIN_ROOT}/references/testing-examples.md`.
+
 ## Good Tests
 
 | Quality | Good | Bad |
@@ -237,131 +241,26 @@ Next failing test for next feature.
 
 The canonical skip-list lives in `${CLAUDE_PLUGIN_ROOT}/references/checklists/testing.md`. **Rule of thumb:** if a test would only fail when someone *intentionally* changes behavior (static markup, CSS, element counts, presentational-only components), it's preventing change, not testing it — don't write it. DO test conditional rendering, computed values, user interactions, state transitions, edge cases, and business rules.
 
-## Why Order Matters
+## Rationalizations and Red Flags
 
-**"I'll write tests after to verify it works"**
+Every excuse below asks for the same thing: code before a failing test. The answer is always the Iron Law — delete the code, start over with TDD.
 
-Tests written after code pass immediately. Passing immediately proves nothing:
-- Might test wrong thing
-- Might test implementation, not behavior
-- Might miss edge cases you forgot
-- You never saw it catch the bug
+| What you tell yourself | What is true |
+|------------------------|--------------|
+| "Too simple to test" | Simple code breaks. The test takes 30 seconds. |
+| "I'll test after" | A test written after the code passes immediately, which proves nothing: it may test the implementation rather than the behavior, it misses the edge cases you forgot, and you never saw it catch a bug. |
+| "I'll write all the tests first, then the implementation" | That is **horizontal slicing**: bulk tests verify *imagined* behavior. One test → one implementation → repeat, each test a tracer bullet for what the last cycle taught you. |
+| "Tests after achieve the same goals" | Tests-after answer "What does this do?"; tests-first answer "What should this do?" Tests-after are biased by the implementation and verify only the edge cases you remembered. |
+| "I already manually tested" | Manual testing is ad hoc: no record of what was tested, not re-runnable, and easy to forget cases under pressure. |
+| "Deleting X hours of work is wasteful" | Sunk cost. The waste is keeping code you cannot trust. |
+| "Keep it as reference, write tests first" | You will adapt it — that is testing after. Delete means delete. |
+| "Need to explore first" | Explore, then throw the exploration away and start with TDD. |
+| "The test is hard to write" | The test is telling you the design is unclear. Hard to test is hard to use. |
+| "TDD will slow me down" / "TDD is dogmatic" | TDD is the pragmatic option: it finds bugs before the commit, catches regressions immediately, documents behavior, and makes refactoring safe. Shortcuts are debugging in production. |
+| "A manual test is faster" | Manual proves nothing about edge cases, and you repeat it by hand at every change. |
+| "Existing code has no tests" | You are improving it: add tests for the code you touch. |
 
-Test-first forces you to see the test fail, proving it actually tests something.
-
-**"I already manually tested all the edge cases"**
-
-Manual testing is ad-hoc. You think you tested everything but:
-- No record of what you tested
-- Can't re-run when code changes
-- Easy to forget cases under pressure
-- "It worked when I tried it" ≠ comprehensive
-
-Automated tests are systematic. They run the same way every time.
-
-**"I'll write all the tests first, then the implementation"**
-
-That's **horizontal slicing**, and bulk tests verify *imagined* behavior: they test the shape of things rather than what users see, and they lock in a test structure before the implementation has taught you anything. Work in vertical slices instead: one test → one implementation → repeat, each test a **tracer bullet** that responds to what the last cycle taught you.
-
-**"Deleting X hours of work is wasteful"**
-
-Sunk cost fallacy. The time is already gone. Your choice now:
-- Delete and rewrite with TDD (X more hours, high confidence)
-- Keep it and add tests after (30 min, low confidence, likely bugs)
-
-The "waste" is keeping code you can't trust. Working code without real tests is technical debt.
-
-**"TDD is dogmatic, being pragmatic means adapting"**
-
-TDD IS pragmatic:
-- Finds bugs before commit (faster than debugging after)
-- Prevents regressions (tests catch breaks immediately)
-- Documents behavior (tests show how to use code)
-- Enables refactoring (change freely, tests catch breaks)
-
-"Pragmatic" shortcuts = debugging in production = slower.
-
-**"Tests after achieve the same goals - it's spirit not ritual"**
-
-No. Tests-after answer "What does this do?" Tests-first answer "What should this do?"
-
-Tests-after are biased by your implementation. You test what you built, not what's required. You verify remembered edge cases, not discovered ones.
-
-Tests-first force edge case discovery before implementing. Tests-after verify you remembered everything (you didn't).
-
-30 minutes of tests after ≠ TDD. You get coverage, lose proof tests work.
-
-## Common Rationalizations
-
-| Excuse | Reality |
-|--------|---------|
-| "Too simple to test" | Simple code breaks. Test takes 30 seconds. |
-| "I'll test after" | Tests passing immediately prove nothing. |
-| "I'll write all the tests first" | Horizontal slicing: bulk tests verify imagined behavior. One test → one implementation → repeat. |
-| "Tests after achieve same goals" | Tests-after = "what does this do?" Tests-first = "what should this do?" |
-| "Already manually tested" | Ad-hoc ≠ systematic. No record, can't re-run. |
-| "Deleting X hours is wasteful" | Sunk cost fallacy. Keeping unverified code is technical debt. |
-| "Keep as reference, write tests first" | You'll adapt it. That's testing after. Delete means delete. |
-| "Need to explore first" | Fine. Throw away exploration, start with TDD. |
-| "Test hard = design unclear" | Listen to test. Hard to test = hard to use. |
-| "TDD will slow me down" | TDD faster than debugging. Pragmatic = test-first. |
-| "Manual test faster" | Manual doesn't prove edge cases. You'll re-test every change. |
-| "Existing code has no tests" | You're improving it. Add tests for existing code. |
-
-## Red Flags - STOP and Start Over
-
-- Code before test
-- Test after implementation
-- Test passes immediately
-- Can't explain why test failed
-- Tests added "later"
-- Rationalizing "just this once"
-- "I already manually tested it"
-- "Tests after achieve the same purpose"
-- "It's about spirit not ritual"
-- "Keep as reference" or "adapt existing code"
-- "Already spent X hours, deleting is wasteful"
-- "TDD is dogmatic, I'm being pragmatic"
-- "This is different because..."
-
-**All of these mean: Delete code. Start over with TDD.**
-
-## Example: Bug Fix
-
-**Bug:** Empty email accepted
-
-**RED**
-```typescript
-test('rejects empty email', async () => {
-  const result = await submitForm({ email: '' });
-  expect(result.error).toBe('Email required');
-});
-```
-
-**Verify RED**
-```bash
-$ npm test
-FAIL: expected 'Email required', got undefined
-```
-
-**GREEN**
-```typescript
-function submitForm(data: FormData) {
-  if (!data.email?.trim()) {
-    return { error: 'Email required' };
-  }
-  // ...
-}
-```
-
-**Verify GREEN**
-```bash
-$ npm test
-PASS
-```
-
-**REFACTOR**
-Extract validation for multiple fields if needed.
+**Stop and start over as soon as you notice any of these:** code written before its test · a test added after the implementation · a test that passed the first time · a failure you cannot explain · tests deferred to "later" · any "just this once" · "keep it as reference" or "adapt existing code" · "already spent X hours" · "this is different because…".
 
 ## Verification Checklist
 
@@ -390,63 +289,7 @@ Can't check all boxes? You skipped TDD. Start over.
 
 ## Coverage Requirements
 
-Canonical criteria — test pyramid, the four pillars, coverage completeness — live in `${CLAUDE_PLUGIN_ROOT}/references/checklists/testing.md`. Highlights:
-
-### Target: 80%+ Coverage of Logic Paths
-- Coverage means branch/logic coverage, not line coverage of markup
-- Pure presentational components (no conditionals, no computed values) do NOT need unit tests — they are validated visually
-- Do not write tests solely to increase coverage numbers
-- All edge cases covered
-- Error scenarios tested
-- Boundary conditions verified
-
-### Test Types
-
-| Type | Scope | Examples |
-|------|-------|----------|
-| **Unit** | Individual functions, utilities, pure functions | Component logic, helpers |
-| **Integration** | API endpoints, database operations, service interactions | External API calls |
-| **E2E** | Critical user flows, complete workflows | Browser automation, UI interactions |
-
-### E2E Test Pattern (Playwright)
-
-```typescript
-import { test, expect } from '@playwright/test'
-
-test('user can search and filter markets', async ({ page }) => {
-  await page.goto('/')
-  await page.click('a[href="/markets"]')
-  await expect(page.locator('h1')).toContainText('Markets')
-
-  await page.fill('input[placeholder="Search"]', 'election')
-  await page.waitForTimeout(600) // debounce
-
-  const results = page.locator('[data-testid="market-card"]')
-  await expect(results).toHaveCount(5, { timeout: 5000 })
-})
-```
-
-### Coverage Verification
-
-```bash
-npm run test:coverage
-# Verify 80%+ coverage achieved
-```
-
-### Coverage Thresholds (jest.config.js)
-
-```json
-{
-  "coverageThresholds": {
-    "global": {
-      "branches": 80,
-      "functions": 80,
-      "lines": 80,
-      "statements": 80
-    }
-  }
-}
-```
+The standard is `${CLAUDE_PLUGIN_ROOT}/references/checklists/testing.md` (loaded above): 80%+ of logic paths, never a test written only to raise the number, and no unit tests for purely presentational components. For an E2E test's shape, a coverage command, or a coverage-threshold config, take the matching sample from `${CLAUDE_PLUGIN_ROOT}/references/testing-examples.md` (E2E, coverage verification, jest thresholds).
 
 ## Debugging Integration
 
@@ -456,9 +299,7 @@ Never fix bugs without a test.
 
 ## Testing Anti-Patterns
 
-Mocks are tools to isolate, not things to test. Before every mock, run these gates:
-
-### Don't test mock behavior
+Mocks are tools to isolate, not things to test. Run these gates before every mock; the ❌/✅ example for each is under *Mock examples* in `${CLAUDE_PLUGIN_ROOT}/references/testing-examples.md`:
 
 ```
 BEFORE asserting on any mock element:
@@ -466,34 +307,11 @@ BEFORE asserting on any mock element:
   IF mock existence → delete the assertion or unmock the component
 ```
 
-```typescript
-// ❌ BAD: Testing that the mock exists
-test('renders sidebar', () => {
-  render(<Page />);
-  expect(screen.getByTestId('sidebar-mock')).toBeInTheDocument();
-});
-
-// ✅ GOOD: If the sidebar must be replaced, replace it with a tiny fake and
-// assert on what the user sees — never on the replacement's call arguments
-vi.mock('./Sidebar', () => ({
-  Sidebar: ({ user }: { user: User }) => <aside aria-label="Sidebar">{user.name}</aside>,
-}));
-
-test('page shows the signed-in user in the sidebar', () => {
-  render(<Page user={testUser} />);
-  expect(screen.getByRole('complementary', { name: 'Sidebar' })).toHaveTextContent(testUser.name);
-});
-```
-
-### Don't add test-only methods to production classes
-
 ```
 BEFORE adding any method to a production class:
   Ask: "Is this only used by tests?"
   IF yes → put it in test utilities instead
 ```
-
-### Mock at the right level
 
 ```
 BEFORE mocking any method:
@@ -502,53 +320,11 @@ BEFORE mocking any method:
   IF yes → mock lower (the actual slow/external operation), not the method the test depends on
 ```
 
-```typescript
-// ❌ BAD: Mock prevents config write that test depends on
-test('detects duplicate server', async () => {
-  vi.mock('ToolCatalog', () => ({
-    discoverAndCacheTools: vi.fn().mockResolvedValue(undefined)
-  }));
-  await addServer(config);
-  await addServer(config);  // Should throw - but won't!
-});
-
-// ✅ GOOD: Mock the slow part, preserve behavior test needs
-test('detects duplicate server', async () => {
-  vi.mock('MCPServerManager'); // Just mock slow server startup
-  await addServer(config);    // Config written
-  await addServer(config);    // Duplicate detected ✓
-});
-```
-
-### Preserve real semantics in mocks
-
 ```
 BEFORE creating any mock:
   Ask: "What type does the real implementation return?"
   Value vs. stream? Sync vs. async? Array vs. cursor?
   IF mock changes the abstraction type → fix it
-```
-
-```typescript
-// ❌ BAD: Mock returns array, real implementation returns async cursor
-const mockDb = {
-  getUsers: vi.fn().mockResolvedValue([
-    { id: '1', name: 'Alice' },
-    { id: '2', name: 'Bob' },
-  ])
-};
-// Test passes, but production breaks on 1000+ users when
-// pagination and backpressure actually matter.
-
-// ✅ GOOD: Mock preserves real cursor semantics
-const mockDb = {
-  getUsers: vi.fn().mockReturnValue({
-    async *[Symbol.asyncIterator]() {
-      yield { id: '1', name: 'Alice' };
-      yield { id: '2', name: 'Bob' };
-    }
-  })
-};
 ```
 
 ### Red flags

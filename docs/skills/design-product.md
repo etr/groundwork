@@ -16,7 +16,7 @@ Turns a feature request into requirements written in EARS syntax and added to th
 
 **It stopped and asked whether I want to switch models.**
 
-That is the pre-flight step, not a failure. It recommends Opus (1M context) at high effort, and is skipped silently only when both are already true. Choose *Continue* to proceed as you are.
+That is the pre-flight step, not a failure. It recommends Opus (1M context) at high effort, and is skipped silently only when both are already true. Choose *Continue* to proceed as you are. The question is asked once per conversation — a skill invoked by another skill skips it once it has been shown — and a non-interactive run (a batch or the runner) skips it too.
 
 **I ran it in plan mode. Did it skip the interview?**
 

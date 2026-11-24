@@ -282,6 +282,21 @@ describe('ZCode marketplace bundle', () => {
     );
   });
 
+  test('keeps contributor-only authoring tools out of the bundle', () => {
+    if (bundle === null) return;
+    // They render skill text from its Claude-source form; nothing at runtime loads them.
+    for (const tool of ['sync-shared-blocks.js', 'shared-blocks-specs.js', 'sync-plugin-version.js']) {
+      assert.ok(
+        !fs.existsSync(path.join(bundle, 'lib', tool)),
+        `lib/${tool} is an authoring tool and does not belong in a runtime bundle`
+      );
+    }
+    assert.ok(
+      fs.existsSync(path.join(bundle, 'lib', 'resolve-template-vars.js')),
+      'the exclusion must not drop a lib the hooks need'
+    );
+  });
+
   test('ships the shared bash helpers the hook scripts source', () => {
     if (bundle === null) return;
     const hooksDir = path.join(bundle, 'hooks');

@@ -6,6 +6,27 @@ Use these as starting points — adapt pattern details to match the product's to
 
 ---
 
+## Bundle Selection Guide
+
+| If the product is... | Consider | Avoid |
+|---------------------|----------|-------|
+| Narrative/storytelling | Cinematic Scroll Narrative | Content-First Directory |
+| SaaS/developer platform | Layered Depth | Choreographed Studio |
+| Hardware/engineering tool | Industrial Precision | Cinematic Scroll Narrative |
+| Creative agency/studio | Choreographed Studio | Industrial Precision |
+| Directory/database | Content-First Directory | Any animation-heavy bundle |
+| Consumer SaaS/community | Sticky Card Stack | Industrial Precision |
+| Personal portfolio/writer | Typography-Dominant | Content-First Directory |
+| AI model provider / research-forward | AI Lab Minimal | Creative Tool Playful |
+| Keyboard-first productivity | Dev Tool Density | Cinematic Scroll Narrative |
+| Performance automotive / luxury hardware | Automotive Cinematic | Content-First Directory |
+| Payments / money movement / crypto | Fintech Clarity | Choreographed Studio |
+| No-code builder / visual tool / social creative | Creative Tool Playful | AI Lab Minimal |
+
+**Mixing bundles:** Avoid combining more than 2 bundles. If mixing, take section geometry + content hierarchy from one and scroll architecture from another. Never mix navigation patterns from different bundles.
+
+---
+
 ## 1. Cinematic Scroll Narrative (Apple-style)
 
 **Character:** Immersive, paced storytelling — the user scrolls through a crafted experience where each section builds on the last. Product reveals, brand narratives, device showcases.
@@ -729,24 +750,3 @@ section { padding-block: clamp(3rem, 6vw, 6rem); } /* Tighter than AI Lab Minima
 **Reduced motion fallback:** Hero demo pauses on first frame. Cards stop breathing on hover. Colors still rotate (static, not a transition).
 
 **Who this fits:** no-code builders, design tools, visual boards, social-creative surfaces — anywhere the canvas is the brand and marketing pages can demonstrate what users will make. Does not fit enterprise infra, where the playfulness reads as unserious.
-
----
-
-## Bundle Selection Guide
-
-| If the product is... | Consider | Avoid |
-|---------------------|----------|-------|
-| Narrative/storytelling | Cinematic Scroll Narrative | Content-First Directory |
-| SaaS/developer platform | Layered Depth | Choreographed Studio |
-| Hardware/engineering tool | Industrial Precision | Cinematic Scroll Narrative |
-| Creative agency/studio | Choreographed Studio | Industrial Precision |
-| Directory/database | Content-First Directory | Any animation-heavy bundle |
-| Consumer SaaS/community | Sticky Card Stack | Industrial Precision |
-| Personal portfolio/writer | Typography-Dominant | Content-First Directory |
-| AI model provider / research-forward | AI Lab Minimal | Creative Tool Playful |
-| Keyboard-first productivity | Dev Tool Density | Cinematic Scroll Narrative |
-| Performance automotive / luxury hardware | Automotive Cinematic | Content-First Directory |
-| Payments / money movement / crypto | Fintech Clarity | Choreographed Studio |
-| No-code builder / visual tool / social creative | Creative Tool Playful | AI Lab Minimal |
-
-**Mixing bundles:** Avoid combining more than 2 bundles. If mixing, take section geometry + content hierarchy from one and scroll architecture from another. Never mix navigation patterns from different bundles.

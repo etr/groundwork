@@ -137,14 +137,14 @@ describe('Downstream threading', () => {
       'the checklist must keep stop-and-ask as the only no-receipt pass path');
   });
 
-  test('just-do-it threads the flag through Phase C and Phase E', () => {
+  test('just-do-it threads the flag through Phase C and Phase D', () => {
     const content = readSkill('just-do-it');
-    assert.ok(/forwarded to every Phase C validate invocation and Phase E finalize-task invocation/.test(content),
+    assert.ok(/forwarded to every Phase C validate invocation and Phase D finalize-task invocation/.test(content),
       'Step 0 must remember the flag for the whole run');
     assert.ok(/--on-unrelated-failure <mode> --noninteractive/.test(content),
       'Phase C must combine the mode with --noninteractive');
     assert.ok(/\[TASK-NNN\] --on-unrelated-failure ignore-and-merge/.test(content),
-      'Phase E must forward ignore-and-merge to finalize-task');
+      'Phase D must forward ignore-and-merge to finalize-task');
   });
 
   test('work-on-next-task passes the flag through to work-on', () => {

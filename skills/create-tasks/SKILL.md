@@ -1,8 +1,8 @@
 ---
 name: create-tasks
-description: Generate implementation tasks from architecture document. Usage /groundwork:create-tasks
+description: Generate implementation tasks from architecture document.
 argument-hint: "[filter]"
-allowed-tools: ["Read", "Edit", "Write", "Glob", "Grep", "Task", "Skill"]
+allowed-tools: ["Read", "Edit", "Write", "Glob", "Grep", "Task", "Skill", "AskUserQuestion"]
 disable-model-invocation: true
 ---
 
@@ -12,51 +12,31 @@ Translates product specs and architecture into actionable implementation tasks.
 
 ## Pre-flight: Model Recommendation
 
-**Your current effort level is `{{effort_level}}`.**
+**Your current effort level is `{{effort_level}}`.** Skip this step silently if effort is `high`, `xhigh`, or `max` (the scale is `low` < `medium` < `high` < `xhigh` < `max`, so `xhigh` and `max` are already above `high`) AND you are Opus (1M context). Otherwise ask via `AskUserQuestion` (header "Model check"; options "Continue anyway" / "Cancel — I'll switch first"):
 
-Skip this step silently if effort is `high`, `xhigh`, or `max` (the scale is `low` < `medium` < `high` < `xhigh` < `max`, so `xhigh` and `max` are already above `high`) AND you are Opus (1M context).
-If effort is `low` or `medium` (i.e. below `high`), you MUST show the recommendation prompt — regardless of model.
-If you are not Opus (1M context), you MUST show the recommendation prompt - regardless of effort level.
+> "Do you want to switch? Task granularity judgment and vertical slicing decisions determine execution success.
+>
+> Recommended: Opus (1M context) at high effort.
+>
+> To switch: cancel, run `/model opus[1m]` and `/effort high`, then re-invoke this skill."
 
-Otherwise → use `AskUserQuestion`:
-
-```json
-{
-  "questions": [{
-    "question": "Do you want to switch? Task granularity judgment and vertical slicing decisions determine execution success.\n\nTo switch: cancel, run `/model opus[1m]` and `/effort high`, then re-invoke this skill.",
-    "header": "Recommended: Opus (1M context) at high effort",
-    "options": [
-      { "label": "Continue" },
-      { "label": "Cancel — I'll switch first" }
-    ],
-    "multiSelect": false
-  }]
-}
-```
-
-If the user selects "Cancel — I'll switch first": output the switching commands above and stop. Do not proceed with the skill.
+If the user selects "Cancel — I'll switch first": output the switching commands and stop. Do not proceed with the skill. Ask once per conversation: a skill invoked by another skill skips this step when the recommendation was already shown. In a non-interactive run (`--noninteractive`, `GROUNDWORK_RUNNER_MODE=true`, or `GROUNDWORK_BATCH_MODE=true`), skip the prompt and continue on the current model.
 
 ## Step 0: Resolve Project Context
-
-**Before loading specs, ensure project context is resolved:**
 
 1. **Monorepo check:** Does `.groundwork.yml` exist at the repo root?
    - If yes → Is `{{project_name}}` non-empty?
      - If empty → Invoke `Skill(skill="groundwork:select-project")` to select a project, then restart this skill.
      - If set → Project is `{{project_name}}`, specs at `{{specs_dir}}/`.
    - If no → Continue (single-project repo).
-2. **CWD mismatch check (monorepo only):**
-   - Skip if not in monorepo mode or if the project was just selected in item 1 above.
-   - If CWD is the repo root → fine, proceed.
-   - Check which project's path CWD falls inside (compare against all projects in `.groundwork.yml`).
-   - If CWD is inside the selected project's path → fine, proceed.
-   - If CWD is inside a different project's path → warn via `AskUserQuestion`:
+2. **CWD mismatch check (monorepo only):** skip it when the project was just selected or the invocation carried an explicit `--project`.
+   - Compare CWD against the project paths in `.groundwork.yml`: the repo root or the selected project's path → fine, proceed; no project's path → proceed without warning (shared directory).
+   - A different project's path → with `--noninteractive`, keep the selected project and continue; otherwise warn via `AskUserQuestion`:
      > "You're working from `<cwd>` (inside **[cwd-project]**), but the selected Groundwork project is **[selected-project]** (`[selected-project-path]/`). What would you like to do?"
      > - "Switch to [cwd-project]"
      > - "Stay with [selected-project]"
      If the user switches, invoke `Skill(skill="groundwork:select-project")`.
-   - If CWD doesn't match any project → proceed without warning (shared directory).
-3. Proceed with the resolved project context. All `{{specs_dir}}/` paths will resolve to the correct location.
+3. Proceed with the resolved project context.
 
 ## File Locations
 
@@ -107,7 +87,7 @@ Read the input specs (each may be a single file or directory) and extract:
 - Extract: Design principles (DP-NNN), Brand decisions (BRD-NNN), UX patterns (UXD-NNN)
 - Use for: Design-related tasks, component styling tasks, accessibility requirements
 
-**Detection:** Check for file first (takes precedence), then directory. When reading a directory, aggregate all `.md` files recursively with `_index.md` first, then numerically-prefixed files, then alphabetically.
+**Detection:** Check for a single file first (it takes precedence), then a directory. Read a directory as all its `.md` files recursively — `_index.md` first, then numerically-prefixed files, then alphabetically.
 
 If PRD or architecture is missing, prompt user:
 > "I need both the PRD and architecture to generate tasks.

@@ -16,7 +16,7 @@ Establishes a design system — foundations, brand identity, and UX patterns —
 
 **It stopped and asked whether I want to switch models.**
 
-That is the pre-flight step. It recommends Opus (1M context) at high effort and is skipped silently only when both are already true. Choose *Continue* to proceed as you are.
+That is the pre-flight step. It recommends Opus (1M context) at high effort and is skipped silently only when both are already true. Choose *Continue* to proceed as you are. The question is asked once per conversation — a skill invoked by another skill skips it once it has been shown — and a non-interactive run (a batch or the runner) skips it too.
 
 **It said I need a PRD first.**
 

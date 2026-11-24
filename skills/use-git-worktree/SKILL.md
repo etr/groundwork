@@ -1,6 +1,6 @@
 ---
 name: use-git-worktree
-description: This skill should be used when starting feature work that needs isolation from current workspace - creates isolated git worktrees with smart directory selection and safety verification
+description: Use when feature work needs isolation from the current workspace - creates a git worktree at the fixed task location, verifies it is gitignored, runs project setup, and checks the baseline tests
 user-invocable: false
 ---
 
@@ -130,94 +130,14 @@ Provide context for the calling skill:
 **Branch:** <branch from the helper>
 **Base Branch:** main
 **Working Directory:** <worktree-path from the helper>
-**Merge Mode:** [auto-merge|manual]
-
-Project setup complete. Baseline tests passing.
+**Baseline tests:** [passing | failing before any change — see Step 5]
 
 Ready to begin work.
 ```
 
-## Merge Operations
+## Merging
 
-### Auto-Merge Flow
-
-When task completes with auto-merge enabled:
-
-```bash
-# Ensure all changes committed in worktree
-cd <worktree-path>
-git status --porcelain  # Should be empty
-
-# Return to main repo and merge (branch/worktree-path as recorded in Step 3)
-cd <original-repo>
-git checkout <base-branch>
-git merge --no-ff <task-branch> -m "Merge <task-branch>: [Task Title]"
-
-# Cleanup
-git worktree remove <worktree-path>
-git branch -d <task-branch>
-```
-
-### Manual Verification Flow
-
-When user wants to review before merge:
-
-```markdown
-## Task Complete in Worktree
-
-**Location:** <worktree-path>
-**Branch:** <task-branch>
-
-All changes committed. To merge manually:
-```bash
-git checkout <base-branch>
-git merge --no-ff <task-branch>
-git worktree remove <worktree-path>
-git branch -d <task-branch>
-```
-
-Or to continue working:
-```bash
-cd <worktree-path>
-```
-```
-
-### Merge Conflict Handling
-
-If merge conflicts occur:
-
-```markdown
-## Merge Conflict
-
-The merge of <task-branch> into <base-branch> has conflicts.
-
-**Conflicting files:**
-- path/to/file1.ts
-- path/to/file2.ts
-
-**Options:**
-1. Resolve conflicts manually in the main repo
-2. Abort merge and keep worktree for investigation
-
-**To resolve:**
-```bash
-# In main repo after failed merge
-git status                    # See conflicting files
-# Edit files to resolve conflicts
-git add <resolved-files>
-git commit                    # Complete merge
-
-# Then cleanup
-git worktree remove <worktree-path>
-git branch -d <task-branch>
-```
-
-**To abort:**
-```bash
-git merge --abort
-# Worktree preserved at <worktree-path>
-```
-```
+Merging and cleanup belong to the skill that ran the task (`work-on`, `build-unplanned`, or `finalize-task`) — never merge on your own initiative. When you are the one asked to merge a worktree you created on your own, follow `${CLAUDE_PLUGIN_ROOT}/references/task-merge-sequence.md`: the tree must be validated and the validation repairs committed, the merge runs from the project root with `--no-ff`, the worktree and branch are removed only after the merge succeeds, and a conflict means abort and keep the worktree.
 
 ## Error Handling
 
@@ -231,12 +151,7 @@ git merge --abort
 
 ## Cleanup Commands
 
-**Remove a worktree:**
-```bash
-git worktree remove <path>
-git branch -d <branch>  # Safe delete (checks merge status)
-git branch -D <branch>  # Force delete
-```
+Removing a worktree and deleting its branch are part of a merge: use *Cleanup commands* in `references/task-merge-sequence.md`, which also says when a force delete is allowed.
 
 **List all worktrees:**
 ```bash

@@ -1,6 +1,6 @@
 ---
 name: just-do-it
-description: Execute all remaining tasks in sequence until completion. Pass --project <name> to pin the monorepo package for this whole run. Pass --take-over to resume past a possibly-live prior session without asking (a provably-live worker still refuses). Pass --on-unrelated-failure stop-and-ask|expand-and-fix|ignore-and-merge to choose how validation handles gate failures confidently unrelated to the active project (default stop-and-ask). Usage /groundwork:just-do-it [--project name] [--take-over] [--on-unrelated-failure mode]
+description: Execute all remaining tasks in sequence until completion. Optional flags - --project <name> pins the monorepo package for the whole run; --take-over resumes past a possibly-live prior session without asking; --on-unrelated-failure stop-and-ask|expand-and-fix|ignore-and-merge - how validation treats gate failures unrelated to the active project (default stop-and-ask).
 argument-hint: "[--project name] [--take-over] [--on-unrelated-failure stop-and-ask|expand-and-fix|ignore-and-merge]"
 allowed-tools: ["Read", "Edit", "Write", "Bash", "Glob", "Grep", "Task", "AskUserQuestion", "Skill"]
 disable-model-invocation: true
@@ -12,29 +12,15 @@ Executes all remaining tasks in sequence until completion, stopping on first fai
 
 ## Pre-flight: Model Recommendation
 
-**Your current effort level is `{{effort_level}}`.**
+**Your current effort level is `{{effort_level}}`.** Skip this step silently if effort is `high`, `xhigh`, or `max` (the scale is `low` < `medium` < `high` < `xhigh` < `max`, so `xhigh` and `max` are already above `high`) AND you are Sonnet or Opus. Otherwise ask via `AskUserQuestion` (header "Model check"; options "Continue anyway" / "Cancel — I'll switch first"):
 
-Skip this step silently if effort is `high`, `xhigh`, or `max` (the scale is `low` < `medium` < `high` < `xhigh` < `max`, so `xhigh` and `max` are already above `high`) AND you are Sonnet or Opus.
-If effort is `low` or `medium` (i.e. below `high`), you MUST show the recommendation prompt — regardless of model.
-If you are not Sonnet or Opus, you MUST show the recommendation prompt - regardless of effort level.
+> "Do you want to switch? Batch orchestration with dependency ordering and failure handling benefits from consistent reasoning.
+>
+> Recommended: Sonnet or Opus at high effort.
+>
+> To switch: cancel, run `/effort high` (and `/model sonnet` if on Haiku), then re-invoke this skill."
 
-Otherwise → use `AskUserQuestion`:
-
-```json
-{
-  "questions": [{
-    "question": "Do you want to switch? Batch orchestration with dependency ordering and failure handling benefits from consistent reasoning.\n\nTo switch: cancel, run `/effort high` (and `/model sonnet` if on Haiku), then re-invoke this skill.",
-    "header": "Recommended: Sonnet or Opus at high effort",
-    "options": [
-      { "label": "Continue" },
-      { "label": "Cancel — I'll switch first" }
-    ],
-    "multiSelect": false
-  }]
-}
-```
-
-If the user selects "Cancel — I'll switch first": output the switching commands above and stop. Do not proceed with the skill.
+If the user selects "Cancel — I'll switch first": output the switching commands and stop. Do not proceed with the skill. Ask once per conversation: a skill invoked by another skill skips this step when the recommendation was already shown. In a non-interactive run (`--noninteractive`, `GROUNDWORK_RUNNER_MODE=true`, or `GROUNDWORK_BATCH_MODE=true`), skip the prompt and continue on the current model.
 
 ## Workflow
 
@@ -44,30 +30,24 @@ Keep exactly one active task through planning, implementation, validation, final
 
 ### Step 0: Resolve Project Context
 
-**Before loading tasks, ensure project context is resolved:**
-
-0. **Explicit project argument (highest precedence):** If the invocation arguments include `--project <name>` and `<name>` is configured in `.groundwork.yml`, that project is authoritative for this entire run. If they include `--take-over`, remember it: it is forwarded to every resume-gate `check` invocation in this run (see Steps 1.5 and 3). If they include `--on-unrelated-failure <mode>` (`stop-and-ask`, `expand-and-fix`, or `ignore-and-merge`), remember it for this entire run: it is forwarded to every Phase C validate invocation and Phase E finalize-task invocation (see Phase C). An invalid mode value → stop the batch with a usage error. Resolve its root directly from `.groundwork.yml` (`<repo root>/<configured path>`); do not read or consult `{{project_name}}`.
-   - Do NOT invoke `select-project`, do NOT persist or change the stored selection, and do NOT run the CWD mismatch check below. Other sessions may be running concurrently on different packages and must not be disturbed by a global switch.
+0. **Explicit project argument (highest precedence):** If the invocation arguments include `--project <name>` and `<name>` is configured in `.groundwork.yml`, that project is authoritative for this entire run. If they include `--take-over`, remember it: it is forwarded to every resume-gate `check` invocation in this run (see Steps 1.5 and 3). If they include `--on-unrelated-failure <mode>` (`stop-and-ask`, `expand-and-fix`, or `ignore-and-merge`), remember it for this entire run: it is forwarded to every Phase C validate invocation and Phase D finalize-task invocation (see Phase C). An invalid mode value → stop the batch with a usage error. Resolve its root directly from `.groundwork.yml` (`<repo root>/<configured path>`); do not read or consult `{{project_name}}`.
+   - Do NOT invoke `select-project` — it is interactive setup for a single session, so never run it when an explicit `--project` was provided — and do NOT persist or change the stored selection. Other sessions may be running concurrently on different packages and must not be disturbed by a global switch. (The CWD mismatch check below skips itself for an explicit `--project`.)
    - Substitute the resolved project's paths for the template vars everywhere below: `<project root>/specs` for `{{specs_dir}}` and `<project root>/.groundwork-plans` for `{{plans_dir}}`.
    - Thread the project explicitly through every downstream invocation instead of relying on the shared selection: pass `--project <name>` to validate and finalize-task, call the worktree helper as `node ${CLAUDE_PLUGIN_ROOT}/lib/worktree-identity.js TASK-NNN --project <name>`, and prefix other lib calls with `GROUNDWORK_PROJECT=<name>`.
    - Then skip directly to Step 1.
 1. **Monorepo check:** Does `.groundwork.yml` exist at the repo root?
    - If yes → Is `{{project_name}}` non-empty?
-     - If empty → Invoke `Skill(skill="groundwork:select-project")` to select a project, then restart this skill. (`select-project` is interactive setup for a single session — never run it when an explicit `--project` was provided; item 0 already resolved the project in that case.)
+     - If empty → Invoke `Skill(skill="groundwork:select-project")` to select a project, then restart this skill.
      - If set → Project is `{{project_name}}`, specs at `{{specs_dir}}/`.
    - If no → Continue (single-project repo).
-2. **CWD mismatch check (monorepo only):**
-   - Skip if not in monorepo mode or if the project was just selected in item 1 above.
-   - If CWD is the repo root → fine, proceed.
-   - Check which project's path CWD falls inside (compare against all projects in `.groundwork.yml`).
-   - If CWD is inside the selected project's path → fine, proceed.
-   - If CWD is inside a different project's path → warn via `AskUserQuestion`:
+2. **CWD mismatch check (monorepo only):** skip it when the project was just selected or the invocation carried an explicit `--project`.
+   - Compare CWD against the project paths in `.groundwork.yml`: the repo root or the selected project's path → fine, proceed; no project's path → proceed without warning (shared directory).
+   - A different project's path → with `--noninteractive`, keep the selected project and continue; otherwise warn via `AskUserQuestion`:
      > "You're working from `<cwd>` (inside **[cwd-project]**), but the selected Groundwork project is **[selected-project]** (`[selected-project-path]/`). What would you like to do?"
      > - "Switch to [cwd-project]"
      > - "Stay with [selected-project]"
      If the user switches, invoke `Skill(skill="groundwork:select-project")`.
-   - If CWD doesn't match any project → proceed without warning (shared directory).
-3. Proceed with the resolved project context. All `{{specs_dir}}/` paths will resolve to the correct location.
+3. Proceed with the resolved project context.
 
 ### Step 1: Load and Analyze Tasks
 
@@ -85,7 +65,7 @@ Keep exactly one active task through planning, implementation, validation, final
    - Topological sort respecting dependencies
    - Blocked tasks cannot execute until dependencies complete
 
-**Detection:** Check for file first (takes precedence), then directory.
+**Detection:** Check for a single file first (it takes precedence), then a directory. Read a directory as all its `.md` files recursively — `_index.md` first, then numerically-prefixed files, then alphabetically.
 
 ### Step 1.5: Sweep Stale Worktrees and Gate the First Task
 
@@ -151,7 +131,7 @@ For each remaining task in dependency order:
    - `resume_at: conflict` → surface the `evidence` and stop the batch; the worktree is preserved.
    - Skip every phase listed in `skip_phases`: when `plan.present` is true, reuse `plan.file` as `plan_file_path` instead of Phase A; when `validate` or beyond is done, jump straight to that phase.
    - `resume_at: done` → run the `clear-checkpoint` action, log the task complete, advance.
-   - Run each `actions` command verbatim at its annotated moment. One `check` returns only the next action, so re-run it after each recorded phase to fetch the one after: on a fresh task it returns `record … --phase plan` (run it right after persisting the plan); that re-run returns `record … --phase implemented` (run it right after a successful Phase B); once Phase E lands, the last re-run returns `clear`.
+   - Run each `actions` command verbatim at its annotated moment. One `check` returns only the next action, so re-run it after each recorded phase to fetch the one after: on a fresh task it returns `record … --phase plan` (run it right after persisting the plan); that re-run returns `record … --phase implemented` (run it right after a successful Phase B); once Phase D lands, the last re-run returns `clear`.
 
 4. **Keep task status changes inside the active task worktree.** Implementation records `In Progress`; validation/finalization record `Complete`. The batch does not premark queued tasks. (An interactive `work-on` run differs: there `implement-task` marks the task `In Progress` in the base catalog, which is what `work-on-next-task` reads to offer it for resume.)
 
@@ -173,10 +153,11 @@ Relevant architecture:
 [extracted from {{specs_dir}}/architecture.md or {{specs_dir}}/architecture/]
 
 REQUIREMENTS FOR THE PLAN:
-1. All work happens in the task worktree reported by the executor (not main workspace)
-2. Must follow TDD: write test → implement → verify cycle
-3. Tests target the task's recorded test seams; when the task records none, the plan names the highest existing seam it chose, so the implementer never has to ask
+1. Work happens in an isolated git worktree — the plan must instruct the implementer to resolve it with `node ${CLAUDE_PLUGIN_ROOT}/lib/worktree-identity.js TASK-NNN` and use the returned `path` and `branch` verbatim (never hand-derived `.worktrees/TASK-NNN` paths)
+2. Implementation must follow TDD — write failing tests first, then make them pass
+3. Tests target the task's recorded Test Seams. If the task records none, or a recorded seam cannot reach the behavior, plan tests at the highest existing seam that reaches it — the plan states this choice so the implementer never has to ask
 4. Plan covers implementation only — validation and merge are handled separately by the caller
+5. If a design system is present, the plan must reference design tokens, colors, and component patterns from it
 "
 )
 ```
@@ -218,9 +199,10 @@ TASK:
 - tasks_path: [absolute path to {{specs_dir}}/tasks.md or {{specs_dir}}/tasks/]
 
 Read the '### TASK-NNN:' section from tasks_path for goal, action items,
-acceptance criteria, and test seams (when recorded). Tests target the recorded
-seams; when none are recorded or a recorded seam cannot reach the behavior,
-follow the seam rule in your TDD skill. Do not ask the caller for task details.
+acceptance criteria, and test seams (when recorded). Tests target the
+recorded seams; when none are recorded or a recorded seam cannot reach the
+behavior, follow the seam rule in your TDD skill (highest existing seam,
+then record the choice). Do not ask the caller for task details.
 
 PLAN FILE: [plan_file_path]
 Read this file first with the Read tool — it contains the validated implementation plan.
@@ -246,7 +228,7 @@ Your LAST line of output MUST be the RESULT line.
 ```
 
 Parse the result:
-- `RESULT: IMPLEMENTED | <path> | <branch> | <base_branch>` → Save these values, proceed to Phase C
+- `RESULT: IMPLEMENTED | <path> | <branch> | <base_branch>`, or the same three fields spelled `worktree_path=<path> | branch=<branch> | base_branch=<base_branch>` → Save these values, proceed to Phase C
 - `RESULT: FAILURE | ...` → STOP immediately, report failure
 - No parseable RESULT line → Treat as failure
 
@@ -262,12 +244,13 @@ If Step 0 item 0 resolved an explicit `--project <name>`, include it: `args="--p
 
 Parse its terminal line:
 
-- `Validation PASSED (...)` → proceed to Phase E.
-- `Validation PASSED-WITH-WAIVERS (...)` (only possible with `--on-unrelated-failure ignore-and-merge`) → proceed to Phase E. Relay the waived-gate lines into the per-task log line and the completion report; never present a waived gate as passed.
+- `Validation PASSED (...)` → proceed to Phase D.
+- `Validation PASSED-WITH-WAIVERS (...)` (only possible with `--on-unrelated-failure ignore-and-merge`) → proceed to Phase D. Relay the waived-gate lines into the per-task log line and the completion report; never present a waived gate as passed.
 - `Validation INCOMPLETE (...)` or an unparseable result → stop the batch. Report the reason and preserved worktree.
 
 Do not implement a separate reviewer/fixer loop here. The `validate` skill owns the frozen baseline, repair envelopes, causal closure reviews, unworked-finding persistence, and cleanup.
-#### Phase E: Finalize
+
+#### Phase D: Finalize
 
 Invoke the shared finalizer from the validated task worktree:
 
@@ -308,7 +291,7 @@ When all tasks complete successfully, report:
 - Cleaned up: X
 
 ### Next Steps
-- Run `/source-product-specs-from-code` to update specs with any implementation changes
+- Run `/groundwork:source-product-specs-from-code` to update specs with any implementation changes
 - Plan next phase if milestone complete
 - Review merged changes with `git log --oneline -10`
 ```

@@ -130,10 +130,8 @@ Apply these labels to all information:
 
 ### Verification Rules
 
-- **Never include contradicted information**
-- **Always note verification level** in findings
-- **Prefer no answer** over unverified speculation
-- Cross-reference community advice against official docs
+- **Always note the verification level** in findings, and **prefer no answer** over unverified speculation
+- Cross-reference community advice against official docs (step 6 of the process below)
 
 ## Pitfall Avoidance
 
@@ -142,7 +140,6 @@ Before including any information:
 1. **Check publication dates** - Flag content older than 18 months
 2. **Search for deprecation** - Query `{tech} deprecated {year}` before recommending
 3. **Verify negative claims** - Don't include "X is bad" without evidence
-4. **Require 2+ sources** for community recommendations
 
 ## Output Format
 
@@ -239,10 +236,3 @@ Return your research as JSON:
 7. **Document all sources** with access dates
 8. **Flag research gaps** honestly
 
-## Important Notes
-
-- Research quality directly impacts architecture decisions
-- Incomplete research is better than inaccurate research
-- Always document what you couldn't find
-- Prefer saying "I couldn't verify this" over speculation
-- Technology landscapes change rapidly - note access dates

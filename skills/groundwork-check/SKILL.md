@@ -1,6 +1,6 @@
 ---
 name: groundwork-check
-description: Validate the Groundwork plugin for common issues. Usage /groundwork:groundwork-check
+description: Validate the Groundwork plugin for common issues.
 allowed-tools: ["Bash", "Read", "Skill"]
 disable-model-invocation: true
 ---

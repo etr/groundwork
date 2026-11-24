@@ -1,6 +1,6 @@
 ---
 name: understanding-feature-requests
-description: This skill should be used when clarifying feature requests, gathering requirements, or checking for contradictions in proposed changes
+description: Use when clarifying feature requests, gathering requirements, or checking for contradictions in proposed changes
 user-invocable: false
 ---
 
@@ -12,29 +12,15 @@ Interactive workflow for clarifying feature requests and ensuring they don't con
 
 ## Pre-flight: Model Recommendation
 
-**Your current effort level is `{{effort_level}}`.**
+**Your current effort level is `{{effort_level}}`.** Skip this step silently if effort is `high`, `xhigh`, or `max` (the scale is `low` < `medium` < `high` < `xhigh` < `max`, so `xhigh` and `max` are already above `high`) AND you are Sonnet or Opus. Otherwise ask via `AskUserQuestion` (header "Model check"; options "Continue anyway" / "Cancel — I'll switch first"):
 
-Skip this step silently if effort is `high`, `xhigh`, or `max` (the scale is `low` < `medium` < `high` < `xhigh` < `max`, so `xhigh` and `max` are already above `high`) AND you are Sonnet or Opus.
-If effort is `low` or `medium` (i.e. below `high`), you MUST show the recommendation prompt — regardless of model.
-If you are not Sonnet or Opus, you MUST show the recommendation prompt - regardless of effort level.
+> "Do you want to switch? Contradiction detection in feature requirements benefits from consistent reasoning.
+>
+> Recommended: Sonnet or Opus at high effort.
+>
+> To switch: cancel, run `/effort high` (and `/model sonnet` if on Haiku), then re-invoke this skill."
 
-Otherwise → use `AskUserQuestion`:
-
-```json
-{
-  "questions": [{
-    "question": "Do you want to switch? Contradiction detection in feature requirements benefits from consistent reasoning.\n\nTo switch: cancel, run `/effort high` (and `/model sonnet` if on Haiku), then re-invoke this skill.",
-    "header": "Recommended: Sonnet or Opus at high effort",
-    "options": [
-      { "label": "Continue" },
-      { "label": "Cancel — I'll switch first" }
-    ],
-    "multiSelect": false
-  }]
-}
-```
-
-If the user selects "Cancel — I'll switch first": output the switching commands above and stop. Do not proceed with the skill.
+If the user selects "Cancel — I'll switch first": output the switching commands and stop. Do not proceed with the skill. Ask once per conversation: a skill invoked by another skill skips this step when the recommendation was already shown. In a non-interactive run (`--noninteractive`, `GROUNDWORK_RUNNER_MODE=true`, or `GROUNDWORK_BATCH_MODE=true`), skip the prompt and continue on the current model.
 
 ## Step 1: Clarify the Request
 

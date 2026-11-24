@@ -89,105 +89,7 @@ Use these category values in findings (kebab-case):
 
 ## Language-Specific Checks
 
-### JavaScript/TypeScript
-- `forEach` with `await` inside (use `Promise.all` or `for...of` with batching)
-- Spreading large arrays in loops: `[...arr, item]` in reduce
-- Missing `useMemo`/`useCallback` for expensive React computations
-- Creating new objects/arrays in render (unstable references)
-- `JSON.parse(JSON.stringify())` for deep clone (use structuredClone or library)
-- Regex created inside loops instead of compiled once
-- Not using `Map`/`Set` for lookups
-- Building strings with `+=` in loops (use array + join)
-
-### Python
-- List comprehension inside another on large data
-- String concatenation in loop (use `''.join()`)
-- Not using generators for large sequences
-- Repeated `in` checks on list (use set)
-- Missing `__slots__` for many small objects
-- Not using `lru_cache` for pure recursive functions
-- DataFrame operations in loops instead of vectorized
-- Loading entire file when iterating lines
-
-### Java
-- String concatenation in loops (use StringBuilder)
-- Autoboxing in tight loops
-- Creating iterators repeatedly instead of reusing
-- Not using primitive streams for numeric operations
-- Synchronizing entire methods instead of specific blocks
-- Not closing resources (use try-with-resources)
-- Creating `Pattern` objects inside loops
-- Using `LinkedList` when `ArrayList` would perform better
-
-### C#
-- LINQ in tight loops without materialization
-- Boxing/unboxing in generic collections
-- String interpolation in loops (use StringBuilder)
-- Not using `Span<T>` for slice operations
-- Async void instead of async Task
-- Capturing loop variables in closures
-- Not using `ArrayPool<T>` for temporary arrays
-- `ToList()` when enumeration is sufficient
-
-### Go
-- Allocating in loops (preallocate slices with capacity)
-- String concatenation (use strings.Builder)
-- Not reusing buffers (use sync.Pool)
-- Goroutine leaks (missing context cancellation)
-- Mutex held across I/O operations
-- Using defer in loops (defers only run at function exit)
-- Not using buffered channels appropriately
-- Reflection in hot paths
-
-### Rust
-- Unnecessary `.clone()` calls
-- Not using iterators (manual index loops)
-- Allocating `String` when `&str` suffices
-- Not using `Vec::with_capacity` for known sizes
-- `collect()` to intermediate Vec when chaining would work
-- Arc/Mutex where Rc/RefCell would suffice (single-threaded)
-- Not using `Cow<str>` for conditionally-owned strings
-- Unnecessary bounds checks (use `get_unchecked` in verified hot paths)
-
-### C/C++
-- Memory allocation in loops (reuse buffers)
-- Passing large structs by value (use const reference)
-- Virtual function calls in tight loops
-- Cache-unfriendly data access patterns (column vs row major)
-- Missing move semantics (unnecessary copies)
-- Not using `reserve()` for vectors
-- Redundant string copies (use string_view)
-- Unrolled loops where compiler could optimize
-
-### PHP
-- Not using prepared statements (recompiles each query)
-- Array functions creating copies instead of references
-- Loading entire files into memory (use streaming)
-- Not using generators for large datasets
-- Autoloading overhead in loops
-- Creating objects in tight loops
-- Not using opcache effectively
-- String functions vs array functions on large data
-
-### Ruby
-- Method calls in tight loops (Ruby method calls are slow)
-- Creating symbols dynamically (symbol table grows forever)
-- Not using `.freeze` for constant strings
-- `each` with block vs `while` for hot loops
-- Not using `Set` for membership tests
-- Regular expressions without `/o` flag (recompiles)
-- `map` followed by `compact` (use `filter_map`)
-- Not using `lazy` for large enumerables
-
-### Swift/Kotlin (Mobile)
-- Creating views in loops instead of reusing cells
-- Not using lazy properties for expensive initialization
-- Main thread blocking with synchronous I/O
-- Large image loading without downsampling
-- Retain cycles in closures (missing weak references)
-- Not using value types where appropriate
-- Excessive object allocation in scroll handlers
-- Not using background queues/dispatchers for heavy work
+Read `${CLAUDE_PLUGIN_ROOT}/references/checklists/performance-review-languages.md` and apply its section for each language family present in `changed_file_paths`; the families absent from the change do not apply. Read only the sections that match.
 
 ## Cross-Language Patterns
 
@@ -215,7 +117,7 @@ Use these category values in findings (kebab-case):
 4. **Look for language-specific patterns** (see below)
 5. **Document findings** with specific file/line references
 6. **Assign severity** based on impact and likelihood
-7. **Calculate overall score** and verdict
+7. **Calculate the score and verdict** (Score: the rubric under *Score* in the review protocol.)
 
 ## Output Format
 
@@ -241,31 +143,7 @@ Return your review as JSON:
 
 ### Dual Output Modes
 
-**File mode** — if your prompt includes a `findings_file: <path>` line (along with `agent_name:`, `iteration:`, and `review_mode:`), write the full JSON above to that path using the `Write` tool, then return ONLY a compact one-line JSON response. The on-disk file adds `agent`, `iteration`, and `review_mode` plus a 1-indexed `id` on every finding:
-
-```json
-{
-  "agent": "<agent_name from prompt>",
-  "iteration": <iteration from prompt>,
-  "review_mode": "<review_mode from prompt>",
-  "summary": "...",
-  "score": 82,
-  "verdict": "request-changes",
-  "findings": [
-    {"id": 1, "severity": "critical", "category": "...", "file": "...", "line": 45, "finding": "...", "recommendation": "...", "disposition": "actionable"}
-  ]
-}
-```
-
-Your conversational response in file mode is exactly one JSON line (no findings inline, no extra prose):
-
-```json
-{"verdict":"request-changes","score":82,"summary":"...","findings_file":"<the path you wrote>","counts":{"critical":1,"major":0,"minor":0}}
-```
-
-`counts` reflects how many findings of each severity you wrote to the file.
-
-**Inline mode** — if your prompt does NOT include a `findings_file:` line, return the full JSON inline (the original shape shown above, with no `agent`/`iteration` header and no `id`s). This mode is used by `review-pr`.
+Follow **Output Modes** in `${CLAUDE_PLUGIN_ROOT}/references/validation-review-protocol.md`. File mode (the prompt carries a `findings_file:` line): write the full review to that path with the `Write` tool — your schema above plus the header, finding `id`s, `disposition`, and `cleared_invariants` — then return only the compact one-line response. Inline mode (no `findings_file:` line, as in `review-pr`): return the full JSON inline exactly as shown above.
 
 ## Severity Definitions
 

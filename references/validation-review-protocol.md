@@ -4,6 +4,41 @@ Use the `review_mode` supplied by the validation coordinator. The modes grant di
 
 In file mode, copy the supplied mode into the review artifact as top-level `"review_mode": "initial-audit"` or `"review_mode": "closure-review"`. Do not infer or omit it. A caller that names no mode (inline use outside validation, such as a pull-request review) gets an `initial-audit` over the baseline it supplied.
 
+## Output Modes
+
+Each reviewer has one inline schema — the JSON its own definition shows. Which shape you return depends on the prompt.
+
+**File mode** — the prompt includes a `findings_file: <path>` line (along with `agent_name:`, `iteration:`, and `review_mode:`). Write the review to that path with the `Write` tool, then return ONLY the compact one-line response. The on-disk file is your inline schema with a header, finding `id`s, and `cleared_invariants` added:
+
+```json
+{
+  "agent": "<agent_name from prompt>",
+  "iteration": <iteration from prompt>,
+  "review_mode": "<review_mode from prompt>",
+  "cleared_invariants": ["<an invariant or assumption this review confirmed, with the evidence that confirmed it>"],
+  "summary": "...",
+  "score": 85,
+  "verdict": "approve",
+  "findings": [
+    {"id": 1, "severity": "major", "category": "...", "file": "...", "line": 42, "finding": "...", "recommendation": "...", "disposition": "actionable"}
+  ]
+}
+```
+
+The header names the artifact's owner and round. `id` is 1-indexed within the file. `disposition` — and in `closure-review` `origin` and `causal_ref` — follow the rules under `closure-review`. `cleared_invariants` is optional in either mode: one short string per invariant or assumption this review confirmed, each with its evidence. The coordinator re-runs a reviewer only when a repair disturbs one of them, so an unlisted invariant is not protected.
+
+Your conversational response in file mode is exactly one JSON line (no findings inline, no extra prose). `counts` reflects how many findings of each severity you wrote to the file; `cleared_invariants` repeats the file's list so the coordinator need not open the file:
+
+```json
+{"verdict":"approve","score":85,"summary":"...","findings_file":"<the path you wrote>","counts":{"critical":0,"major":1,"minor":0},"cleared_invariants":["..."]}
+```
+
+**Inline mode** — the prompt has no `findings_file:` line (a pull-request review, for example). Return your inline schema exactly as your own definition shows it: no `agent`/`iteration` header and no finding `id`s. Add `cleared_invariants` when you confirmed something worth preserving.
+
+## Score
+
+Whenever you report a 0-100 score and your own definition gives no formula for it, use this rubric so scores compare across reviewers: start at 100 and subtract 30 per actionable `critical` finding, 15 per actionable `major` finding, and 3 per actionable `minor` finding; floor at 0. A reviewer with no findings scores 100. The verdict never derives from the score — apply your own verdict rules.
+
 ## Verification Scope and Dependencies
 
 Run all required checks. An additional blocking check must identify the baseline requirement, concrete failure evidence or an uncovered required acceptance criterion, and the decisive result it will establish. A preferred design or hypothetical safeguard alone cannot expand acceptance.
@@ -16,7 +51,7 @@ Review the complete declared baseline: the task, original implementation diff, a
 
 - Make one comprehensive discovery pass. Do not defer known review questions to a later iteration.
 - Report every supported finding with concrete evidence.
-- State the important invariants and assumptions you cleared so later reviews can preserve them.
+- List the important invariants and assumptions you cleared in `cleared_invariants` (see *Output Modes*) so later reviews can preserve them.
 
 ## `closure-review`
 

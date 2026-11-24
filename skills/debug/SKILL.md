@@ -1,12 +1,14 @@
 ---
 name: debug
-description: This skill should be used when investigating bugs, unexpected behavior, test failures, or any code that does not work as expected - enforces systematic root cause analysis before any fix
+description: Use when investigating bugs, unexpected behavior, test failures, or any code that does not work as expected - enforces systematic root cause analysis before any fix
 argument-hint: "[bug description]"
 ---
 
 <!-- Reproduction-loop menu, ranked hypotheses, and instrumentation tagging adapted from the "diagnosing-bugs" skill in github.com/mattpocock/skills (MIT). -->
 
 # Debugging
+
+**This is a rigid skill.** Follow steps exactly.
 
 ## Overview
 
@@ -18,29 +20,15 @@ Find the root cause. Prove it. Then fix it.
 
 ## Pre-flight: Model Recommendation
 
-**Your current effort level is `{{effort_level}}`.**
+**Your current effort level is `{{effort_level}}`.** Skip this step silently if effort is `high`, `xhigh`, or `max` (the scale is `low` < `medium` < `high` < `xhigh` < `max`, so `xhigh` and `max` are already above `high`) AND you are Opus (1M context). Otherwise ask via `AskUserQuestion` (header "Model check"; options "Continue anyway" / "Cancel — I'll switch first"):
 
-Skip this step silently if effort is `high`, `xhigh`, or `max` (the scale is `low` < `medium` < `high` < `xhigh` < `max`, so `xhigh` and `max` are already above `high`) AND you are Opus (1M context).
-If effort is `low` or `medium` (i.e. below `high`), you MUST show the recommendation prompt — regardless of model.
-If you are not Opus (1M context), you MUST show the recommendation prompt - regardless of effort level.
+> "Do you want to switch? Falsifiable hypothesis formation and resisting the temptation to jump to fixes benefit from deeper reasoning.
+>
+> Recommended: Opus (1M context) at high effort.
+>
+> To switch: cancel, run `/model opus[1m]` and `/effort high`, then re-invoke this skill."
 
-Otherwise → use `AskUserQuestion`:
-
-```json
-{
-  "questions": [{
-    "question": "Do you want to switch? Falsifiable hypothesis formation and resisting the temptation to jump to fixes benefit from deeper reasoning.\n\nTo switch: cancel, run `/model opus[1m]` and `/effort high`, then re-invoke this skill.",
-    "header": "Recommended: Opus (1M context) at high effort",
-    "options": [
-      { "label": "Continue" },
-      { "label": "Cancel — I'll switch first" }
-    ],
-    "multiSelect": false
-  }]
-}
-```
-
-If the user selects "Cancel — I'll switch first": output the switching commands above and stop. Do not proceed with the skill.
+If the user selects "Cancel — I'll switch first": output the switching commands and stop. Do not proceed with the skill. Ask once per conversation: a skill invoked by another skill skips this step when the recommendation was already shown. In a non-interactive run (`--noninteractive`, `GROUNDWORK_RUNNER_MODE=true`, or `GROUNDWORK_BATCH_MODE=true`), skip the prompt and continue on the current model.
 
 ## When to Use
 
@@ -62,8 +50,6 @@ Thinking "I already know the fix"? Stop. That's guessing, not debugging.
 ```
 NO CODE CHANGES UNTIL YOU CAN EXPLAIN THE ROOT CAUSE
 ```
-
-Think you know the fix? Prove the root cause first. Then fix.
 
 **No exceptions:**
 - Don't "try a quick fix to see if it works"
@@ -294,8 +280,6 @@ Three changes at once, no hypothesis, no understanding
 
 State the root cause. Write a failing test. Make the minimal fix.
 
-You've isolated the root cause. Now prove it with a test, then fix it.
-
 **Required steps:**
 1. **State the root cause** — Write it in the debug journal with a verification level (see Verification Levels below)
 2. **Write a failing test** — Invoke `Skill(skill="groundwork:test-driven-development")` and follow the TDD cycle. The test must reproduce the exact bug, at a **correct seam**: one where the test exercises the real bug pattern as it occurs at the call site. If the only available seam is too shallow to replicate the chain that triggered the bug, a regression test there gives false confidence — **the absence of a correct seam is itself a finding**: record it in the journal, flag it for architecture review, and say so in the fix report instead of forcing a hollow test.
@@ -357,33 +341,7 @@ Three failed fixes means your root cause analysis is wrong. More attempts won't 
 
 **Question the architecture.** Three failed fixes often signal something deeper than an incomplete investigation. The bug may exist because the design is fundamentally unsound — a race condition baked into the concurrency model, a data integrity problem caused by a missing constraint, a failure mode that the architecture doesn't account for. When you escalate, shift the question from "help me fix this bug" to "is this design sound?"
 
-**Escalation output format:**
-
-```markdown
-## Escalation: [Bug Description]
-
-### What I tried
-
-| # | Hypothesis | Fix Attempted | Result |
-|---|-----------|---------------|--------|
-| 1 | [hypothesis] | [what you changed] | [what happened] |
-| 2 | [hypothesis] | [what you changed] | [what happened] |
-| 3 | [hypothesis] | [what you changed] | [what happened] |
-
-### Eliminated hypotheses
-- [hypothesis]: eliminated because [evidence]
-
-### What I know
-- [confirmed fact with evidence]
-
-### Could this be architectural?
-[If 3 fixes failed, consider whether the bug reflects a design problem, not just a code problem. What assumption does the current architecture make that might be wrong?]
-
-### Recommended next step
-[specific suggestion for the human partner]
-```
-
-Revert all failed fix attempts. Leave the codebase clean.
+**Escalation report:** use the format in `${CLAUDE_PLUGIN_ROOT}/references/debug-escalation.md`, and send it only after reverting every failed fix attempt — the codebase stays clean.
 
 **After a resolved bug — and after every escalation — recommend `/groundwork:retro`:** a bug that needed this workflow is the strongest signal the environment needs a deterministic check, a navigation pointer, or a seam fix. Run it in this session while the evidence is still here.
 
@@ -454,7 +412,7 @@ Ranked before the first test; each with the prediction that would confirm or ref
 | 1 | [what you did] | [what happened] | [what it means] |
 
 ## Root Cause
-**Verification level:** [Verified | Corroborated | Unverified]
+**Verification level:** [Verified | Corroborated | Unverified | Contradicted]
 
 [Root cause statement]
 
@@ -473,14 +431,14 @@ Ranked before the first test; each with the prediction that would confirm or ref
 
 Root cause claims require a confidence level. This prevents false confidence and forces honest assessment.
 
-| Level | Meaning | Required Before Fix? |
-|-------|---------|---------------------|
-| **Verified** | Root cause proven by direct evidence (test reproduces it, fix resolves it, revert re-introduces it) | Yes — proceed to fix |
-| **Corroborated** | Multiple independent observations support it, but no single definitive proof | Yes — proceed to fix with extra caution |
+| Level | Meaning | Enough to fix? |
+|-------|---------|----------------|
 | **Unverified** | Single observation or logical inference only | No — gather more evidence first |
+| **Corroborated** | Independent observations all point to the root cause and the competing hypotheses are eliminated. The minimum for Phase 4. | Yes — proceed to fix |
+| **Verified** | Corroborated, and then proven in Phase 5: the failing test reproduced the bug before the fix and passes after it, and the original reproduction no longer fails | The outcome of Phase 5, never an input to Phase 4 |
 | **Contradicted** | Evidence conflicts with the hypothesis | No — eliminate this hypothesis |
 
-**Rule: Never fix based on an unverified root cause.** If your confidence is "unverified," you're guessing. Go back to Phase 3.
+**Rule: Never fix on less than Corroborated.** A single observation is a guess. Go back to Phase 3.
 
 ## Common Rationalizations
 
@@ -540,26 +498,18 @@ During interactive debugging, your human partner's reactions are a signal channe
 
 | Problem | Solution |
 |---------|----------|
-| Can't reproduce | Check environment, timing, data. Add logging. Wait for recurrence. |
+| Can't reproduce | Work through the reproduction menu in Phase 2. |
 | Hypothesis keeps being wrong | Step back. Re-read the code from scratch. Your mental model is wrong. |
-| Fix works but don't understand why | Revert. That's not a fix, it's an accident. Investigate why it works. |
-| Too many variables | Simplify. Remove components until you find the minimal failing case. |
+| Fix works but don't understand why | Not a fix — the Iron Law applies. Revert it, then investigate why it worked. |
+| Too many variables | Shrink the reproduction (Phase 2) until one variable remains. |
 | Intermittent failure | Add instrumentation. Look for race conditions, timing, external state. |
 | Stuck in a loop | Rubber duck. Explain the bug step by step. The gap is the clue. |
 | Bug disappeared | It's hiding. Check if something else changed. Don't declare victory. |
-| Fix breaks other tests | Your fix is wrong, or the other tests reveal a deeper issue. Investigate. |
+| Fix breaks other tests | A failed fix: back to Phase 3, as at the end of Phase 5. |
 
 ## When Investigation Finds No Root Cause
 
-Sometimes systematic investigation legitimately concludes without a clear root cause — environmental issues, timing-dependent failures, external service flakiness, or bugs that disappear under observation. This is rare, but it happens.
-
-**When you genuinely cannot identify the root cause:**
-
-1. **Document what was investigated and eliminated.** Every hypothesis tested, every result observed. This prevents the next investigator from repeating your work.
-2. **Implement appropriate handling.** Retry logic, timeouts, clearer error messages, or monitoring — not as a "fix," but as resilience for a known-unknown failure mode. Be explicit that this is mitigation, not a root cause fix.
-3. **Add instrumentation for recurrence.** Logging, metrics, or alerts that will capture more data when the failure happens again. Design the instrumentation to answer the specific questions you couldn't answer this time.
-4. **Record in the debug journal with status "Inconclusive."** Include what you know, what you don't, and what data would resolve it.
-5. **Communicate honestly.** Tell your human partner what you investigated, what you eliminated, and that you couldn't pin it down — not a vague "it should be fine now."
+Sometimes systematic investigation legitimately concludes without a clear root cause — environmental issues, timing-dependent failures, external service flakiness, or bugs that disappear under observation. This is rare, but it happens. When it genuinely does, follow *When investigation finds no root cause* in `${CLAUDE_PLUGIN_ROOT}/references/debug-escalation.md`: document what was eliminated, mitigate without calling it a fix, instrument for recurrence, record the journal as "Inconclusive", and tell your human partner plainly.
 
 **Caveat:** 95% of "no root cause found" conclusions are actually incomplete investigations. Before declaring inconclusive, honestly assess:
 - Did you complete all five phases?
@@ -614,7 +564,7 @@ TypeError: Cannot read property 'theme' of null
 
 **Root cause:** `getUserProfile` accesses `preferences.theme` without null-checking the join result. Users without a preferences row trigger a TypeError.
 
-**Verification level:** Verified (direct evidence: null row + no null check + exact error match).
+**Verification level:** Corroborated — two independent observations (the missing row; the unchecked access on a cache-free stack) agree, and both competing hypotheses are eliminated.
 
 ### Phase 4: FIX
 
@@ -651,6 +601,8 @@ Every box in the Phase 5 checklist ticked:
 - [x] Throwaway capture files deleted
 
 Done.
+
+**Verification level:** Verified — the failing test reproduced the bug before the fix and passes after it, and the original reproduction no longer fails.
 
 ## Final Rule
 

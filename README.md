@@ -399,9 +399,9 @@ Keep specs in sync with what was actually built. Run these at the end of a sessi
 
 | Skill | Args | Description | When to Use |
 |---------|------|-------------|-------------|
-| `/groundwork:source-product-specs-from-code` | `[files...]` | Update PRD to reflect implementation changes | After product decisions during implementation |
-| `/groundwork:source-architecture-from-code` | `[files...]` | Update architecture docs with new decisions | After architectural changes during implementation |
-| `/groundwork:source-ux-design-from-code` | `[files...]` | Update design system with token/pattern changes | After design changes during implementation |
+| `/groundwork:source-product-specs-from-code` | — | Update PRD to reflect implementation changes | After product decisions during implementation |
+| `/groundwork:source-architecture-from-code` | — | Update architecture docs with new decisions | After architectural changes during implementation |
+| `/groundwork:source-ux-design-from-code` | — | Update design system with token/pattern changes | After design changes during implementation |
 | `/groundwork:split-specs` | — | Convert single-file PRD into directory format | PRD has grown large (auto-triggered at 500+ lines or 15+ features) |
 | `/groundwork:split-architecture` | — | Convert single-file architecture doc into directory format | Architecture doc has grown large (auto-triggered at 500+ lines or 10+ DRs) |
 
@@ -578,7 +578,7 @@ For parallel task execution, use swarming mode to run each task in its own agent
 /groundwork:just-do-it-swarming
 ```
 
-Each task is assigned to an agent team teammate — a full Claude Code session with its own context window that can spawn subagents (Plan, task-executor, 9 validation agents). This prevents context accumulation in the lead's conversation.
+Each task is assigned to an agent team teammate — a full Claude Code session with its own context window that can spawn subagents (Plan, task-executor, the validation agents). This prevents context accumulation in the lead's conversation.
 
 For independent tasks, enable parallel execution:
 
@@ -612,7 +612,7 @@ Each teammate investigates a different hypothesis and actively tries to disprove
 Check quality and alignment at any point:
 
 ```
-/groundwork:validate                    # Run all 9 verification agents
+/groundwork:validate                    # Run every applicable reviewer agent
 /groundwork:check-specs-alignment       # Audit drift between code and specs
 ```
 
@@ -773,6 +773,10 @@ This plugin has sourced learnings and code from multiple sources:
   - License: Apache 2.0 (itself based on Anthropic's [frontend-design skill](https://github.com/anthropics/skills/tree/main/skills/frontend-design))
   - The design system skill's reference guides for color & contrast, interaction design, motion design, spatial design, typography, and UX writing are adapted from Impeccable's domain-specific reference files
   - The design consistency checker agent's interaction quality, UX writing quality, and expanded accessibility checks are derived from these references
+
+### Clean Code summary
+- **[Summary of *Clean Code* by Robert C. Martin](https://gist.github.com/wojteklu/73c6914cc446146b8b533c0988cf8d29)** by Wojtek Lu, summarizing Robert C. Martin's *Clean Code* (Prentice Hall, 2008)
+  - The clean-code principles reference (`references/clean-code-principles.md`) follows its structure and wording; the comment-slop rules and the pointer to the testing checklist are this project's own
 
 ### Research Methodology
 - **[get-shit-done](https://github.com/glittercowboy/get-shit-done)** by glittercowboy

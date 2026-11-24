@@ -78,13 +78,7 @@ Then classify each baseline-compatible repair by execution type:
 
 ### Behavioral Fixes (TDD)
 
-Follow the `test-driven-development` skill strictly:
-
-1. **RED** — Write or update a failing test that describes the desired behavior
-2. **Verify RED** — Run the test, confirm it fails for the expected reason
-3. **GREEN** — Write minimal code to make the test pass
-4. **Verify GREEN** — Run the test, confirm it passes and all other tests still pass
-5. **REFACTOR** — Clean up while keeping tests green
+Follow the `test-driven-development` skill strictly for every behavioral fix: its full red-green-refactor cycle with the test watched failing first.
 
 ### Cosmetic Fixes
 

@@ -11,7 +11,7 @@ Build a feature as a sequence of **thin vertical slices**. Each slice cuts throu
 
 **Core principle:** thin vertical slice (defined in `${CLAUDE_PLUGIN_ROOT}/references/engineering-principles.md`). The opposite is horizontal building — finishing the whole data layer, then the whole logic layer, then the whole UI. Horizontal work integrates *last*, which means every integration risk surfaces at the end, all at once, when there is no budget left to absorb it. Vertical slices integrate *first* and *continuously*: each slice proves the stack connects before you build the next one.
 
-A slice is the unit of progress. Finish one — flagged, end-to-end, tested, committed — before starting the next. Cutting a feature into sliced tasks happens during planning ([[create-tasks]]); this skill governs *building* each slice. See [[work-on]] for driving the work item end-to-end and [[test-driven-development]] for the inner loop of each slice.
+A slice is the unit of progress. Finish one — flagged, end-to-end, tested, committed — before starting the next. The cut into sliced tasks normally happens during planning ([[create-tasks]]). When it did not, or when the tasks at hand are layers rather than slices, step 1 below makes or repairs the cut; everything after it governs *building* each slice. See [[work-on]] for driving the work item end-to-end and [[test-driven-development]] for the inner loop of each slice.
 
 ## When to Use
 
@@ -24,6 +24,8 @@ Skip for a change confined to one layer, or a fix small enough that there is not
 ## Process
 
 ### 1. Cut the feature into thin slices
+
+When the feature already arrives as sliced tasks, this step is a check: confirm each task states an observable behavior and re-cut any that is really a layer.
 
 List slices, each delivering one behavior a user or caller can observe. "User sees their order total" is a slice; "build the orders table" is not — it is a layer. If a slice can't be stated as an observable behavior, it is horizontal; re-cut it. Prefer the thinnest slice that still demonstrates the stack end-to-end (a single happy path through every layer beats a complete-but-disconnected layer).
 

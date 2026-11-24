@@ -1,6 +1,6 @@
 ---
 name: setup-repo
-description: This skill should be used when configuring a repository for groundwork - detects single-project or monorepo structure and creates .groundwork.yml
+description: Use when configuring a repository for groundwork - detects single-project or monorepo structure and creates .groundwork.yml
 ---
 
 # Setup Repository Skill

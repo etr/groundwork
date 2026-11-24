@@ -1,6 +1,6 @@
 ---
 name: swarm-design-architecture
-description: Design architecture using parallel advocate agents for adversarial technology comparison. Usage /groundwork:swarm-design-architecture
+description: Design architecture using parallel advocate agents for adversarial technology comparison.
 argument-hint: "[feature-name]"
 allowed-tools: ["Read", "Edit", "Write", "Bash", "Glob", "Grep", "Task", "Skill"]
 disable-model-invocation: true
@@ -18,29 +18,15 @@ This skill extends the `groundwork:design-architecture` workflow. Steps 1-2 and 
 
 ## Pre-flight: Model Recommendation
 
-**Your current effort level is `{{effort_level}}`.**
+**Your current effort level is `{{effort_level}}`.** Skip this step silently if effort is `high`, `xhigh`, or `max` (the scale is `low` < `medium` < `high` < `xhigh` < `max`, so `xhigh` and `max` are already above `high`) AND you are Opus (1M context). Otherwise ask via `AskUserQuestion` (header "Model check"; options "Continue anyway" / "Cancel — I'll switch first"):
 
-Skip this step silently if effort is `high`, `xhigh`, or `max` (the scale is `low` < `medium` < `high` < `xhigh` < `max`, so `xhigh` and `max` are already above `high`) AND you are Opus (1M context).
-If effort is `low` or `medium` (i.e. below `high`), you MUST show the recommendation prompt — regardless of model.
-If you are not Opus (1M context), you MUST show the recommendation prompt - regardless of effort level.
+> "Do you want to switch? Adversarial prompt design and cross-decision conflict synthesis benefit from deeper reasoning.
+>
+> Recommended: Opus (1M context) at high effort.
+>
+> To switch: cancel, run `/model opus[1m]` and `/effort high`, then re-invoke this skill."
 
-Otherwise → use `AskUserQuestion`:
-
-```json
-{
-  "questions": [{
-    "question": "Do you want to switch? Adversarial prompt design and cross-decision conflict synthesis benefit from deeper reasoning.\n\nTo switch: cancel, run `/model opus[1m]` and `/effort high`, then re-invoke this skill.",
-    "header": "Recommended: Opus (1M context) at high effort",
-    "options": [
-      { "label": "Continue" },
-      { "label": "Cancel — I'll switch first" }
-    ],
-    "multiSelect": false
-  }]
-}
-```
-
-If the user selects "Cancel — I'll switch first": output the switching commands above and stop. Do not proceed with the skill.
+If the user selects "Cancel — I'll switch first": output the switching commands and stop. Do not proceed with the skill. Ask once per conversation: a skill invoked by another skill skips this step when the recommendation was already shown. In a non-interactive run (`--noninteractive`, `GROUNDWORK_RUNNER_MODE=true`, or `GROUNDWORK_BATCH_MODE=true`), skip the prompt and continue on the current model.
 
 ## When to Use
 
@@ -68,25 +54,19 @@ LOAD CONTEXT → IDENTIFY DECISIONS → RESEARCH SWARM → ITERATE DECISIONS →
 
 ## Step 0: Resolve Project Context
 
-**Before loading specs, ensure project context is resolved:**
-
 1. **Monorepo check:** Does `.groundwork.yml` exist at the repo root?
    - If yes → Is `{{project_name}}` non-empty?
      - If empty → Invoke `Skill(skill="groundwork:select-project")` to select a project, then restart this skill.
      - If set → Project is `{{project_name}}`, specs at `{{specs_dir}}/`.
    - If no → Continue (single-project repo).
-2. **CWD mismatch check (monorepo only):**
-   - Skip if not in monorepo mode or if the project was just selected in item 1 above.
-   - If CWD is the repo root → fine, proceed.
-   - Check which project's path CWD falls inside (compare against all projects in `.groundwork.yml`).
-   - If CWD is inside the selected project's path → fine, proceed.
-   - If CWD is inside a different project's path → warn via `AskUserQuestion`:
+2. **CWD mismatch check (monorepo only):** skip it when the project was just selected or the invocation carried an explicit `--project`.
+   - Compare CWD against the project paths in `.groundwork.yml`: the repo root or the selected project's path → fine, proceed; no project's path → proceed without warning (shared directory).
+   - A different project's path → with `--noninteractive`, keep the selected project and continue; otherwise warn via `AskUserQuestion`:
      > "You're working from `<cwd>` (inside **[cwd-project]**), but the selected Groundwork project is **[selected-project]** (`[selected-project-path]/`). What would you like to do?"
      > - "Switch to [cwd-project]"
      > - "Stay with [selected-project]"
      If the user switches, invoke `Skill(skill="groundwork:select-project")`.
-   - If CWD doesn't match any project → proceed without warning (shared directory).
-3. Proceed with the resolved project context. All `{{specs_dir}}/` paths will resolve to the correct location.
+3. Proceed with the resolved project context.
 
 ## Step 1: Load Context
 
@@ -249,14 +229,14 @@ Return your findings as JSON:
 
 ### 3.4 — Debate Round (When Agent Teams Available)
 
-If agent teams is enabled (`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS="1"`), run a structured debate after Phase 1 research completes:
+If agent teams is enabled (`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS="1"`), run a structured debate after the advocate round (3.3) completes:
 
-1. Share each advocate's Phase 1 findings with all other advocates for the same decision area
+1. Share each advocate's findings from 3.3 with all other advocates for the same decision area
 2. Each advocate must challenge at least one specific claim from a competitor with new evidence
 3. Each advocate can strengthen their case by addressing weaknesses identified by competitors
 4. Debate concludes when each advocate has responded once (single round)
 
-**If agent teams is not available:** Skip this step. Phase 1 results with adversarial prompting still provide substantially better research than a single researcher.
+**If agent teams is not available:** Skip this step. The 3.3 results with adversarial prompting still provide substantially better research than a single researcher.
 
 ### 3.5 — Cross-Decision Conflict Scan
 
@@ -371,7 +351,7 @@ All other Step 4 behavior (exploratory questions, conflict detection, YAGNI prin
 
 The swarm (Steps 3–4) chooses *what to build with*. For the chosen stack, also decide *how the modules fit together* — your first interface is rarely your best.
 
-Invoke `Skill(skill="groundwork:design-it-twice")` for any non-trivial new module, service boundary, or public API: it frames the problem, generates 2–3 divergent designs (reuse this skill's parallel-agent machinery), compares them on depth / locality / seam, and returns an opinionated recommendation. Fold that recommendation into the relevant decision records in Step 5.
+Invoke `Skill(skill="groundwork:design-it-twice")` for any non-trivial new module, service boundary, or public API: it frames the problem, generates 2–3 divergent designs (it fans out one agent per design itself and needs none of this skill's debate machinery), compares them on depth / locality / seam, and returns an opinionated recommendation. Fold that recommendation into the relevant decision records in Step 5.
 
 ## Step 5: Document Architecture
 

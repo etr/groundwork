@@ -1,6 +1,6 @@
 ---
 name: groundwork-help
-description: List all Groundwork skills with descriptions. Usage /groundwork:groundwork-help
+description: List all Groundwork skills with descriptions.
 allowed-tools: ["Glob", "Read", "Grep", "Skill"]
 disable-model-invocation: true
 ---
@@ -34,6 +34,7 @@ Build the list from what Step 1 and Step 2 found — never from memory. A memori
 
 - **User-invocable skills** — every scanned skill *without* `user-invocable: false` in its frontmatter — go in the user-facing list, grouped by purpose, each shown as `/groundwork:<name> [args] - <first sentence of its description>`. Before presenting, count the entries against the scan: the list carries exactly as many as there are user-invocable skills.
 - **Hidden library skills** — those with `user-invocable: false` — are summarized in one sentence, not listed one by one.
+- **Agents** — every `agents/<name>/AGENT.md` the scan found, with its `name` and `description` frontmatter — are listed by role (review, alignment checking, research, execution, repair) as `<name> - <first sentence of its description>`. Agents have no slash form: the skills launch them.
 
 Group by purpose (the lifecycle order is a reliable default). Shape of the output:
 
@@ -45,6 +46,10 @@ Group by purpose (the lifecycle order is a reliable default). Shape of the outpu
 
 **…**
 (one group per purpose, in the same shape)
+
+#### Agents
+
+List every scanned agent by role, in the same `<name> - <first sentence>` shape.
 
 #### Hidden library skills
 

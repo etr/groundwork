@@ -20,7 +20,7 @@ Yes: agent teams. Set `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS="1"`, or add `"exper
 
 **It stopped to recommend switching to Opus (1M context).**
 
-That is the pre-flight model recommendation, skipped only when effort is `high`, `xhigh`, or `max` and you are on Opus (1M context). Choose Continue to go ahead. "Cancel — I'll switch first" prints the switching commands (`/model opus[1m]` and `/effort high`) and stops, so you can re-invoke.
+That is the pre-flight model recommendation, skipped only when effort is `high`, `xhigh`, or `max` and you are on Opus (1M context). Choose Continue anyway to go ahead. "Cancel — I'll switch first" prints the switching commands (`/model opus[1m]` and `/effort high`) and stops, so you can re-invoke. The question is asked once per conversation — a skill invoked by another skill skips it once it has been shown — and a non-interactive run (a batch or the runner) skips it too.
 
 **The teammates agreed at once. Is that convergence?**
 

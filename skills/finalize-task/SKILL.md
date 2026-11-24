@@ -1,8 +1,8 @@
 ---
 name: finalize-task
-description: Use when a task worktree has passed validation - manually commits, merges, and cleans up, or prepares runner-owned commits and publication. Pass --on-unrelated-failure ignore-and-merge to allow merging a tree validated as PASSED-WITH-WAIVERS (unrelated gates waived with receipts; default stop-and-ask refuses it).
+description: Use when a task worktree has passed validation - commits, merges, and cleans up, or prepares runner-owned commits and publication. Optional flag - --on-unrelated-failure ignore-and-merge allows merging a tree validated PASSED-WITH-WAIVERS (default stop-and-ask refuses it).
 argument-hint: "[task-id] [--project name] [--on-unrelated-failure stop-and-ask|expand-and-fix|ignore-and-merge]"
-allowed-tools: ["Read", "Edit", "Bash", "Glob", "Grep"]
+allowed-tools: ["Read", "Edit", "Bash", "Glob", "Grep", "AskUserQuestion"]
 ---
 
 <!-- The pull-request body shape in step 5a follows Dex Horthy's "show-me" pattern (HumanLayer), via github.com/mattpocock/skills. -->

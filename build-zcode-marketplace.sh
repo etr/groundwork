@@ -88,8 +88,13 @@ done <<< "$hook_helpers"
 
 # lib/ is referenced both by hook commands (resolve-template-vars.js) and by
 # the hook scripts themselves (session-start.sh resolves PLUGIN_ROOT/lib/...).
+# Authoring tools are not runtime: only contributors run them, and they hold
+# the Claude-source text the installer translates before it reaches a skill.
 for f in "$SCRIPT_DIR"/lib/*.js; do
     [[ "$f" == *.test.js ]] && continue
+    case "$(basename "$f")" in
+        sync-*.js|shared-blocks*.js) continue ;;
+    esac
     cp "$f" "$OUT_DIR/lib/"
 done
 

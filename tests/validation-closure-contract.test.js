@@ -70,6 +70,15 @@ test('defines one shared initial-audit and closure-review protocol', () => {
   assert.ok(protocol.includes('Approve immediately'));
 });
 
+test('the shared protocol owns the output contract it routes every reviewer to', () => {
+  const protocol = fs.readFileSync(protocolPath, 'utf8');
+  assert.ok(protocol.includes('## Output Modes'));
+  assert.ok(protocol.includes('"review_mode": "<review_mode from prompt>"'), 'the file-mode template persists review_mode');
+  assert.ok(protocol.includes('**Inline mode**'));
+  assert.ok(protocol.includes('## Score'));
+  assert.ok(protocol.includes('cleared_invariants'), 'cleared invariants have an output field');
+});
+
 test('makes every implementation reviewer load the shared protocol', () => {
   for (const reviewer of reviewers) {
     const body = fs.readFileSync(path.join(ROOT, 'agents', reviewer, 'AGENT.md'), 'utf8');
@@ -78,8 +87,8 @@ test('makes every implementation reviewer load the shared protocol', () => {
       `${reviewer} does not load the shared review protocol`
     );
     assert.ok(
-      body.includes('"review_mode": "<review_mode from prompt>"'),
-      `${reviewer} does not persist review_mode in its artifact`
+      body.includes('**Output Modes** in `${CLAUDE_PLUGIN_ROOT}/references/validation-review-protocol.md`'),
+      `${reviewer} does not route its output shape through the shared protocol`
     );
   }
 });

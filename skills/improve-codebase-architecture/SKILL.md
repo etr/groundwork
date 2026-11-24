@@ -1,6 +1,6 @@
 ---
 name: improve-codebase-architecture
-description: Use when the codebase resists change more than the changes warrant - surveys for deepening opportunities (shallow module clusters that could become one deep module), presents them in chat and as a visual HTML report, takes the chosen one through design-it-twice, and hands it to the lifecycle. Pass a module, subsystem, or pain point to scope the survey, or --project name in a monorepo; pass nothing to scope it by change hot spots
+description: Use when the codebase resists change more than the changes warrant - surveys for deepening opportunities (shallow module clusters that could become one deep module), shows them in chat and as an HTML report, and takes the chosen one through design-it-twice. Optional argument - a module, subsystem, or pain point to scope the survey (none - change hot spots); in a monorepo --project <name> pins the monorepo package for the whole run.
 requires: design-it-twice, domain-modeling, understanding-feature-requests
 disable-model-invocation: true
 argument-hint: "[module/subsystem/pain-point] [--project name]"
@@ -20,24 +20,18 @@ If arguments include `--project <name>`, resolve that project directly from the 
 
 ## Step 0: Resolve Project Context
 
-**Before scanning, ensure project context is resolved:**
-
 1. **Monorepo check:** Does `.groundwork.yml` exist at the repo root?
    - If yes → Is `{{project_name}}` non-empty?
      - If empty → Invoke `Skill(skill="groundwork:select-project")` to select a project, then restart this skill.
      - If set → Project is `{{project_name}}`, specs at `{{specs_dir}}/`.
    - If no → Continue (single-project repo).
-2. **CWD mismatch check (monorepo only):**
-   - Skip if not in monorepo mode, if the invocation carried an explicit `--project`, or if the project was just selected in item 1 above.
-   - If CWD is the repo root → fine, proceed.
-   - Check which project's path CWD falls inside (compare against all projects in `.groundwork.yml`).
-   - If CWD is inside the selected project's path → fine, proceed.
-   - If CWD is inside a different project's path → warn via `AskUserQuestion`:
+2. **CWD mismatch check (monorepo only):** skip it when the project was just selected or the invocation carried an explicit `--project`.
+   - Compare CWD against the project paths in `.groundwork.yml`: the repo root or the selected project's path → fine, proceed; no project's path → proceed without warning (shared directory).
+   - A different project's path → with `--noninteractive`, keep the selected project and continue; otherwise warn via `AskUserQuestion`:
      > "You're working from `<cwd>` (inside **[cwd-project]**), but the selected Groundwork project is **[selected-project]** (`[selected-project-path]/`). What would you like to do?"
      > - "Switch to [cwd-project]"
      > - "Stay with [selected-project]"
      If the user switches, invoke `Skill(skill="groundwork:select-project")`.
-   - If CWD doesn't match any project → proceed without warning (shared directory).
 3. Proceed with the resolved project context. The survey reads and reports only inside the resolved project root; all `{{specs_dir}}/` paths resolve to the correct location.
 
 ## Vocabulary (use these terms exactly)

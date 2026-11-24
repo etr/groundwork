@@ -1,6 +1,6 @@
 ---
 name: review-pr
-description: Review a GitHub PR using multi-agent verification. Usage /groundwork:review-pr [PR number or URL]. Pass --no-interactive to skip all prompts and auto-publish.
+description: Review a GitHub PR using multi-agent verification. Optional flag - --no-interactive skips every prompt and auto-publishes the review.
 argument-hint: "[PR number or URL] [--no-interactive]"
 allowed-tools: ["Bash", "Read", "Grep", "Glob", "Agent", "AskUserQuestion", "Skill"]
 disable-model-invocation: true
@@ -8,7 +8,7 @@ disable-model-invocation: true
 
 # PR Review Skill
 
-Multi-agent PR review that runs specialized agents against PR changes and posts structured feedback to GitHub.
+Multi-agent PR review that runs specialized agents against PR changes and posts structured feedback to GitHub. It reports findings and never changes code — fixing is the `validate` skill's job.
 
 ## Non-Interactive Mode Detection
 
@@ -20,29 +20,15 @@ If either condition is met, every `AskUserQuestion` prompt below is replaced wit
 
 ## Pre-flight: Model Recommendation
 
-**Your current effort level is `{{effort_level}}`.**
+**Your current effort level is `{{effort_level}}`.** Skip this step silently if effort is `high`, `xhigh`, or `max` (the scale is `low` < `medium` < `high` < `xhigh` < `max`, so `xhigh` and `max` are already above `high`) AND you are Sonnet or Opus. Otherwise ask via `AskUserQuestion` (header "Model check"; options "Continue anyway" / "Cancel — I'll switch first"):
 
-Skip this step silently if effort is `high`, `xhigh`, or `max` (the scale is `low` < `medium` < `high` < `xhigh` < `max`, so `xhigh` and `max` are already above `high`) AND you are Sonnet or Opus.
-If effort is `low` or `medium` (i.e. below `high`), you MUST show the recommendation prompt — regardless of model.
-If you are not Sonnet or Opus, you MUST show the recommendation prompt - regardless of effort level.
+> "Do you want to switch? Multi-agent orchestration and deduplication judgment across the reviewer agents benefits from consistent reasoning.
+>
+> Recommended: Sonnet or Opus at high effort.
+>
+> To switch: cancel, run `/effort high` (and `/model sonnet` if on Haiku), then re-invoke this skill."
 
-Otherwise → prompt using `AskUserQuestion`. In non-interactive mode, skip the prompt and proceed on the current model:
-
-```json
-{
-  "questions": [{
-    "question": "Do you want to switch? Multi-agent orchestration and deduplication judgment across 6-8 agents benefits from consistent reasoning.\n\nTo switch: cancel, run `/effort high` (and `/model sonnet` if on Haiku), then re-invoke this skill.",
-    "header": "Recommended: Sonnet or Opus at high effort",
-    "options": [
-      { "label": "Continue" },
-      { "label": "Cancel — I'll switch first" }
-    ],
-    "multiSelect": false
-  }]
-}
-```
-
-If the user selects "Cancel — I'll switch first": output the switching commands above and stop. Do not proceed with the skill.
+If the user selects "Cancel — I'll switch first": output the switching commands and stop. Do not proceed with the skill. Ask once per conversation: a skill invoked by another skill skips this step when the recommendation was already shown. In a non-interactive run (`--noninteractive`, `GROUNDWORK_RUNNER_MODE=true`, or `GROUNDWORK_BATCH_MODE=true`), skip the prompt and continue on the current model.
 
 ## Step 1: Parse PR Identifier
 
@@ -165,7 +151,7 @@ This summary will be passed to agents so they avoid restating already-raised poi
 
 ### 3c: Handle Replies on Previous Groundwork Comments
 
-If `existing_comments` contain replies to previous groundwork-authored comments (detected by `<!-- groundwork-review -->` marker or matching author):
+If `existing_comments` contain replies to previous groundwork-authored comments. A comment is groundwork-authored when its review's body carries the `<!-- groundwork-review -->` marker; inline comments carry no marker of their own, so match them through their parent review or its author:
 - Present these reply threads to the user
 - Recommend responses and paths forward before proceeding with the new review
 
@@ -410,7 +396,7 @@ REVIEW_PAYLOAD
    ```bash
    rm -f "$PR_DIFF_FILE"
    ```
-3. Display final summary:
+4. Display final summary:
    ```markdown
    ## PR Review Posted
 
@@ -422,19 +408,3 @@ REVIEW_PAYLOAD
    - Agents: [N] run, [N] skipped
    ```
 
-## Key Design Notes
-
-1. **Read-only**: Unlike validate, PR review does not fix issues — it only reports findings.
-2. **Agent context adaptation**: Agents receive `pr_description` (PR title + body) instead of `task_definition`. They are prompted to focus on diff scope only.
-3. **Deduplication is LLM-driven**: The orchestrating LLM compares findings by proximity and similarity — no external code needed.
-4. **Diff position mapping**: Uses GitHub's `line` + `side=RIGHT` API. Parses diff hunk headers (`@@ -a,b +c,d @@`) to determine which lines are in scope.
-5. **Atomic review posting**: Single API call posts both inline comments and summary, avoiding noisy multiple notifications.
-6. **Groundwork marker**: `<!-- groundwork-review -->` HTML comment in review body enables identifying previous groundwork reviews for incremental mode.
-
-## Severity Reference
-
-| Level | Meaning |
-|-------|---------|
-| critical | Serious defect — security vulnerability, data loss, crash |
-| major | Significant issue — logic error, missing edge case, poor design |
-| minor | Improvement opportunity — style, naming, minor optimization |

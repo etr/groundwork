@@ -1,6 +1,6 @@
 ---
 name: ship
-description: Ship a validated change to production - sequences observability and a staged rollout, then gates the outward-facing deploy behind a final go/no-go. Usage /groundwork:ship
+description: Ship a validated change to production - sequences observability and a staged rollout, then gates the outward-facing deploy behind a final go/no-go.
 allowed-tools: ["Bash", "Read", "Skill", "AskUserQuestion"]
 requires: instrument-observability, staged-rollout
 disable-model-invocation: true
@@ -45,7 +45,7 @@ Before **any** outward-facing deploy step (flipping the canary flag on, promotin
 ```json
 {
   "questions": [{
-    "question": "Validation and review passed. Observability instrumented, staged rollout plan and rollback ready. Proceed to begin the rollout?",
+    "question": "Validation and review passed. Observability [instrumented | instrumented, with gaps: <list>]; staged rollout plan and rollback plan ready[; open items: <list>]. Proceed to begin the rollout?",
     "header": "Go / No-Go",
     "options": [
       { "label": "Go", "description": "Begin the staged rollout starting at the canary stage" },
@@ -55,6 +55,8 @@ Before **any** outward-facing deploy step (flipping the canary flag on, promotin
   }]
 }
 ```
+
+Fill every bracket from the Step 2 results. A skill that reported its verification incomplete goes into the question as a gap or an open item — never as done.
 
 - **No-Go** → stop. Report what's outstanding; do not deploy.
 - **Go** → proceed to begin the staged rollout (the canary stage) per the plan from Step 2. Never skip this gate, even if every prior step is green — a human owns the decision to expose the change to users.

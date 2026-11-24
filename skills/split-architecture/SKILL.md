@@ -1,6 +1,6 @@
 ---
 name: split-architecture
-description: This skill should be used when converting a single-file architecture doc to directory-based format for better organization of large architecture documents
+description: Use when converting a single-file architecture doc to directory-based format for better organization of large architecture documents
 ---
 
 # Split Architecture Skill
@@ -10,7 +10,7 @@ Converts a single-file architecture document (`{{specs_dir}}/architecture.md`) i
 ## When to Use
 
 - **Automatically** by `design-architecture` and `source-architecture-from-code` when the single-file architecture doc crosses **500 lines** or **10 decision records** (sections matching `### DR-\d+`)
-- **Manually** when the user invokes `/split-architecture`
+- **Manually** when the user invokes `/groundwork:split-architecture`
 
 ## Step 0: Resolve Project Context
 

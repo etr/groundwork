@@ -50,24 +50,36 @@ test('the documented finding example passes the real artifact validator', () => 
   const result = run(dir);
   assert.strictEqual(result.status, 0, result.stderr);
 }));
-test('every implementation reviewer file-mode template matches the wire contract', () => {
-  for (const agent of fs.readdirSync(path.join(ROOT, 'agents'))) {
-    const source = path.join(ROOT, 'agents', agent, 'AGENT.md');
-    if (!fs.existsSync(source)) continue;
-    const text = fs.readFileSync(source, 'utf8');
-    const at = text.indexOf('**File mode**');
-    if (at === -1 || !text.includes('validation-review-protocol.md')) continue;
-    const block = text.slice(at).match(/```json\n([\s\S]*?)\n```/);
-    const body = JSON.parse(block[1].replace(/<agent_name from prompt>/g, agent)
-      .replace(/<iteration from prompt>/g, '1').replace(/<review_mode from prompt>/g, 'initial-audit'));
-    const compact = JSON.parse([...text.slice(at).matchAll(/```json\n([\s\S]*?)\n```/g)][1][1]);
-    assert.deepStrictEqual(compact.counts, Object.fromEntries(['critical', 'major', 'minor'].map(k => [k, body.findings.filter(f => f.severity === k).length])), agent);
-    for (const key of ['summary', 'score', 'verdict']) assert.strictEqual(compact[key], body[key], `${agent}: ${key}`);
-    fixture(dir => {
-      write(dir, body);
-      const result = run(dir);
-      assert.strictEqual(result.status, 0, `${agent}: ${result.stderr}`);
-    });
+test('every implementation reviewer routes output through the protocol, whose file-mode template matches the wire contract', () => {
+  const protocol = fs.readFileSync(path.join(ROOT, 'references', 'validation-review-protocol.md'), 'utf8');
+  const at = protocol.indexOf('**File mode**');
+  assert.notStrictEqual(at, -1, 'the protocol must carry the file-mode contract');
+  const blocks = [...protocol.slice(at).matchAll(/```json\n([\s\S]*?)\n```/g)].map((m) => m[1]);
+  const invariant = 'Named invariant confirmed by the contract test';
+  const file = 'findings-code-quality-reviewer-iter1.json';
+  const body = JSON.parse(blocks[0].replace(/<agent_name from prompt>/g, 'code-quality-reviewer')
+    .replace(/<iteration from prompt>/g, '1').replace(/<review_mode from prompt>/g, 'initial-audit')
+    .replace(/"<an invariant[^"]*"/g, `"${invariant}"`)
+    .replace(/"\.\.\."(\s*[,}])/g, '"Contract check"$1'));
+  const compact = JSON.parse(blocks[1].replace(/"\.\.\."(\s*[,}])/g, '"Contract check"$1')
+    .replace('"cleared_invariants":["..."]', `"cleared_invariants":["${invariant}"]`)
+    .replace(/"the path you wrote"/g, `"${file}"`));
+  assert.deepStrictEqual(compact.counts, Object.fromEntries(['critical', 'major', 'minor'].map(k => [k, body.findings.filter(f => f.severity === k).length])));
+  for (const key of ['summary', 'score', 'verdict']) assert.strictEqual(compact[key], body[key], key);
+  assert.deepStrictEqual(compact.cleared_invariants, body.cleared_invariants, 'the compact line repeats the file list');
+  fixture(dir => {
+    write(dir, body);
+    const result = run(dir);
+    assert.strictEqual(result.status, 0, result.stderr);
+  });
+  const routed = fs.readdirSync(path.join(ROOT, 'agents')).filter((agent) => (
+    fs.existsSync(path.join(ROOT, 'agents', agent, 'AGENT.md')) &&
+    fs.readFileSync(path.join(ROOT, 'agents', agent, 'AGENT.md'), 'utf8').includes('**Output Modes** in')
+  ));
+  assert.ok(routed.length >= 10, `expected at least 10 reviewers routed through Output Modes, found ${routed.length}`);
+  for (const agent of routed) {
+    const text = fs.readFileSync(path.join(ROOT, 'agents', agent, 'AGENT.md'), 'utf8');
+    assert.ok(!text.includes('"agent": "<agent_name from prompt>"'), `${agent} still carries its own copy of the file-mode template`);
   }
 });
 test('all closed dispositions stay outside fixer scope even at critical severity', () => fixture(dir => {

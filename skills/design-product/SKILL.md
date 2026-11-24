@@ -1,6 +1,6 @@
 ---
 name: design-product
-description: Create detailed product requirements document (PRD) for a feature. Usage /groundwork:design-product
+description: Create detailed product requirements document (PRD) for a feature.
 argument-hint: "[product-name]"
 allowed-tools: ["Read", "Edit", "Write", "Glob", "Grep", "Task", "Skill"]
 disable-model-invocation: true
@@ -16,7 +16,7 @@ Interactive workflow for iteratively designing and documenting product requireme
 2. **Design** - Draft EARS requirements and check for contradictions
 3. **Approve** - Present draft for user approval
 4. **Commit** - Edit the PRD document when requirements are approved
-5. **Next Step** - Ask user what to do next (architecture, UX, or another feature)
+5. **Next Step** - Ask user what to do next (architecture, UX, tasks, or another feature)
 
 If you are in plan mode, you MUST still complete the full workflow (Steps 0–4). Your plan output MUST describe ONLY the PRD file edits from Step 4.
   - Which file to create or edit
@@ -25,54 +25,34 @@ If you are in plan mode, you MUST still complete the full workflow (Steps 0–4)
 
 ## Pre-flight: Model Recommendation
 
-**Your current effort level is `{{effort_level}}`.**
+**Your current effort level is `{{effort_level}}`.** Skip this step silently if effort is `high`, `xhigh`, or `max` (the scale is `low` < `medium` < `high` < `xhigh` < `max`, so `xhigh` and `max` are already above `high`) AND you are Opus (1M context). Otherwise ask via `AskUserQuestion` (header "Model check"; options "Continue anyway" / "Cancel — I'll switch first"):
 
-Skip this step silently if effort is `high`, `xhigh`, or `max` (the scale is `low` < `medium` < `high` < `xhigh` < `max`, so `xhigh` and `max` are already above `high`) AND you are Opus (1M context).
-If effort is `low` or `medium` (i.e. below `high`), you MUST show the recommendation prompt — regardless of model.
-If you are not Opus (1M context), you MUST show the recommendation prompt - regardless of model.
+> "Do you want to switch? Cross-spec contradiction detection across PRD, architecture, and design system benefits from deeper reasoning.
+>
+> Recommended: Opus (1M context) at high effort.
+>
+> To switch: cancel, run `/model opus[1m]` and `/effort high`, then re-invoke this skill."
 
-Otherwise → use `AskUserQuestion`:
-
-```json
-{
-  "questions": [{
-    "question": "Do you want to switch? Cross-spec contradiction detection across PRD, architecture, and design system benefits from deeper reasoning.\n\nTo switch: cancel, run `/model opus[1m]` and `/effort high`, then re-invoke this skill.",
-    "header": "Recommended: Opus (1M context) at high effort",
-    "options": [
-      { "label": "Continue" },
-      { "label": "Cancel — I'll switch first" }
-    ],
-    "multiSelect": false
-  }]
-}
-```
-
-If the user selects "Cancel — I'll switch first": output the switching commands above and stop. Do not proceed with the skill.
+If the user selects "Cancel — I'll switch first": output the switching commands and stop. Do not proceed with the skill. Ask once per conversation: a skill invoked by another skill skips this step when the recommendation was already shown. In a non-interactive run (`--noninteractive`, `GROUNDWORK_RUNNER_MODE=true`, or `GROUNDWORK_BATCH_MODE=true`), skip the prompt and continue on the current model.
 
 ## Step 0: Resolve Project Context
-
-**Before anything else, resolve the project context:**
 
 1. **Monorepo check:** Does `.groundwork.yml` exist at the repo root?
    - If yes → Is `{{project_name}}` non-empty?
      - If empty → Invoke `Skill(skill="groundwork:select-project")` to select a project, then restart this skill.
      - If set → Project is `{{project_name}}`, specs at `{{specs_dir}}/`.
-   - If no → Continue to item 3.
-2. **CWD mismatch check (monorepo only):**
-   - Skip if not in monorepo mode or if the project was just selected in item 1 above.
-   - If CWD is the repo root → fine, proceed.
-   - Check which project's path CWD falls inside (compare against all projects in `.groundwork.yml`).
-   - If CWD is inside the selected project's path → fine, proceed.
-   - If CWD is inside a different project's path → warn via `AskUserQuestion`:
+   - If no → Continue (single-project repo).
+2. **CWD mismatch check (monorepo only):** skip it when the project was just selected or the invocation carried an explicit `--project`.
+   - Compare CWD against the project paths in `.groundwork.yml`: the repo root or the selected project's path → fine, proceed; no project's path → proceed without warning (shared directory).
+   - A different project's path → with `--noninteractive`, keep the selected project and continue; otherwise warn via `AskUserQuestion`:
      > "You're working from `<cwd>` (inside **[cwd-project]**), but the selected Groundwork project is **[selected-project]** (`[selected-project-path]/`). What would you like to do?"
      > - "Switch to [cwd-project]"
      > - "Stay with [selected-project]"
      If the user switches, invoke `Skill(skill="groundwork:select-project")`.
-   - If CWD doesn't match any project → proceed without warning (shared directory).
 3. **Check `{{specs_dir}}/`:** Does a specs directory exist?
-   - If yes → Single-project repo, proceed normally.
+   - If yes → Proceed normally.
    - If no → Ask the user: "Is this a single-project repo or a monorepo with multiple projects?"
-     - **Single project** → Proceed normally (specs will be created at `{{specs_dir}}/`)
+     - **Single project** → Proceed normally (specs will be created at `{{specs_dir}}/`).
      - **Monorepo** → Invoke `Skill(skill="groundwork:setup-repo")` to create `.groundwork.yml`, then continue.
 
 ## Step 0a: Feature-Project Mismatch Check (monorepo only)
@@ -102,7 +82,7 @@ Before clarifying the request, load existing specs so you can detect contradicti
 - `{{specs_dir}}/design_system.md` — design principles, brand decisions, UX patterns. Use to ensure new features align with established design language.
 - `{{specs_dir}}/product_specs.md` (or `{{specs_dir}}/product_specs/` directory) — read for full cross-feature context.
 
-For each, check single file first, then directory. If a directory, aggregate all `.md` files.
+For each, check for a single file first (it takes precedence), then a directory. Read a directory as all its `.md` files recursively — `_index.md` first, then numerically-prefixed files, then alphabetically.
 
 If none exist, that's fine — proceed without them.
 
@@ -149,12 +129,7 @@ Each requirement must be:
 
 Follow the existing PRD convention: `PRD-<FEATURE>-REQ-<NNN>`
 
-Examples from the project:
-- `PRD-FINE-REQ-001` (Finetuning feature)
-- `PRD-GEN-REQ-001` (Generation feature)
-- `PRD-IMP-REQ-001` (Impersonation detection)
-- `PRD-MON-REQ-001` (Monetization)
-- `PRD-DEL-REQ-001` (Data deletion)
+Take the feature codes from the PRD you are editing, never from an example. A new feature gets its own short code: an export feature's first requirement is `PRD-EXPORT-REQ-001`, its second `PRD-EXPORT-REQ-002`.
 
 For new features, propose a short code (3-4 chars) and confirm with user.
 
@@ -269,7 +244,7 @@ When the user approves:
      - Traceability updates → `{{specs_dir}}/product_specs/04-traceability.md`
 
 3. **Find insertion point** - New features go in Section 3 (Feature list) after existing features
-4. **Edit the document** - Use `str_replace` to insert the new feature block
+4. **Edit the document** - Use the Edit tool to insert the new feature block
 5. **Update open questions** - If any remain, add to Section 5 (Open questions log)
 6. **Update traceability note** - Mention new requirement IDs if relevant
 

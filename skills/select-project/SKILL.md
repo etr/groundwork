@@ -1,6 +1,6 @@
 ---
 name: select-project
-description: This skill should be used when the user wants to switch between projects in a monorepo - lists projects from .groundwork.yml and sets the active project
+description: Use when the user wants to switch between projects in a monorepo - lists projects from .groundwork.yml and sets the active project
 argument-hint: "[project-name]"
 ---
 

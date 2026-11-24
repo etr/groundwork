@@ -1,6 +1,6 @@
 ---
 name: ux-design
-description: Create design system with foundations, brand identity, and UX patterns for web, TUI, or mobile app surfaces. Usage /groundwork:ux-design
+description: Create design system with foundations, brand identity, and UX patterns for web, TUI, or mobile app surfaces.
 argument-hint: "[product-name]"
 allowed-tools: ["Read", "Edit", "Write", "Glob", "Grep", "Task", "Skill"]
 disable-model-invocation: true
@@ -18,29 +18,15 @@ Establishes a complete design system through guided collaboration: foundations, 
 
 ## Pre-flight: Model Recommendation
 
-**Your current effort level is `{{effort_level}}`.**
+**Your current effort level is `{{effort_level}}`.** Skip this step silently if effort is `high`, `xhigh`, or `max` (the scale is `low` < `medium` < `high` < `xhigh` < `max`, so `xhigh` and `max` are already above `high`) AND you are Opus (1M context). Otherwise ask via `AskUserQuestion` (header "Model check"; options "Continue anyway" / "Cancel — I'll switch first"):
 
-Skip this step silently if effort is `high`, `xhigh`, or `max` (the scale is `low` < `medium` < `high` < `xhigh` < `max`, so `xhigh` and `max` are already above `high`) AND you are Opus (1M context).
-If effort is `low` or `medium` (i.e. below `high`), you MUST show the recommendation prompt — regardless of model.
-If you are not Opus (1M context), you MUST show the recommendation prompt - regardless of effort level.
+> "Do you want to switch? Creative and analytical synthesis — resisting generic defaults requires active judgment.
+>
+> Recommended: Opus (1M context) at high effort.
+>
+> To switch: cancel, run `/model opus[1m]` and `/effort high`, then re-invoke this skill."
 
-Otherwise → use `AskUserQuestion`:
-
-```json
-{
-  "questions": [{
-    "question": "Do you want to switch? Creative and analytical synthesis — resisting generic defaults requires active judgment.\n\nTo switch: cancel, run `/model opus[1m]` and `/effort high`, then re-invoke this skill.",
-    "header": "Recommended: Opus (1M context) at high effort",
-    "options": [
-      { "label": "Continue" },
-      { "label": "Cancel — I'll switch first" }
-    ],
-    "multiSelect": false
-  }]
-}
-```
-
-If the user selects "Cancel — I'll switch first": output the switching commands above and stop. Do not proceed with the skill.
+If the user selects "Cancel — I'll switch first": output the switching commands and stop. Do not proceed with the skill. Ask once per conversation: a skill invoked by another skill skips this step when the recommendation was already shown. In a non-interactive run (`--noninteractive`, `GROUNDWORK_RUNNER_MODE=true`, or `GROUNDWORK_BATCH_MODE=true`), skip the prompt and continue on the current model.
 
 ## Collaboration Approach
 
@@ -90,28 +76,22 @@ The tonal direction is derived from the product's persona, vision, and competiti
 
 ## Step 0: Resolve Project Context
 
-**Before anything else, resolve the project context:**
-
 1. **Monorepo check:** Does `.groundwork.yml` exist at the repo root?
    - If yes → Is `{{project_name}}` non-empty?
      - If empty → Invoke `Skill(skill="groundwork:select-project")` to select a project, then restart this skill.
      - If set → Project is `{{project_name}}`, specs at `{{specs_dir}}/`.
-   - If no → Continue to item 3.
-2. **CWD mismatch check (monorepo only):**
-   - Skip if not in monorepo mode or if the project was just selected in item 1 above.
-   - If CWD is the repo root → fine, proceed.
-   - Check which project's path CWD falls inside (compare against all projects in `.groundwork.yml`).
-   - If CWD is inside the selected project's path → fine, proceed.
-   - If CWD is inside a different project's path → warn via `AskUserQuestion`:
+   - If no → Continue (single-project repo).
+2. **CWD mismatch check (monorepo only):** skip it when the project was just selected or the invocation carried an explicit `--project`.
+   - Compare CWD against the project paths in `.groundwork.yml`: the repo root or the selected project's path → fine, proceed; no project's path → proceed without warning (shared directory).
+   - A different project's path → with `--noninteractive`, keep the selected project and continue; otherwise warn via `AskUserQuestion`:
      > "You're working from `<cwd>` (inside **[cwd-project]**), but the selected Groundwork project is **[selected-project]** (`[selected-project-path]/`). What would you like to do?"
      > - "Switch to [cwd-project]"
      > - "Stay with [selected-project]"
      If the user switches, invoke `Skill(skill="groundwork:select-project")`.
-   - If CWD doesn't match any project → proceed without warning (shared directory).
 3. **Check `{{specs_dir}}/`:** Does a specs directory exist?
-   - If yes → Single-project repo, proceed normally.
+   - If yes → Proceed normally.
    - If no → Ask the user: "Is this a single-project repo or a monorepo with multiple projects?"
-     - **Single project** → Proceed normally (specs will be created at `{{specs_dir}}/`)
+     - **Single project** → Proceed normally (specs will be created at `{{specs_dir}}/`).
      - **Monorepo** → Invoke `Skill(skill="groundwork:setup-repo")` to create `.groundwork.yml`, then continue.
 
 ## Step 0b: Resolve Modality
@@ -162,7 +142,7 @@ Move on quickly after gathering constraints.
 
 Based on context, propose principles and explain why. One principle should address **visual identity and aesthetic commitment** — not as decoration, but as a functional design value.
 
-Also derive a **tonal direction** from the PRD's persona and vision. Avoid vague non-directions like "professional", "modern", or "clean" — these describe nearly every product and guide no decisions. Instead, commit to a specific aesthetic posture (see the tonal direction list in Design Philosophy above).
+Also derive a **tonal direction** from the PRD's persona and vision, as defined under Design Philosophy above.
 
 > "Based on [specific context from PRD], I recommend these guiding principles:
 >
@@ -272,47 +252,7 @@ Aim for 2-4 candidates total (avoids decision fatigue). Include user-provided co
 
 Generate `{{specs_dir}}/proposed-designs/design-comparison.html` — a self-contained file that renders identical UI components under each candidate identity option, side-by-side, with a decision helper table.
 
-**Architecture — data-driven, single render function:**
-
-1. **CSS custom properties per scheme** — each scheme defines color variables (`--bg-primary`, `--bg-secondary`, `--bg-elevated`, `--text-primary`, `--text-secondary`, `--accent`, `--accent-hover`, `--accent-fg`, `--glass`, `--glass-border`, `--success`, `--success-muted`, `--focus-ring`) AND font overrides (`--font-heading`, `--font-body`).
-
-2. **JavaScript scheme array** — each entry contains:
-   - `id`, `name`, `subtitle` (short description)
-   - `bgHex`, `accentHex`, `textHex` (for contrast computation)
-   - `vars` object mapping CSS custom properties to values
-   - `fonts` object with `heading` and `body` font-family strings
-   - `mood` array of personality tags
-   - `audience`, `personality` descriptions
-   - `atmosphere` — a brief description of the visual texture/surface feel (e.g., "subtle grain texture, sharp shadows")
-   - `spatialCharacter` — the layout personality (e.g., "generous whitespace, centered compositions")
-
-3. **Single `renderColumn(scheme)` function** — generates identical components per scheme:
-   - Navigation bar with logo mark, nav links, avatar
-   - Button row (primary, outline, ghost)
-   - Glass card with heading, body text, badge
-   - Form input with label and placeholder
-   - Badge row (default, success, outline)
-   - Progress bar with label
-   - Content card with image placeholder, title, actions
-   - Apply a subtle background texture or overlay per scheme (e.g., noise, gradient wash, grain) based on `scheme.atmosphere` to give each column a different *feel*, not just different colors
-
-4. **Decision helper table** at the bottom with computed rows:
-   - Base colors (swatches + hex codes)
-   - Text-on-background WCAG contrast ratio (computed, with AA pass/fail badge)
-   - Accent-on-background WCAG contrast ratio (computed, with AA pass/fail badge)
-   - Mood tags
-   - Audience fit
-   - Font pairing (heading + body font names)
-   - Atmosphere (visual texture/surface description)
-   - Spatial character (layout personality)
-
-5. **Self-contained** — no external dependencies except Google Fonts `<link>` tags for candidate fonts. All CSS and JS inline.
-
-6. **Responsive grid** — columns per scheme count (`cols-2`, `cols-3`, `cols-4`) with responsive breakpoints.
-
-**Font loading:** Add a single `<link>` to Google Fonts loading all candidate heading and body fonts. Apply per-scheme via `--font-heading` / `--font-body` CSS custom properties and a `.has-custom-fonts` class on each scheme column.
-
-**WCAG contrast computation:** Include `hexToRgb()`, `srgbToLinear()`, `luminance()`, and `contrastRatio()` functions inline. Display results as `N.N:1 AA Pass` (green) or `N.N:1 AA Fail` (red).
+Build it to the **Visual comparison** spec in `HTML-GENERATORS.md`.
 
 **After generating:**
 
@@ -473,28 +413,7 @@ See `${CLAUDE_PLUGIN_ROOT}/references/design-system/interaction-design-guide.md`
 
 Generate a self-contained HTML file that renders the same identity (colors, fonts) under each atmosphere direction side-by-side, with mini page layouts showing how each atmosphere *feels* in practice. In every modality the mock must double as an implementation reference — token names and values visible in the file, not just visual impressions: for `tui`, terminal-frame mocks (monospace grid, token + hex + ANSI-fallback values, 80×24 plus one degraded size, light/dark variants); for `mobile`, phone-frame mocks at the smallest supported width, dp-annotated, with dark variants. See the modality guides → Comparison & Preview Artifacts.
 
-**Architecture — data-driven, single render function:**
-
-1. **CSS custom properties** — Identity variables (colors, fonts) shared at `:root`. Per-atmosphere treatment variables on each column: `--surface-texture`, `--card-treatment`, `--card-shadow`, `--divider-style`, `--section-gap`, `--entrance-type`, `--entrance-duration`, `--hover-signature`, `--hover-transform`.
-
-2. **JS atmosphere array** — each entry contains:
-   - `id`, `name`, `subtitle`
-   - shared `identity` object (colors, fonts — same for all)
-   - `treatments` object: texture, cards, dividers, density, entrance, hover
-   - `personality` description
-   - `bestFor` context
-
-3. **Single `renderColumn(atmosphere)` function** — generates mini page layouts per column (not isolated components, because atmosphere is about spatial feel):
-   - Hero section (headline, subtext, CTA) — shows texture, density, entrance
-   - Card grid (2x2) — shows card treatment, hover signature, stagger entrance
-   - Form area (2 inputs + submit in a card) — shows card treatment, divider
-   - Section dividers between areas
-
-4. **Motion**: Entrance animations auto-play via IntersectionObserver. Hover states interactive. `prefers-reduced-motion` respected.
-
-5. **Decision helper table**: Surface texture, card treatment, dividers, density, entrance animation, hover signature, personality, best-for context.
-
-6. **Self-contained**: No external deps except Google Fonts. SVG noise filter inlined for textures.
+Build it to the **Atmosphere comparison** spec in `HTML-GENERATORS.md`.
 
 **After generating:**
 
@@ -516,7 +435,7 @@ Based on tonal direction, product type, and atmosphere choice, propose 2-3 layou
 - **Content hierarchy approach** — what dominates visually (image-first, type-dominant, data-dense, balanced)
 - **Navigation architecture** — how nav behaves beyond its type (migratory, dual-layer, embedded hero, content-push, navigation by absence)
 
-See `${CLAUDE_PLUGIN_ROOT}/references/design-system/layout-architecture-guide.md` for the full pattern library (~35 patterns with CSS/JS implementation) and `${CLAUDE_PLUGIN_ROOT}/references/design-system/layout-examples.md` for 7 curated strategy bundles showing how patterns combine.
+See `${CLAUDE_PLUGIN_ROOT}/references/design-system/layout-architecture-guide.md` for the full pattern library (36 patterns: selection table, compatibility matrix, when to use, accessibility and combination warnings — no code) and `${CLAUDE_PLUGIN_ROOT}/references/design-system/layout-examples.md` for curated strategy bundles showing how patterns combine (its Bundle Selection Guide is at the top). The CSS/JS implementation of each pattern is in `${CLAUDE_PLUGIN_ROOT}/references/design-system/layout-techniques.md` under the same section number.
 
 **Each proposed strategy should:**
 - Be derived from tonal direction + product type + atmosphere choice (not arbitrary)
@@ -527,26 +446,7 @@ See `${CLAUDE_PLUGIN_ROOT}/references/design-system/layout-architecture-guide.md
 
 **Generate a visual comparison file** before presenting the choice. This file renders each proposed layout strategy as a mini page preview so the user can see spatial feel, section geometry, scroll hints, and nav behavior — not just read descriptions.
 
-**Architecture — data-driven, single render function:**
-
-1. **CSS custom properties** — Identity variables (colors, fonts) shared at `:root`. Per-strategy treatment variables on each column: `--section-geometry`, `--content-hierarchy`, `--nav-behavior`, `--scroll-hint`, `--page-rhythm`.
-
-2. **JS strategies array** — each entry contains:
-   `id`, `name`, `subtitle`, `complexityTier`
-   shared `identity` object (colors, fonts, atmosphere treatments from 7b choice)
-   strategy-specific `layout` object (section widths, geometry style, scroll behavior, content dominance, nav architecture, rhythm pattern)
-
-3. **Single `renderStrategy(strategy)` function** — produces a mini page preview column containing:
-   - **Navigation** demonstrating the proposed nav architecture (migratory, dual-layer, embedded hero, etc.)
-   - **Hero/header section** showing the content hierarchy approach (image-first, type-dominant, data-dense)
-   - **2-3 body sections** demonstrating the section geometry (diagonal breaks, rounded stacking, asymmetric splits, variable widths)
-   - **Scroll behavior indicator** — a visual cue showing what scroll architecture the strategy uses (e.g., a subtle label like "parallax" or "pin-and-reveal", or a miniature scroll animation if JS-light/heavy)
-   - **Page rhythm** — visible in the vertical spacing and section alternation pattern
-   - Each section uses real placeholder content relevant to the product type (not lorem ipsum)
-
-4. **Responsive columns** — strategies render side-by-side on wide viewports, stacked on narrow. Each column is labeled with strategy name, subtitle, and complexity tier badge.
-
-5. **Self-contained** — all CSS/JS inline, Google Fonts via `<link>`, no external dependencies.
+Build it to the **Layout comparison** spec in `HTML-GENERATORS.md`. A JS-light or JS-heavy strategy's miniature scroll animation takes its CSS/JS from `${CLAUDE_PLUGIN_ROOT}/references/design-system/layout-techniques.md` (same section numbers as the guide).
 
 **Tell the user** to open `{{specs_dir}}/proposed-designs/layout-comparison.html` in their browser, then present the choice:
 
@@ -584,28 +484,7 @@ See `${CLAUDE_PLUGIN_ROOT}/references/design-system/layout-architecture-guide.md
 
 Generate a single-page preview of the complete finalized system — identity + chosen atmosphere + all functional patterns in one responsive page. This is NOT a comparison — one full-width layout showing how everything works together. For `tui`/`mobile`, the showcase demonstrates the chosen screen architecture (pane layout / navigation architecture) in the modality's mock form.
 
-**Architecture — data-driven, single render function:**
-
-1. **CSS custom properties** — Single set combining identity variables + chosen atmosphere treatments.
-
-2. **JS config object** (single, not array) — `identity`, `atmosphere`, `patterns` (navigation type, loading type, error approach, empty state style, form validation style).
-
-3. **Single `renderShowcase(config)` function** — full page layout demonstrating the **chosen layout architecture**, not just component treatments:
-   - Navigation demonstrating the chosen navigation *behavior* (migratory, dual-layer, embedded hero, etc. — not just a static nav bar)
-   - Hero/landing section using the chosen section geometry and content hierarchy (full-bleed vs contained, image-first vs type-dominant)
-   - **Variable section geometry**: some sections full-bleed, some narrow, some wide — matching the chosen layout strategy
-   - Card grid (3-4 cards, chosen card treatment, hover signature, stagger)
-   - Form section (chosen validation pattern, inline error/success states shown)
-   - Empty state panel (chosen empty state pattern)
-   - Toast notification (auto-triggers after 2s or via button)
-   - Data display with loading skeleton → populated transition
-   - **Density contrast**: alternate between sparse breathing sections and dense content sections per the chosen page rhythm
-
-4. **Scroll behavior**: If the chosen layout architecture includes scroll patterns (sticky cascade, parallax, pin-and-reveal), implement them in the showcase. A "Cinematic Scroll Narrative" strategy should show pinned sections; a "Sticky Card Stack" should show cascading sticky cards. Standard vertical scroll strategies need no special behavior.
-
-5. **Motion**: All entrances auto-play on scroll. Hovers interactive. Loading skeleton auto-transitions. Toast auto-triggers. `prefers-reduced-motion` respected.
-
-6. **Self-contained, responsive layout** — layout follows the chosen strategy (not forced single-column if the strategy calls for variable widths or asymmetric splits).
+Build it to the **Pattern showcase** spec in `HTML-GENERATORS.md`. Take the CSS/JS for each chosen layout pattern from `${CLAUDE_PLUGIN_ROOT}/references/design-system/layout-techniques.md` — same section numbers as `layout-architecture-guide.md`, which holds decisions only.
 
 **After generating:**
 
@@ -620,52 +499,7 @@ Generate a single-page preview of the complete finalized system — identity + c
 
 ## Step 8: Document Design System
 
-Create `{{specs_dir}}/design_system.md` using template in `${CLAUDE_PLUGIN_ROOT}/references/design-system/design-system-template.md`. Record the resolved modality in the document header — the template's modality notes and the per-modality guides override its web defaults.
-
-Populate all sections:
-1. **Foundations** - DP-NNN principles, accessibility level, tokens
-2. **Brand Identity** - Colors, typography, voice
-3. **UX Patterns** - Navigation, loading, errors, forms, responsive, motion
-4. **Decision Log** - All decisions with context and rationale
-
-`{{specs_dir}}/proposed-designs/pattern-showcase.html` stays in place — it is the pre-documentation reference showing the system as approved in 7d.
-
-### Step 8b: Generate UX Preview (`{{specs_dir}}/ux-preview.html`)
-
-After writing `{{specs_dir}}/design_system.md`, generate a persistent visual reference from the finalized documented decisions. This is similar in structure to the pattern-showcase but serves as a developer reference — it includes token names, hex values, and font names alongside the visual demonstrations. For `tui`/`mobile`, follow the modality guide's preview-artifact spec so the file works as an implementation reference (token names, color values with ANSI/dp annotations, cell/device dimensions).
-
-**Architecture — data-driven, single render function:**
-
-1. **CSS custom properties** — Single set derived from the documented identity (§2.1-2.2) and atmosphere (§2.5) decisions.
-
-2. **JS config object** (single, not array) — `identity` (colors, fonts from BRD decisions), `atmosphere` (treatments from UXD atmosphere decisions), `patterns` (from UXD pattern decisions).
-
-3. **Single `renderPreview(config)` function** — full page layout:
-   - Header with design system name, tonal direction badge, generation date
-   - Color palette swatches with token names and hex values
-   - Typography scale showcase (all `--text-*` tokens with specimen text)
-   - Navigation pattern demo
-   - Card grid showing card treatment, hover signature, entrance stagger
-   - Form section with validation states
-   - Empty state panel
-   - Toast notification (button-triggered)
-   - Loading skeleton → populated transition
-   - Motion timing reference (visualized durations)
-   - **Layout Architecture section** documenting the chosen spatial strategy:
-     - Section geometry diagram (annotated: which sections are full-bleed, narrow, wide, diagonal, rounded)
-     - Scroll behavior documentation (what happens on scroll: parallax, pin-and-reveal, sticky cascade, standard)
-     - Navigation behavior annotation (how nav transforms across sections)
-     - Page rhythm visualization (dense vs sparse section alternation)
-
-4. **Key difference from pattern-showcase:** Includes a reference header section showing token names, hex values, and font names — making it useful as a developer reference, not just a visual impression. The Layout Architecture section documents spatial decisions so developers know the intended section structure, not just component styling.
-
-5. **Self-contained**, responsive layout. `prefers-reduced-motion` respected.
-
-**After generating:**
-
-> "I've also generated `{{specs_dir}}/ux-preview.html` — a visual reference for the design system. Open it anytime to see how the system looks and feels."
-
-Present summary for review, then write the file.
+Present the complete system for a final confirmation before anything is written:
 
 > "Here's the complete design system:
 >
@@ -676,6 +510,32 @@ Present summary for review, then write the file.
 > **UX Patterns:** [Nav type], [Loading strategy], [Error approach], [Motion character]
 >
 > Ready to document this in `{{specs_dir}}/design_system.md`?"
+
+**Handle the response:**
+- User approves → Write the document below
+- User wants a change → Return to the step that owns it (tokens: Step 3; identity: Step 4 or 5; patterns or atmosphere: Step 7), regenerate what that step shows, and present this summary again
+
+On approval, create `{{specs_dir}}/design_system.md` using template in `${CLAUDE_PLUGIN_ROOT}/references/design-system/design-system-template.md`. Record the resolved modality in the document header — the template's modality notes and the per-modality guides override its web defaults.
+
+Populate all six sections of the template:
+1. **Design Foundations** (§1) - DP-NNN principles, accessibility level, token categories
+2. **Brand Identity** (§2) - Color system, typography, logo usage, voice, visual atmosphere
+3. **UX Patterns** (§3) - Navigation, loading, errors, empty states, forms, responsive, motion, spatial composition, layout architecture
+4. **Component Guidelines** (§4) - The components this product needs, each mapped to the decisions that shape it
+5. **Decision Log** (§5) - Every DP-, BRD-, and UXD- decision, in the Decision Record Format below
+6. **Open Questions & Risks** (§6) - What this pass left unresolved
+
+`{{specs_dir}}/proposed-designs/pattern-showcase.html` stays in place — it is the pre-documentation reference showing the system as approved in 7d.
+
+### Step 8b: Generate UX Preview (`{{specs_dir}}/ux-preview.html`)
+
+After writing `{{specs_dir}}/design_system.md`, generate a persistent visual reference from the finalized documented decisions. This is similar in structure to the pattern-showcase but serves as a developer reference — it includes token names, hex values, and font names alongside the visual demonstrations. For `tui`/`mobile`, follow the modality guide's preview-artifact spec so the file works as an implementation reference (token names, color values with ANSI/dp annotations, cell/device dimensions).
+
+Build it to the **UX preview** spec in `HTML-GENERATORS.md`.
+
+**After generating:**
+
+> "I've also generated `{{specs_dir}}/ux-preview.html` — a visual reference for the design system. Open it anytime to see how the system looks and feels."
 
 ### Step 8c: Generate App Wireframes (`{{specs_dir}}/wireframes.html`)
 
@@ -691,17 +551,7 @@ The system-level artifacts show *how components look and behave*; this step show
 
 **2. Confirm the inventory** via `AskUserQuestion` before generating — let the user add missing screens, drop low-priority ones, or trim variant states.
 
-**3. Generate a single self-contained `{{specs_dir}}/wireframes.html`** — hi-fi, rendered with the documented tokens (not grayscale boxes). The value is flow and layout composition, and the file doubles as an implementation reference for task work. Same data-driven architecture as the other artifacts:
-
-1. **JS screens array** — each entry: `id`, `name`, `flow` (which experience it belongs to), `variant` (primary/empty/loading/error, where applicable), `notes` (what this screen must accomplish), `content` (real placeholder content from the product domain — no lorem ipsum)
-
-2. **Screen-switcher navigation** — sidebar or top nav listing screens grouped by flow, variant states nested under their screen
-
-3. **Single `renderScreen(screen)` function** — composites the chosen patterns (navigation pattern, layout architecture from Step 7c, card treatment, forms, empty/loading/error patterns) onto each screen's actual layout
-
-4. **Screen annotations** — each screen shows its name, flow, variant label, and a one-line note of which patterns it exercises
-
-5. **Self-contained** — CSS/JS inline, tokens as CSS custom properties from the documented system, Google Fonts via `<link>`. Responsive. `prefers-reduced-motion` respected.
+**3. Generate a single self-contained `{{specs_dir}}/wireframes.html`** — hi-fi, rendered with the documented tokens (not grayscale boxes). The value is flow and layout composition: it is the screen-by-screen reference to point task authors and implementers at when a task touches a screen. Build it to the **App wireframes** spec in `HTML-GENERATORS.md`.
 
 **Maintenance:** `{{specs_dir}}/wireframes.html` is regenerated whenever the design system changes, same as `ux-preview.html` (`source-ux-design-from-code` does both).
 
@@ -780,7 +630,9 @@ Each decision follows a lightweight format:
 - `${CLAUDE_PLUGIN_ROOT}/references/design-system/motion-design-guide.md` - Timing rules, easing, perceived performance, reduced motion
 - `${CLAUDE_PLUGIN_ROOT}/references/design-system/spatial-design-guide.md` - 4pt grid, semantic tokens, container queries, optical adjustments
 - `${CLAUDE_PLUGIN_ROOT}/references/design-system/ux-writing-guide.md` - Button labels, error formulas, empty states, terminology, text expansion
-- `${CLAUDE_PLUGIN_ROOT}/references/design-system/layout-architecture-guide.md` - Section geometry, scroll architecture, navigation, content choreography, typography as architecture (~35 patterns)
-- `${CLAUDE_PLUGIN_ROOT}/references/design-system/layout-examples.md` - 7 curated strategy bundles combining layout patterns into coherent layouts
+- `${CLAUDE_PLUGIN_ROOT}/references/design-system/layout-architecture-guide.md` - Layout pattern decision guide (no code): selection table, compatibility matrix, then section geometry, scroll architecture, navigation, content choreography, content hierarchy, spatial techniques, typography as architecture (36 patterns)
+- `${CLAUDE_PLUGIN_ROOT}/references/design-system/layout-techniques.md` - CSS/JS implementation of the same 36 patterns, under the guide's section numbers; read when building the layout comparison or the showcase
+- `${CLAUDE_PLUGIN_ROOT}/references/design-system/layout-examples.md` - Curated strategy bundles combining layout patterns into coherent layouts, with a selection guide
+- `HTML-GENERATORS.md` (beside this skill) - Build specs for the six HTML artifacts: the comparisons, the showcase, the preview, the wireframes
 - `${CLAUDE_PLUGIN_ROOT}/references/design-system/tui-design-guide.md` - TUI track: palette strategy, cell tokens, screen architecture, TUI accessibility, terminal-frame mocks
 - `${CLAUDE_PLUGIN_ROOT}/references/design-system/mobile-design-guide.md` - Mobile track: brand-vs-platform, pt/dp tokens, navigation architecture, mobile accessibility, phone-frame mocks

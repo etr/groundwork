@@ -1,6 +1,6 @@
 # `source-product-specs-from-code`
 
-> **Run it:** `/groundwork:source-product-specs-from-code [files...]` · **Tier:** user-run · **Reads:** the current session, `specs/product_specs.md` (or the `product_specs/` directory) · **Writes:** the same PRD, only after you approve each update — and a `split-specs` run once it passes 500 lines or 15 features
+> **Run it:** `/groundwork:source-product-specs-from-code` · **Tier:** user-run · **Reads:** the current session, `specs/product_specs.md` (or the `product_specs/` directory) · **Writes:** the same PRD, only after you approve each update — and a `split-specs` run once it passes 500 lines or 15 features
 
 ## What it does
 
@@ -17,7 +17,7 @@ Brings the PRD back in line with what was decided while the work happened. It re
 
 **It opened by asking me to switch model or effort.**
 
-That is the pre-flight check. It is skipped only when effort is `high`, `xhigh`, or `max` and the model is Sonnet or Opus. "Continue" goes ahead; "Cancel — I'll switch first" prints the switching commands and stops.
+That is the pre-flight check. It is skipped only when effort is `high`, `xhigh`, or `max` and the model is Sonnet or Opus. "Continue anyway" goes ahead; "Cancel — I'll switch first" prints the switching commands and stops. The question is asked once per conversation — a skill invoked by another skill skips it once it has been shown — and a non-interactive run (a batch or the runner) skips it too.
 
 **What does it read — the session or the code?**
 

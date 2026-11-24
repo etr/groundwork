@@ -61,6 +61,13 @@ Examples:
 - `Use when creating new features - collaborative brainstorming`
 - `Use when reviewing code - structured review checklist`
 
+Every description is loaded into context in every session, and on export it is the only place a flag is advertised (the installer drops `argument-hint` and strips a `Usage /groundwork:…` suffix). So:
+
+- Do not repeat the usage line in the description — that is what `argument-hint` is for.
+- Do not open with "This skill should be used when"; start with the trigger or the imperative.
+- Explain every flag the argument hint advertises in portable prose, with the wording the other skills use (`tests/skill-descriptions.test.js` fails on a new spelling).
+- Keep it under about 330 characters; only a skill that carries three flags has a reason to run longer.
+
 ## Skill Content Guidelines
 
 ### Be Specific
@@ -125,13 +132,10 @@ Mark with:
 **This is a rigid skill.** Follow steps exactly.
 ```
 
-### Flexible Skills
-Adapt principles to context. Used for patterns and guidelines.
+Only the skills that carry it are rigid (today `test-driven-development` and `debug`, each of which states an Iron Law). Marking is optional; the router, `using-groundwork`, keeps a list that must match the skills that actually carry the marker.
 
-Mark with:
-```markdown
-**This is a flexible skill.** Adapt to your context.
-```
+### Flexible Skills
+Adapt principles to context. Used for patterns and guidelines. Flexible skills carry no marker — a skill without the rigid marker is applied as written, and adapted only where it says adaptation is allowed.
 
 ## Testing Skills
 
@@ -191,7 +195,39 @@ skills/my-skill/
   FORMAT.md    # a template consulted only when producing the artifact
 ```
 
-Name each sibling and the condition for opening it ("When producing the report, follow `FORMAT.md`"). Inline only what *every* run needs. Split into a *separate skill* (not just a sibling) only when the cut earns its context cost: a distinct leading word worth independent invocation.
+Name each sibling and the condition for opening it ("When producing the report, follow `FORMAT.md`"). Inline only what *every* run needs.
+
+Decide by what the content is *for*:
+
+| The content is… | Where it goes |
+|-----------------|---------------|
+| A restatement of a rule stated elsewhere (another section, a shared checklist, a preloaded skill) | Delete it, or replace it with a one-line pointer to the owner |
+| Reference used on some branch of the work (a report format, a language checklist, an escalation template, implementation code) | A sibling or a `references/` file behind a pointer that names when to open it |
+| A guardrail at a weak moment — the point where the model is tempted to shortcut (an Iron Law, a mandatory "watch it fail", a STOP list, a mock gate) | Inline, as short as the rule allows |
+
+A skill that is **preloaded into an agent** (`skills:` in the agent's frontmatter) is loaded whole, but its sibling files are not pulled in. Put what such a skill defers in `references/` and point with `${CLAUDE_PLUGIN_ROOT}/references/<file>.md`: the exporter ships that file beside the skill and beside the agent.
+
+Never write `${CLAUDE_PLUGIN_ROOT}` or a `{{template}}` variable inside a file under `references/`. The installer copies those files byte-for-byte, so the raw text would reach every other harness (`tests/install-config.test.js` fails on it). Split into a *separate skill* (not just a sibling) only when the cut earns its context cost: a distinct leading word worth independent invocation.
+
+## Shared Blocks
+
+Some blocks must read the same wherever they appear: the Pre-flight model recommendation, Step 0's project-context checks, the manual-merge snippet shown to the user, the task format, the spec-detection rule, the auto-split thresholds, and the parts of the dispatch prompts that two skills share. Each is rendered into its skills from one source, because the copies had drifted whenever they were edited by hand:
+
+| Source | Blocks |
+|--------|--------|
+| `lib/sync-shared-blocks.js` | the Pre-flight block, Step 0, the manual-merge snippet — and `USAGE`, the per-skill parameter table that says which skill carries which block with which differences |
+| `lib/shared-blocks-specs.js` | the task format (read from `references/tasks/tasks-template.md`, which stays its source), the spec-detection rule, the auto-split thresholds, the plan constraints, the executor's task block |
+
+To change one, edit the source or its `USAGE` parameters, then run:
+
+```bash
+node lib/sync-shared-blocks.js          # re-render every listed skill
+node lib/sync-shared-blocks.js --check  # exit 1 on drift, write nothing
+```
+
+Never hand-edit a rendered block. `tests/shared-blocks.test.js` compares every site byte-for-byte with the rendered text and fails until the source is updated; it also fails when a skill carries one of these blocks without being registered in `USAGE`.
+
+The skills keep the rendered text rather than pointing at a shared file on purpose: the export installer's gates, model-name translation, and Codex policy all key on these blocks being in the skill body, and a pointer would cost a read on every run for a block every run needs.
 
 ## Docs Pages
 

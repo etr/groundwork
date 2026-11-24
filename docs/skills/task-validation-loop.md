@@ -28,7 +28,7 @@ The same finding came back three times, or it reached a decision it will not mak
 
 **It asked whether to switch model and effort before starting.**
 
-That is the pre-flight model recommendation, skipped only when effort is `high`, `xhigh`, or `max` and you are on Sonnet or Opus. "Cancel — I'll switch first" prints the switching commands and stops the skill.
+That is the pre-flight model recommendation, skipped only when effort is `high`, `xhigh`, or `max` and you are on Sonnet or Opus. "Cancel — I'll switch first" prints the switching commands and stops the skill. The question is asked once per conversation — a skill invoked by another skill skips it once it has been shown — and a non-interactive run (a batch or the runner) skips it too.
 
 ## It's working if
 

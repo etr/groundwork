@@ -1,6 +1,6 @@
 ---
 name: swarm-debug
-description: Start swarm debugging with parallel hypothesis investigation. Usage /groundwork:swarm-debug [bug description]
+description: Start swarm debugging with parallel hypothesis investigation.
 argument-hint: "[bug description]"
 allowed-tools: ["Read", "Edit", "Write", "Bash", "Glob", "Grep", "Task", "Skill"]
 disable-model-invocation: true
@@ -18,29 +18,15 @@ This skill extends the `groundwork:debug` workflow. Phases 1-2 and 4-5 follow th
 
 ## Pre-flight: Model Recommendation
 
-**Your current effort level is `{{effort_level}}`.**
+**Your current effort level is `{{effort_level}}`.** Skip this step silently if effort is `high`, `xhigh`, or `max` (the scale is `low` < `medium` < `high` < `xhigh` < `max`, so `xhigh` and `max` are already above `high`) AND you are Opus (1M context). Otherwise ask via `AskUserQuestion` (header "Model check"; options "Continue anyway" / "Cancel — I'll switch first"):
 
-Skip this step silently if effort is `high`, `xhigh`, or `max` (the scale is `low` < `medium` < `high` < `xhigh` < `max`, so `xhigh` and `max` are already above `high`) AND you are Opus (1M context).
-If effort is `low` or `medium` (i.e. below `high`), you MUST show the recommendation prompt — regardless of model.
-If you are not Opus (1M context), you MUST show the recommendation prompt - regardless of effort level.
+> "Do you want to switch? Hypothesis generation quality determines whether the entire swarm investigates the right space.
+>
+> Recommended: Opus (1M context) at high effort.
+>
+> To switch: cancel, run `/model opus[1m]` and `/effort high`, then re-invoke this skill."
 
-Otherwise → use `AskUserQuestion`:
-
-```json
-{
-  "questions": [{
-    "question": "Do you want to switch? Hypothesis generation quality determines whether the entire swarm investigates the right space.\n\nTo switch: cancel, run `/model opus[1m]` and `/effort high`, then re-invoke this skill.",
-    "header": "Recommended: Opus (1M context) at high effort",
-    "options": [
-      { "label": "Continue" },
-      { "label": "Cancel — I'll switch first" }
-    ],
-    "multiSelect": false
-  }]
-}
-```
-
-If the user selects "Cancel — I'll switch first": output the switching commands above and stop. Do not proceed with the skill.
+If the user selects "Cancel — I'll switch first": output the switching commands and stop. Do not proceed with the skill. Ask once per conversation: a skill invoked by another skill skips this step when the recommendation was already shown. In a non-interactive run (`--noninteractive`, `GROUNDWORK_RUNNER_MODE=true`, or `GROUNDWORK_BATCH_MODE=true`), skip the prompt and continue on the current model.
 
 ## Prerequisites
 
@@ -166,8 +152,8 @@ While teammates investigate:
 ### Step 4: Call Convergence
 
 Call convergence when one of these conditions is met:
-- **Strong convergence**: One hypothesis reaches "Verified" confidence — direct evidence proves it, and no contradicting evidence exists
-- **Moderate convergence**: One hypothesis reaches "Corroborated" confidence — multiple independent observations support it, and competing hypotheses are eliminated
+- **Strong convergence**: several investigators independently reach the same root cause, each with direct evidence, and every competing hypothesis is eliminated
+- **Moderate convergence**: one investigator's observations support a hypothesis, the competing hypotheses are eliminated, and nobody contradicts it — the `debug` skill's "Corroborated" level, the minimum a fix requires. ("Verified" cannot be reached before the fix: only Phase 5 of `debug` grants it.)
 - **Divergence**: No hypothesis gains traction — all eliminated or inconclusive. This means the root cause wasn't in the initial hypothesis set. Generate new hypotheses from teammate findings and either run another swarm round or fall back to sequential investigation.
 
 **Do NOT call convergence prematurely.** Wait for teammates to actively challenge each other's findings. Early agreement without adversarial testing is a red flag.
@@ -199,36 +185,7 @@ Run the failing test, full test suite, and original reproduction. Review the fix
 
 Same **3-fix limit** as the debug skill. If your third fix attempt fails, stop and escalate.
 
-When escalating after swarm debugging, include **all teammate findings** in the escalation output — the breadth of parallel investigation makes the escalation more valuable than a sequential one.
-
-```markdown
-## Escalation: [Bug Description]
-
-### Swarm Investigation Summary
-| Teammate | Hypothesis | Verdict | Key Evidence |
-|----------|-----------|---------|--------------|
-| 1 | [hypothesis] | [Confirmed/Eliminated/Inconclusive] | [summary] |
-| 2 | [hypothesis] | [Confirmed/Eliminated/Inconclusive] | [summary] |
-| ... | ... | ... | ... |
-
-### What I tried
-| # | Hypothesis | Fix Attempted | Result |
-|---|-----------|---------------|--------|
-| 1 | [hypothesis] | [what you changed] | [what happened] |
-| ... | ... | ... | ... |
-
-### Eliminated hypotheses
-- [hypothesis]: eliminated because [evidence from teammate N]
-
-### What I know
-- [confirmed fact with evidence]
-
-### Could this be architectural?
-[assessment]
-
-### Recommended next step
-[specific suggestion]
-```
+Escalate with the report format in `${CLAUDE_PLUGIN_ROOT}/references/debug-escalation.md`, filling its *Swarm Investigation Summary* with **all teammate findings** — the breadth of parallel investigation makes the escalation more valuable than a sequential one.
 
 ## Debug Journal — Swarm Extension
 

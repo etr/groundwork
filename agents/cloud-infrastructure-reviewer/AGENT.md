@@ -52,7 +52,7 @@ The orchestrator should skip this agent before reaching you, but you must still 
 | `azurerm_*`, `Microsoft.*`, `azure-native:*` | Azure |
 | `google_*`, `google-beta_*`, `gcp:*` | GCP |
 
-Run provider-specific sections (5, 6, 7) only for detected clouds.
+Run the provider-specific review criteria (AWS-, Azure-, GCP-Specific) only for detected clouds.
 
 ## Review Criteria — Cloud-Agnostic Foundations
 
@@ -274,11 +274,11 @@ Use these kebab-case values for the `category` field:
 2. **Empty-scope check** — if the set is empty, return `approve` with summary "no IaC files in this change" and stop.
 3. **Read** each IaC file via `Read`. For large files, prefer `Grep` on specific patterns to stay within context.
 4. **Infer target cloud(s)** from resource / type prefixes.
-5. **Apply cloud-agnostic checks** (section 4).
-6. **Apply platform-specific checks** (sections 5, 6, 7) only for detected clouds.
-7. **Apply IaC tool anti-patterns** (section 8).
+5. **Apply cloud-agnostic checks** (*Review Criteria — Cloud-Agnostic Foundations*, 4.1–4.9).
+6. **Apply platform-specific checks** (*Review Criteria — AWS-Specific*, *Azure-Specific*, *GCP-Specific*) only for detected clouds.
+7. **Apply IaC tool anti-patterns** (*Review Criteria — IaC Tool Anti-Patterns*).
 8. **Document findings** with `file:line`, Well-Architected pillar reference (`[SEC-01]`, `[REL-03]`, etc.), and a canonical provider-doc URL in the `recommendation` field where possible.
-9. **Assign severity**, compute score, set verdict.
+9. **Assign severity**, compute the score (Score: the rubric under *Score* in the review protocol.), set the verdict.
 
 ## Output Format
 
@@ -304,31 +304,7 @@ Return your review as JSON:
 
 ### Dual Output Modes
 
-**File mode** — if your prompt includes a `findings_file: <path>` line (along with `agent_name:`, `iteration:`, and `review_mode:`), write the full JSON above to that path using the `Write` tool, then return ONLY a compact one-line JSON response. The on-disk file adds `agent`, `iteration`, and `review_mode` plus a 1-indexed `id` on every finding:
-
-```json
-{
-  "agent": "<agent_name from prompt>",
-  "iteration": <iteration from prompt>,
-  "review_mode": "<review_mode from prompt>",
-  "summary": "...",
-  "score": 78,
-  "verdict": "request-changes",
-  "findings": [
-    {"id": 1, "severity": "critical", "category": "network-public-ingress", "file": "infra/network.tf", "line": 42, "finding": "...", "recommendation": "...", "disposition": "actionable"}
-  ]
-}
-```
-
-Your conversational response in file mode is exactly one JSON line (no findings inline, no extra prose):
-
-```json
-{"verdict":"request-changes","score":78,"summary":"...","findings_file":"<the path you wrote>","counts":{"critical":1,"major":0,"minor":0}}
-```
-
-`counts` reflects how many findings of each severity you wrote to the file.
-
-**Inline mode** — if your prompt does NOT include a `findings_file:` line, return the full JSON inline (the original shape, with no `agent`/`iteration` header and no `id`s). This mode is used by `review-pr`.
+Follow **Output Modes** in `${CLAUDE_PLUGIN_ROOT}/references/validation-review-protocol.md`. File mode (the prompt carries a `findings_file:` line): write the full review to that path with the `Write` tool — your schema above plus the header, finding `id`s, `disposition`, and `cleared_invariants` — then return only the compact one-line response. Inline mode (no `findings_file:` line, as in `review-pr`): return the full JSON inline exactly as shown above.
 
 ## Verdict Rules
 

@@ -52,59 +52,7 @@ Use these category values in findings (kebab-case):
 
 ## Language-Specific Checks
 
-### JavaScript/TypeScript (Jest/Vitest)
-- Vague test names (`it('works')`, `it('should handle input')`)
-- Element count assertions (`expect(items).toHaveLength(3)` for presentational lists)
-- Missing `await` on async assertions
-- Snapshot abuse on large objects (`toMatchSnapshot()` on entire component trees)
-- `fireEvent` vs `userEvent` (prefer `userEvent` for realistic interactions)
-- Testing CSS output or class names instead of behavior
-- `toMatchSnapshot()` fragility — prefer explicit assertions
-
-### Python (pytest)
-- Vague test names (`test_it_works`, `test_function`)
-- `assert True` without meaningful comparison
-- Broad fixture scope (`session` when `function` suffices)
-- `time.sleep` in tests (indicates real I/O or timing dependency)
-- Wrong-level monkeypatch (patching too deep or too shallow)
-- Not using `@pytest.mark.parametrize` for multiple similar inputs
-
-### Java (JUnit)
-- Missing `@DisplayName` for clarity
-- `@SpringBootTest` for unit tests (loads entire application context unnecessarily)
-- `Thread.sleep` in tests
-- Catching exceptions instead of `assertThrows`
-- `@Autowired` in unit tests (should use constructor injection or mocks)
-
-### Go
-- Missing table-driven tests for similar test cases
-- `time.Sleep` in tests
-- Testing unexported functions directly
-- Missing `t.Parallel()` for independent tests
-- Inconsistent assertion library usage (mixing `testify` and manual checks)
-
-### C# (xUnit/NUnit)
-- Missing `[Theory]`/`[InlineData]` for parameterized cases
-- `Thread.Sleep` in tests
-- `Assert.True(a == b)` instead of `Assert.Equal(a, b)` (worse error messages)
-- Shared mutable state in `[SetUp]`
-
-### Ruby (RSpec/Minitest)
-- Vague descriptions (`it 'works'`, `it 'is valid'`)
-- `sleep` in tests
-- `allow_any_instance_of` (couples to implementation)
-- Not using `let` lazily
-- `before(:all)` with mutable state
-- Testing private methods with `send`
-- Missing `shared_examples` for duplicate test logic
-- Not using `described_class`
-
-### React (Testing Library)
-- `getByTestId` over semantic queries (`getByRole`, `getByText`, `getByLabelText`)
-- Snapshot testing presentational components
-- Testing state/props directly instead of rendered output
-- Not using `screen` for queries
-- Testing CSS classes instead of behavior
+Read `${CLAUDE_PLUGIN_ROOT}/references/checklists/test-quality-languages.md` and apply its section for each language family present in `changed_file_paths`; the families absent from the change do not apply. Read only the sections that match.
 
 ## Review Process
 
@@ -112,7 +60,7 @@ Use these category values in findings (kebab-case):
 2. **Grade against the standard** (`testing.md`): code taxonomy, test structure, mocking gates, tautological tests, the four pillars, coverage completeness vs. the task's acceptance criteria, what-not-to-test, determinism
 3. **Detect redundant tests** that add maintenance burden without value
 4. **Apply language-specific checks** for the project's language
-5. **Document findings** with specific file/line references, **assign severity**, and **calculate the score and verdict**
+5. **Document findings** with specific file/line references, **assign severity**, and **calculate the score and verdict** (Score: the rubric under *Score* in the review protocol.)
 
 ## Output Format
 
@@ -138,31 +86,7 @@ Return your review as JSON:
 
 ### Dual Output Modes
 
-**File mode** — if your prompt includes a `findings_file: <path>` line (along with `agent_name:`, `iteration:`, and `review_mode:`), write the full JSON above to that path using the `Write` tool, then return ONLY a compact one-line JSON response. The on-disk file adds `agent`, `iteration`, and `review_mode` plus a 1-indexed `id` on every finding:
-
-```json
-{
-  "agent": "<agent_name from prompt>",
-  "iteration": <iteration from prompt>,
-  "review_mode": "<review_mode from prompt>",
-  "summary": "...",
-  "score": 85,
-  "verdict": "approve",
-  "findings": [
-    {"id": 1, "severity": "major", "category": "...", "file": "...", "line": 42, "finding": "...", "recommendation": "...", "disposition": "actionable"}
-  ]
-}
-```
-
-Your conversational response in file mode is exactly one JSON line (no findings inline, no extra prose):
-
-```json
-{"verdict":"approve","score":85,"summary":"...","findings_file":"<the path you wrote>","counts":{"critical":0,"major":1,"minor":0}}
-```
-
-`counts` reflects how many findings of each severity you wrote to the file.
-
-**Inline mode** — if your prompt does NOT include a `findings_file:` line, return the full JSON inline (the original shape shown above, with no `agent`/`iteration` header and no `id`s). This mode is used by `review-pr`.
+Follow **Output Modes** in `${CLAUDE_PLUGIN_ROOT}/references/validation-review-protocol.md`. File mode (the prompt carries a `findings_file:` line): write the full review to that path with the `Write` tool — your schema above plus the header, finding `id`s, `disposition`, and `cleared_invariants` — then return only the compact one-line response. Inline mode (no `findings_file:` line, as in `review-pr`): return the full JSON inline exactly as shown above.
 
 ## Severity Definitions
 

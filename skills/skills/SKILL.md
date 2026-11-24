@@ -1,6 +1,6 @@
 ---
 name: skills
-description: List all available Groundwork skills with descriptions. Usage /groundwork:skills
+description: List all available Groundwork skills with descriptions.
 allowed-tools: ["Bash", "Read", "Glob", "Skill"]
 disable-model-invocation: true
 ---

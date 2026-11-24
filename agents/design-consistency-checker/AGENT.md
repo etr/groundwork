@@ -75,25 +75,18 @@ Read `${CLAUDE_PLUGIN_ROOT}/references/checklists/accessibility.md` — the auth
 Generic WCAG criteria live in `accessibility.md` (referenced in §2). This section adds the project-specific specs (from `design_system.md`) and the concrete ❌/✅ code patterns to flag in review. The patterns below are **web-dialect**; for tui/mobile, the analogues come from the dialect and modality guide (tui focus = visible selection/pane indicator, not `:focus-visible`; mobile labels = `accessibilityLabel`/`contentDescription`, not `<label>`).
 
 **Focus States:**
-- All interactive elements must have visible focus indicators
-- Focus ring must meet contrast requirements (3:1), be 2-3px wide, with offset from element
+- The focus ring's width and color come from the project's `design_system.md` (commonly 2-3px, with offset from the element)
 - ❌ `outline: none` without alternative focus style
 - ✅ `focus:ring-2 focus:ring-offset-2`
 - ❌ `:focus { outline: 2px solid blue; }` without `:focus-visible` — fires on mouse click too
 - ✅ `:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }` — keyboard only
-- Flag any `:focus` styling that isn't accompanied by `:focus-visible` (unless browser-compat comment present)
 
 **Color Contrast:**
-- Text must meet the specified WCAG level
-- For AA: 4.5:1 normal text, 3:1 large text
-- For AAA: 7:1 normal text, 4.5:1 large text
-- Check semantic colors (error, warning) also meet requirements
 - **Verify programmatically — never assert a ratio by eye.** When available, run the plugin's contrast checker: `node ${CLAUDE_PLUGIN_ROOT}/lib/contrast-check.js <foreground> <background>` for each text/background pairing in changed code. For tui modality, pairings worn against the user's terminal theme are checked against both a light and a dark reference theme (TUI Dialect). Greys that look fine routinely fail: #777777 on white computes to 4.48:1. When the script is not available in this harness, compute the WCAG formula (relative luminance, then `(L1 + 0.05) / (L2 + 0.05)`) and show the arithmetic in the finding.
 
 **Labels and Placeholders:**
 - ❌ `<input placeholder="Email address">` without a `<label>` element
 - ✅ `<label for="email">Email address</label><input id="email" placeholder="e.g., user@example.com">`
-- Every form input must have an associated visible `<label>`. Placeholder text is never a substitute.
 
 **Touch Targets:**
 - ❌ Interactive elements with width/height below 44px without enlarged hit area
@@ -103,7 +96,6 @@ Generic WCAG criteria live in `accessibility.md` (referenced in §2). This secti
 **Viewport Meta:**
 - ❌ `<meta name="viewport" content="... user-scalable=no ...">` or `maximum-scale=1`
 - ✅ `<meta name="viewport" content="width=device-width, initial-scale=1">`
-- `user-scalable=no` and `maximum-scale=1` break zoom accessibility
 
 **Minimum Body Text:**
 - ❌ Body text set below 16px (e.g., `font-size: 14px` or `font-size: 0.875rem` as base)
@@ -133,9 +125,6 @@ Verify implementations match the UXD decisions recorded under each pattern's sec
 - Validation timing matches specification (on blur, not keystroke, unless password strength)
 - Error display consistent
 - Multi-step patterns followed if applicable
-- ❌ `<input>` without associated `<label>` (placeholder-only forms)
-- ❌ Generic button labels: "OK", "Submit", "Yes", "No", "Cancel" without context
-- ✅ Verb + object labels: "Save changes", "Delete project", "Send invitation"
 
 **Responsive (§3.6 Responsive Behavior):**
 - Using specified breakpoints
@@ -145,7 +134,6 @@ Verify implementations match the UXD decisions recorded under each pattern's sec
 **Animation (§3.7 Motion & Interaction Character):**
 - Duration within specified ranges (100-150ms feedback, 200-300ms state, 300-500ms layout, 500-800ms entrance)
 - Easing functions from tokens — flag `linear`, `ease` (browser default), `ease-in-out` unless design system specifies them
-- `prefers-reduced-motion` respected — every animation/transition must have a reduced-motion alternative or be in a motion media query
 - ❌ Animating `width`, `height`, `padding`, `margin`, `top`, `left` — layout recalculation
 - ✅ Only animate `transform` and `opacity` (compositor-only properties)
 - ❌ `will-change: transform` declared statically in CSS (preemptive)
@@ -167,14 +155,8 @@ Verify interaction implementations meet design quality standards beyond basic pa
 - ✅ `<dialog>` element with `showModal()` and `inert` on sibling content
 - ❌ Custom tooltip/dropdown using absolute positioning + JS toggle
 - ✅ Popover API (`popover` attribute) for non-modal overlays (where browser support allows)
-- Check that modals trap focus and return focus to trigger element on close
 
-**Keyboard Navigation:**
-- ❌ `tabindex` values greater than 0 (breaks natural tab order)
-- ✅ `tabindex="0"` or `tabindex="-1"` only
-- Component groups (tabs, menus, radio buttons) should use roving tabindex, not individual tab stops
-- ❌ `onClick` on non-interactive elements (`<div>`, `<span>`) without `role`, `tabindex`, and keyboard handler
-- ✅ Use `<button>` or `<a>` for interactive elements; if custom, add `role="button"`, `tabindex="0"`, and `onKeyDown`
+**Keyboard Navigation:** every rule is in `accessibility.md` (§2) — apply its *Keyboard Navigation* section; there is nothing project-specific to add here.
 
 **Nested Cards:**
 - ❌ Card component rendered inside another card component
@@ -196,11 +178,6 @@ Check copy patterns in the codebase for design system compliance (§3.12 Writing
 - ❌ Messages that blame the user: `"You entered an invalid..."`, `"Your input was wrong"`
 - ✅ Reframed: `"This email address isn't valid — check for typos"`
 
-**Alt Text:**
-- ❌ `alt="image"`, `alt="photo"`, `alt="icon"`, `alt="logo"` — describes the element, not the content
-- ❌ Decorative images without `alt=""` (must have empty alt or `aria-hidden="true"`)
-- ✅ `alt="Revenue increased 40% from Q2 to Q3"` for informational images
-- ✅ `alt=""` or `aria-hidden="true"` for decorative images
 
 **Redundant Copy:**
 - Flag heading + immediately following text that restates the heading
@@ -280,32 +257,7 @@ Return your review as JSON:
 
 ### Dual Output Modes
 
-**File mode** — if your prompt includes a `findings_file: <path>` line (along with `agent_name:`, `iteration:`, and `review_mode:`), write the full JSON above to that path using the `Write` tool, then return ONLY a compact one-line JSON response. The on-disk file adds `agent`, `iteration`, and `review_mode` plus a 1-indexed `id` on every finding:
-
-```json
-{
-  "agent": "<agent_name from prompt>",
-  "iteration": <iteration from prompt>,
-  "review_mode": "<review_mode from prompt>",
-  "summary": "...",
-  "score": 85,
-  "verdict": "request-changes",
-  "findings": [
-    {"id": 1, "severity": "major",    "category": "token-usage",   "file": "...", "line": 15, "finding": "...", "recommendation": "...", "disposition": "actionable"},
-    {"id": 2, "severity": "critical", "category": "accessibility", "file": "...", "line":  8, "finding": "...", "recommendation": "...", "disposition": "actionable"}
-  ]
-}
-```
-
-Your conversational response in file mode is exactly one JSON line (no findings inline, no extra prose):
-
-```json
-{"verdict":"request-changes","score":85,"summary":"...","findings_file":"<the path you wrote>","counts":{"critical":1,"major":1,"minor":0}}
-```
-
-`counts` reflects how many findings of each severity you wrote to the file.
-
-**Inline mode** — if your prompt does NOT include a `findings_file:` line, return the full JSON inline (the original shape shown above, with no `agent`/`iteration` header and no `id`s). This mode is used by `review-pr`.
+Follow **Output Modes** in `${CLAUDE_PLUGIN_ROOT}/references/validation-review-protocol.md`. File mode (the prompt carries a `findings_file:` line): write the full review to that path with the `Write` tool — your schema above plus the header, finding `id`s, `disposition`, and `cleared_invariants` — then return only the compact one-line response. Inline mode (no `findings_file:` line, as in `review-pr`): return the full JSON inline exactly as shown above.
 
 ## Finding Categories
 
