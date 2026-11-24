@@ -1,6 +1,6 @@
 {
   "name": "groundwork",
-  "version": "3.11.0",
+  "version": "3.12.0",
   "private": true,
   "description": "Skills library for structured development workflows, shipped as a Claude Code plugin and exported to other coding harnesses.",
   "license": "MIT",
