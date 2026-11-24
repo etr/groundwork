@@ -120,6 +120,15 @@ For each architecture decision (DR-NNN):
    - Missing components that should exist per architecture
    - Extra components not mentioned in architecture
 
+### Step 3b: Check Task Status Consistency
+
+This step produces the "Task Status Consistency" table of the report. When the task catalog exists (single file `{{specs_dir}}/tasks.md`, or the `{{specs_dir}}/tasks/` directory — read its `_index.md` status table first), compare each task's recorded status with the code:
+
+1. **Marked complete but code missing** — for each task recorded `Complete`, look for implementation evidence of its goal and acceptance criteria (its component, its files by convention). A task with no trace of its criteria in the code belongs in this row.
+2. **Code present but task not complete** — for each task still `Not Started` or `Blocked`, check whether its acceptance criteria are already satisfied in the code. If they are, the status is stale, not the code.
+
+Without a task catalog, write "No task catalog" in that section of the report.
+
 ### Step 4: Report Findings
 
 Present the alignment report in a structured format:

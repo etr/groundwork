@@ -33,18 +33,18 @@ Ensure tasks include accessibility considerations:
 ### 3. UX Pattern Compliance
 
 Check alignment with UX decisions (UXD-NNN):
-- Do loading state tasks follow UXD-003/004 patterns?
-- Do error handling tasks follow UXD-005/006 patterns?
-- Do empty state tasks follow UXD-007 patterns?
-- Do form tasks follow UXD-008/009 patterns?
-- Do responsive tasks follow UXD-010/011 patterns?
-- Do animation tasks follow UXD-012 patterns?
+- Do loading state tasks follow the loading-state patterns (§3.2 Loading States)?
+- Do error handling tasks follow the error-handling patterns (§3.3 Error Handling)?
+- Do empty state tasks follow the empty-state patterns (§3.4 Empty States)?
+- Do form tasks follow the form patterns (§3.5 Form Patterns)?
+- Do responsive tasks follow the responsive patterns (§3.6 Responsive Behavior)?
+- Do animation tasks follow the motion decisions (§3.7 Motion & Interaction Character)?
 
 ### 4. Brand Alignment
 
 Verify brand guidelines are referenced:
-- Do color-related tasks reference BRD-001 through BRD-005?
-- Do typography tasks reference BRD-006 through BRD-008?
+- Do color-related tasks reference the color decisions (§2.1 Color System)?
+- Do typography tasks reference the typography decisions (§2.2 Typography)?
 - Is brand voice mentioned for user-facing content?
 
 ### 5. Responsive Design
@@ -137,8 +137,8 @@ Return your review as JSON:
 ## Verdict Rules
 
 - `request-changes`: Any critical finding (accessibility)
-- `request-changes`: 3 or more major findings
-- `approve`: UI tasks reasonably incorporate design guidelines (minors ok)
+- `request-changes`: Any major finding — the validation loop treats every major as must-fix and re-runs only on `request-changes`
+- `approve`: UI tasks reasonably incorporate design guidelines, with no critical or major findings (minors ok)
 
 ## Task Categories to Review
 
@@ -150,9 +150,9 @@ Focus on these task types:
 | Form implementation | Labels, validation patterns, a11y |
 | Layout/page tasks | Responsive, breakpoints, spacing tokens |
 | Interactive elements | Focus states, keyboard nav, ARIA |
-| Loading states | UXD-003/004 patterns, skeleton vs spinner |
-| Error handling | UXD-005/006 patterns, error messaging |
-| Animation tasks | UXD-012 patterns, reduced motion |
+| Loading states | loading-state patterns (§3.2), skeleton vs spinner |
+| Error handling | error-handling patterns (§3.3), error messaging |
+| Animation tasks | motion decisions (§3.7), reduced motion |
 
 ## Accessibility Checklist
 

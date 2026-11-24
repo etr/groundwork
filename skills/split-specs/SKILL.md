@@ -27,7 +27,7 @@ Converts a single-file product spec (`{{specs_dir}}/product_specs.md`) into a di
    - If missing → output "No single-file PRD found at `{{specs_dir}}/product_specs.md`. Nothing to split." and stop.
 2. **Check directory does NOT exist:** `{{specs_dir}}/product_specs/` must not already exist
    - If it exists → output "PRD is already in directory format at `{{specs_dir}}/product_specs/`. Nothing to do." and stop.
-3. **Read the file** and count lines and features (sections matching `^### \d+\.\d+`).
+3. **Read the file** and count lines and features (sections matching `^### \d+\.\d+`). Compare with the thresholds below: if neither is crossed and the user did not ask for the split in this invocation, stop and report the counts — a split below threshold is churn, not upkeep.
 
 ## Step 2: Split the File
 
@@ -98,7 +98,7 @@ The single file has been removed. All skills (design-product, source-product-spe
 
 ## Auto-Split Thresholds
 
-When invoked automatically (not by the user), the caller has already verified that **at least one** threshold is crossed:
+A caller that auto-triggers this skill after checking the thresholds itself has already verified that **at least one** is crossed (Step 1's count confirms it). A model reaching for this skill on its own is not such a caller: for it the count alone decides:
 
 - **Line count:** `wc -l` on `{{specs_dir}}/product_specs.md` >= 500
 - **Feature count:** Number of `### \d+\.\d+` headings >= 15

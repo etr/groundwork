@@ -112,24 +112,24 @@ Generic WCAG criteria live in `accessibility.md` (referenced in §2). This secti
 
 ### 4. Pattern Consistency
 
-Verify implementations match UXD decisions:
+Verify implementations match the UXD decisions recorded under each pattern's section. Decision IDs are sequential per project, so look them up by section, never by a remembered number:
 
-**Loading States (check UXD-003/004):**
+**Loading States (§3.2 Loading States of the design system):**
 - Loading indicators match specified pattern (skeleton/spinner/progress)
 - Timing thresholds respected (no spinner for <100ms)
 - Reduced motion alternatives provided
 
-**Error Handling (check UXD-005/006):**
+**Error Handling (§3.3 Error Handling):**
 - Error display matches specified approach
 - Recovery actions provided
 - Error messages follow brand voice
 
-**Empty States (check UXD-007):**
+**Empty States (§3.4 Empty States):**
 - Appropriate empty state for context
 - Clear CTA provided
 - Matches established pattern
 
-**Forms (check UXD-008/009):**
+**Forms (§3.5 Form Patterns):**
 - Validation timing matches specification (on blur, not keystroke, unless password strength)
 - Error display consistent
 - Multi-step patterns followed if applicable
@@ -137,12 +137,12 @@ Verify implementations match UXD decisions:
 - ❌ Generic button labels: "OK", "Submit", "Yes", "No", "Cancel" without context
 - ✅ Verb + object labels: "Save changes", "Delete project", "Send invitation"
 
-**Responsive (check UXD-010/011):**
+**Responsive (§3.6 Responsive Behavior):**
 - Using specified breakpoints
 - Layout adaptations match specification
 - Mobile patterns appropriate
 
-**Animation (check UXD-012):**
+**Animation (§3.7 Motion & Interaction Character):**
 - Duration within specified ranges (100-150ms feedback, 200-300ms state, 300-500ms layout, 500-800ms entrance)
 - Easing functions from tokens — flag `linear`, `ease` (browser default), `ease-in-out` unless design system specifies them
 - `prefers-reduced-motion` respected — every animation/transition must have a reduced-motion alternative or be in a motion media query
@@ -158,7 +158,7 @@ Verify implementations match UXD decisions:
 Verify interaction implementations meet design quality standards beyond basic pattern matching:
 
 **Interactive States Completeness:**
-- Every interactive element (button, link, input, toggle, card-with-action) must define all applicable states from the design system's interaction states table (§3.10)
+- Every interactive element (button, link, input, toggle, card-with-action) must define all applicable states from the design system's interaction states table (§3.11)
 - Flag components that only define default + hover but miss focus, active, disabled, loading, error, or success states
 - Severity: major for missing focus state, minor for missing loading/success states
 
@@ -183,7 +183,7 @@ Verify interaction implementations meet design quality standards beyond basic pa
 
 ### 6. UX Writing Quality
 
-Check copy patterns in the codebase for design system compliance (§3.11). These checks require contextual judgment — flag patterns but note subjectivity.
+Check copy patterns in the codebase for design system compliance (§3.12 Writing Style). These checks require contextual judgment — flag patterns but note subjectivity.
 
 **Button Labels:**
 - ❌ `"OK"`, `"Submit"`, `"Yes"`, `"No"`, `"Click here"`, `"Cancel"` as standalone labels
@@ -220,12 +220,12 @@ Beyond the checklist's criteria, flag these concrete code patterns in changed fi
 
 ## 8. Brand Alignment
 
-**Colors (check BRD-001 through BRD-005):**
+**Colors (§2.1 Color System):**
 - Using specified primary/secondary/accent colors
 - Semantic colors used correctly
 - Dark mode considerations if applicable
 
-**Typography (check BRD-006 through BRD-008):**
+**Typography (§2.2 Typography):**
 - Using specified font families
 - Type scale respected
 - Font weights as specified
@@ -274,7 +274,7 @@ Return your review as JSON:
       "recommendation": "Add aria-label='Close dialog' or use sr-only text"
     }
   ],
-  "verdict": "approve"
+  "verdict": "request-changes"
 }
 ```
 
@@ -305,7 +305,7 @@ Your conversational response in file mode is exactly one JSON line (no findings 
 
 `counts` reflects how many findings of each severity you wrote to the file.
 
-**Inline mode** — if your prompt does NOT include a `findings_file:` line, return the full JSON inline (the original shape shown above, with no `agent`/`iteration` header and no `id`s). This mode is used by `pr-reviewing`.
+**Inline mode** — if your prompt does NOT include a `findings_file:` line, return the full JSON inline (the original shape shown above, with no `agent`/`iteration` header and no `id`s). This mode is used by `review-pr`.
 
 ## Finding Categories
 

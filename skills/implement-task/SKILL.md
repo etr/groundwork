@@ -137,13 +137,17 @@ Agent(
   The runner exclusively owns the task-worktree lifecycle. Verify and reuse the precreated registered worktree; never create, remove, move, or repair a worktree in runner mode.
 
   PROJECT ROOT: [absolute path to project root]
+  DESIGN SYSTEM PATH: [absolute path to {{specs_dir}}/design_system.md when it exists; otherwise `none` — the executor cannot resolve template variables itself]
 
   TASK:
   - task_id: [TASK-NNN]
   - tasks_path: [absolute path to tasks file]
 
   Read the '### TASK-NNN:' section from tasks_path for goal, action items,
-  and acceptance criteria. Do not ask the caller for task details.
+  acceptance criteria, and test seams (when recorded). Tests target the
+  recorded seams; when none are recorded or a recorded seam cannot reach the
+  behavior, follow the seam rule in your TDD skill (highest existing seam,
+  then record the choice). Do not ask the caller for task details.
 
   PLAN FILE: [plan_file_path]
   Read this file first with the Read tool — it contains the validated implementation plan.
@@ -180,6 +184,7 @@ Agent(
   prompt="You are implementing a feature that has already been fully planned.
 
   PROJECT ROOT: [absolute path to project root]
+  DESIGN SYSTEM PATH: [absolute path to {{specs_dir}}/design_system.md when it exists; otherwise `none` — the executor cannot resolve template variables itself]
 
   FEATURE:
   - Identifier: [FEATURE-slug]

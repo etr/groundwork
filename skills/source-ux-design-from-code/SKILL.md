@@ -69,7 +69,7 @@ If the user selects "Cancel — I'll switch first": output the switching command
 
 ## When to Trigger
 
-This skill should activate when:
+Run this skill at the end of a session in which:
 - User explicitly invokes `/groundwork:source-ux-design-from-code`
 - Session involved design token changes (colors, spacing, typography)
 - Component styling decisions were made
@@ -266,7 +266,7 @@ Focus on strong signals. For weak signals, ask: "Is this a pattern we want to es
 
 ## Session Summary Format
 
-At session end, provide summary:
+When done, report:
 
 ```markdown
 ## Design System Sync Summary

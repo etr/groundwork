@@ -83,7 +83,7 @@ If the user selects "Cancel — I'll switch first": output the switching command
    - `resume_at: conflict` → surface the `evidence`, preserve the worktree, and stop for a user decision.
    - Skip every phase in `skip_phases`: reuse `plan.file` instead of Step 2 when `plan.present`; jump to Step 4 (validation) or Step 5 (merge) when that much is already done.
    - `resume_at: done` → run the `clear-checkpoint` action and report the task complete.
-   - Run each `actions` command verbatim at its annotated moment: `record … --phase plan` right after the plan file is persisted, `record … --phase implemented` right after Step 3 returns `RESULT: IMPLEMENTED`, and `clear` after Step 5's merge succeeds.
+   - Run each `actions` command verbatim at its annotated moment. One `check` returns only the next action, so re-run it after each recorded phase to fetch the one after: on a fresh run it returns `record … --phase plan` (run it right after the plan file is persisted); that re-run returns `record … --phase implemented` (run it right after Step 3 returns `RESULT: IMPLEMENTED`); once Step 5's merge lands, the last re-run returns `clear`.
    - When `resume_existing_worktree` is true, forward `WORKTREE PATH: <expected_worktree>`, `TASK BRANCH: <expected_branch>`, and `RESUME EXISTING WORKTREE=true` into the Step 3 dispatch.
 
 3. **Monorepo check:** Does `.groundwork.yml` exist at the repo root?
@@ -109,7 +109,7 @@ Parse the task identifier from the argument:
 
 - **Numeric** (e.g., `4`): Interpret as `TASK-004` (zero-padded to 3 digits)
 - **Full format** (e.g., `TASK-004`): Use as-is
-- **No argument**: Run `/groundwork:work-on-next-task` to determine the next workable task, then use that ID. If it returns nothing workable, report and stop.
+- **No argument**: this skill does not pick the task itself. Invoke `Skill(skill="groundwork:work-on-next-task")` and stop — that skill selects the next workable task and runs this whole workflow for it inside its own call. Continuing this invocation after it returns would run the same task a second time.
 
 **Flags:** `--take-over` (also accepted anywhere in the argument) authorizes the resume gate to proceed past soft standdowns; thread it into the Step 0 gate invocation. `--on-unrelated-failure <mode>` (also accepted anywhere in the argument) selects how Step 4's validation handles gate failures confidently assessed unrelated to this task's project: `stop-and-ask` (default — current behavior), `expand-and-fix` (repair the unrelated failure via the validation fixer), or `ignore-and-merge` (record waiver receipts and proceed). An invalid mode value → stop with a usage error. Thread the mode into the Step 4 validate invocation.
 
@@ -239,15 +239,16 @@ When validation returned `PASSED-WITH-WAIVERS`, prepend the waived-gate summary 
 
 **If merging:**
 
-1. Ensure you are in the project root (cd out of worktree if needed)
-2. Checkout base branch: `git checkout <base-branch>`
-3. Merge: `git merge --no-ff <branch> -m "Merge <branch>: [Task Title]"`
-4. If success: Remove worktree and delete branch:
+1. **Commit validation repairs first.** The validation fixer edits files but never commits. Check the task worktree (`git -C <worktree-path> status --porcelain`); if anything is uncommitted, commit it on the task branch (`git -C <worktree-path> add -A && git -C <worktree-path> commit -m "<TASK-NNN>: validation fixes"`), so the merge carries the repairs and removing the worktree loses nothing.
+2. Ensure you are in the project root (cd out of worktree if needed)
+3. Checkout base branch: `git checkout <base-branch>`
+4. Merge: `git merge --no-ff <branch> -m "Merge <branch>: [Task Title]"`
+5. If success: Remove worktree and delete branch:
    ```bash
    git worktree remove <worktree-path from the execution context>
    git branch -d <branch>
    ```
-5. If conflicts: Report conflicts and keep worktree for manual resolution
+6. If conflicts: Report conflicts and keep worktree for manual resolution
 
 **If not merging or conflicts occurred:**
 
@@ -259,7 +260,7 @@ Report worktree location and manual merge instructions:
 **Location:** [worktree path from the execution context]
 **Branch:** [branch from the execution context]
 
-When ready to merge:
+When ready to merge (commit any uncommitted validation fixes inside the worktree first — the fixer never commits):
 ```bash
 git checkout [base-branch]
 git merge --no-ff <branch>

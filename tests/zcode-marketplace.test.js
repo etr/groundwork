@@ -129,6 +129,28 @@ describe('ZCode marketplace bundle', () => {
     assert.strictEqual(plugin.skills, 'skills');
   });
 
+  test('README carries the attribution and third-party license notices verbatim', () => {
+    if (bundle === null) return;
+    const readme = fs.readFileSync(path.join(bundle, 'README.md'), 'utf8');
+    const source = fs.readFileSync(path.join(PLUGIN_ROOT, 'README.md'), 'utf8');
+    const start = source.indexOf('\n## Attribution\n');
+    const end = source.indexOf('\n## License\n');
+    assert.ok(start !== -1 && end > start, 'source README lost its Attribution section');
+    const attribution = `${source.slice(start + 1, end).trimEnd()}\n`;
+    assert.ok(
+      readme.includes(attribution),
+      'bundle README does not carry the Attribution section verbatim'
+    );
+    for (const required of [
+      'Copyright (c) 2026 Matt Pocock',
+      'Copyright (c) 2026 HumanLayer',
+      'Permission is hereby granted',
+      '(#third-party-mit-notices)',
+    ]) {
+      assert.ok(readme.includes(required), `bundle README is missing: ${required}`);
+    }
+  });
+
   test('exports skills with ZCode-compatible frontmatter', () => {
     if (bundle === null) return;
     const skillFiles = allFiles(path.join(bundle, 'skills')).filter(

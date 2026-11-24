@@ -192,14 +192,16 @@ This doesn't mean you can never use blue or purple — but shift the hue, satura
 
 ## Semantic Color Standards
 
-Regardless of brand, semantic colors should be consistent:
+Regardless of brand, semantic colors should be consistent. Their standard ranges are the **dark-surface** values: the light end of each range carries body text there (Green-400 7.78:1, Amber-400 10.61:1, Red-500 4.71:1, Blue-400 6.97:1 on zinc-900).
 
-| Semantic | Standard Range | Notes |
-|----------|----------------|-------|
-| Success | Green 500-600 | #22C55E - #16A34A |
-| Warning | Amber 400-500 | #FBBF24 - #F59E0B |
-| Error | Red 500-600 | #EF4444 - #DC2626 |
-| Info | Blue 400-500 | #60A5FA - #3B82F6 |
+| Semantic | Standard Range (dark surfaces) | Text on a Light Surface | Notes |
+|----------|--------------------------------|-------------------------|-------|
+| Success | Green 400-600 `#22C55E` - `#16A34A` | Green 700 `#15803D` — 5.02:1 on white | |
+| Warning | Amber 400-500 `#FBBF24` - `#F59E0B` | Amber 700 `#B45309` — 5.02:1 on white | Amber is the hardest hue to make pass; few palettes get a lighter amber to 4.5:1 |
+| Error | Red 500-600 `#EF4444` - `#DC2626` | Red 600 `#DC2626` — 4.83:1 on white | |
+| Info | Blue 400-500 `#60A5FA` - `#3B82F6` | Blue 600 `#2563EB` — 5.17:1 on white | |
+
+On a light surface the standard ranges are for fills, icons, and large text only. None of them reaches the 4.5:1 that body text needs, and Green-500 (2.28:1) and Amber-400 (1.67:1) fall below even the 3:1 UI threshold — so for text or small labels on white, step down to the third column. The ratios above were measured, not estimated; re-measure whenever the surface changes, with the plugin's own checker listed under *Tools*.
 
 ## Dark Mode Considerations
 
@@ -229,6 +231,7 @@ Always verify contrast ratios:
 | AAA | 7:1 | 4.5:1 | 4.5:1 |
 
 **Tools:**
+- The plugin's own checker, `lib/contrast-check.js` (the same one `design-consistency-checker` verifies with; the agent's definition shows the exact invocation)
 - WebAIM Contrast Checker
 - Figma Stark plugin
 - Chrome DevTools color picker

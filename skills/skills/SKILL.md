@@ -20,9 +20,10 @@ Dynamically discovers and displays all available Groundwork skills.
 
 ### Step 1: Find All Skills
 
-Use Glob to find all SKILL.md files:
+Use Glob to find all SKILL.md files — the plugin's, and any personal skill that may shadow one of them:
 ```
-skills/*/SKILL.md
+${CLAUDE_PLUGIN_ROOT}/skills/*/SKILL.md
+~/.claude/skills/*/SKILL.md
 ```
 
 ### Step 2: Extract Frontmatter
@@ -35,6 +36,7 @@ Group skills into categories based on keywords in their names/descriptions:
 
 | Category | Keywords |
 |----------|----------|
+| Upkeep | improve, retro, deepening (match this row first: `improve-codebase-architecture` is upkeep, not planning) |
 | Planning & Design | plan, design, product, architecture, task |
 | Testing & Verification | test, verify, validation, tdd |
 | Maintenance & Sync | sync, alignment, check, verify |
@@ -83,14 +85,14 @@ Run `/help` to see all available slash commands.
 | `design-architecture` | Use when designing technical approach |
 | `create-tasks` | Use when generating implementation tasks |
 
-## Testing & Debugging
+## Testing & Verification
 | Skill | Description |
 |-------|-------------|
 | `test-driven-development` | Use when implementing any feature |
 
 ---
 
-**Total:** 32 skills available
+**Total:** N skills available
 
 ## Discovery
 

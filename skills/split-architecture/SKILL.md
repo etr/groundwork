@@ -27,7 +27,7 @@ Converts a single-file architecture document (`{{specs_dir}}/architecture.md`) i
    - If missing → output "No single-file architecture doc found at `{{specs_dir}}/architecture.md`. Nothing to split." and stop.
 2. **Check directory does NOT exist:** `{{specs_dir}}/architecture/` must not already exist
    - If it exists → output "Architecture doc is already in directory format at `{{specs_dir}}/architecture/`. Nothing to do." and stop.
-3. **Read the file** and count lines and decision records (sections matching `^### DR-\d+`).
+3. **Read the file** and count lines and decision records (sections matching `^### DR-\d+`). Compare with the thresholds below: if neither is crossed and the user did not ask for the split in this invocation, stop and report the counts — a split below threshold is churn, not upkeep.
 
 ## Step 2: Split the File
 
@@ -135,7 +135,7 @@ The single file has been removed. All skills (design-architecture, source-archit
 
 ## Auto-Split Thresholds
 
-When invoked automatically (not by the user), the caller has already verified that **at least one** threshold is crossed:
+A caller that auto-triggers this skill after checking the thresholds itself has already verified that **at least one** is crossed (Step 1's count confirms it). A model reaching for this skill on its own is not such a caller: for it the count alone decides:
 
 - **Line count:** `wc -l` on `{{specs_dir}}/architecture.md` >= 500
 - **Decision record count:** Number of `### DR-\d+` headings >= 10

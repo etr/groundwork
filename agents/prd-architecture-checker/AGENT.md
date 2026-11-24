@@ -100,7 +100,7 @@ Return your review as JSON:
     "coverage_percentage": 91.7,
     "uncovered_requirements": ["PRD-AUTH-REQ-003", "PRD-NOTIFY-REQ-007"]
   },
-  "verdict": "approve"
+  "verdict": "request-changes"
 }
 ```
 
@@ -137,9 +137,9 @@ Return your review as JSON:
 ## Verdict Rules
 
 - `request-changes`: Any critical finding
-- `request-changes`: 3 or more major findings
+- `request-changes`: Any major finding — the architecture is written on `approve`, so a major gap must block
 - `request-changes`: Coverage percentage below 90%
-- `approve`: No critical findings AND fewer than 3 majors AND 90%+ coverage
+- `approve`: No critical or major findings AND 90%+ coverage (minor findings are fine)
 
 ## Coverage Calculation
 

@@ -51,8 +51,7 @@ projects:
 ```
 
 4. Ensure `.groundwork.local`, `.groundwork-plans/`, `.debug/`, and `.architecture/` are in `.gitignore` (add any missing entries). Each project's plans live in `<project-path>/.groundwork-plans/` and its journals in `<project-path>/.debug/` and `<project-path>/.architecture/`; the unanchored entries cover every project, so no per-project entries are needed.
-5. Ask which project to start with using `AskUserQuestion`.
-6. Set project context: `GROUNDWORK_PROJECT=<name>` and `GROUNDWORK_PROJECT_ROOT=<path>`
+5. Ask which project to start with using `AskUserQuestion`. The top-level *Step 4: Persist Selection* below then persists that choice; exported `GROUNDWORK_PROJECT` variables are not needed and would outrank a later `/groundwork:select-project`.
 
 ### Step 4: Persist Selection
 

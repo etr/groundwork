@@ -136,13 +136,13 @@ Good for dense, data-heavy interfaces.
 
 | Token | Size | Use Case |
 |-------|------|----------|
-| xs | 10px | Tiny labels |
-| sm | 12px | Secondary text |
-| base | 14px | Body text |
-| md | 16px | Emphasis |
-| lg | 18px | Subheadings |
-| xl | 20px | Section headers |
-| 2xl | 24px | Page titles |
+| xs | 12px | Tiny labels |
+| sm | 14px | Secondary text |
+| base | 16px | Body text (the floor — see the typography guide) |
+| md | 18px | Emphasis |
+| lg | 20px | Subheadings |
+| xl | 24px | Section headers |
+| 2xl | 28px | Page titles |
 | 3xl | 32px | Hero text |
 
 ### Tailwind Default Scale

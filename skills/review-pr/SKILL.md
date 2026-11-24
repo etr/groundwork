@@ -16,7 +16,7 @@ Check for non-interactive mode from either source:
 1. If the argument string contains `--no-interactive` → strip it from the argument before PR number parsing, set `non_interactive = true`
 2. If session context contains `GROUNDWORK_BATCH_MODE=true` → set `non_interactive = true`
 
-If either condition is met, all `AskUserQuestion` prompts below are replaced with their documented auto-decision — **except** the pre-flight model check, which always prompts.
+If either condition is met, every `AskUserQuestion` prompt below is replaced with its documented auto-decision, and the pre-flight model check is skipped too.
 
 ## Pre-flight: Model Recommendation
 
@@ -26,7 +26,7 @@ Skip this step silently if effort is `high`, `xhigh`, or `max` (the scale is `lo
 If effort is `low` or `medium` (i.e. below `high`), you MUST show the recommendation prompt — regardless of model.
 If you are not Sonnet or Opus, you MUST show the recommendation prompt - regardless of effort level.
 
-Otherwise → **always prompt** (even in non-interactive mode) using `AskUserQuestion`:
+Otherwise → prompt using `AskUserQuestion`. In non-interactive mode, skip the prompt and proceed on the current model:
 
 ```json
 {
@@ -71,11 +71,11 @@ Run all of these `gh` commands **in parallel** using the Bash tool:
    gh pr view <pr_number> --json title,body,baseRefName,headRefName,headRefOid,author,state,url,isCrossRepository,additions,deletions,changedFiles
    ```
 
-2. **PR diff**:
+2. **PR diff — saved to a temp file; only its hunk headers enter this context**:
    ```bash
-   gh pr diff <pr_number>
+   PR_DIFF_FILE="$(mktemp "${TMPDIR:-/tmp}/groundwork-pr-diff-XXXXXX")" && gh pr diff <pr_number> > "$PR_DIFF_FILE" && grep -nE '^(diff --git|@@)' "$PR_DIFF_FILE"
    ```
-   Store as `pr_diff`.
+   The full diff never enters this context (the context-budget rule in Step 5). Keep the printed header lines as `pr_hunk_headers` — the `diff --git` file names and the `@@` new-side line numbers that Step 6c maps findings with — and keep `PR_DIFF_FILE` for the cleanup in Step 9.
 
 3. **Changed file paths**:
    ```bash
@@ -119,10 +119,12 @@ Run all of these `gh` commands **in parallel** using the Bash tool:
     }
     ```
     If "Cancel" → stop.
-- If `isCrossRepository` is true, run `gh pr checkout <pr_number>` to fetch the fork's branch.
-- Otherwise, checkout the PR branch: `gh pr checkout <pr_number>`.
+- Check the PR head out into a local review branch — the same way for forks and same-repo PRs, and the branch the cleanup in Step 9 deletes:
+  ```bash
+  git fetch origin +pull/<pr_number>/head:pr-<pr_number>-review && git checkout pr-<pr_number>-review
+  ```
 
-**Concurrent same-PR reviews in one clone:** if a local `pr-<pr_number>-review` branch already exists (a previous or concurrent review), reuse it idempotently instead of fighting over it — fetch, then reset it to the PR's current `headRefOid` (`git checkout pr-<pr_number>-review && git reset --hard <headRefOid>`), and note in your output that an existing review branch was reused.
+**Concurrent same-PR reviews in one clone:** the fetch above creates `pr-<pr_number>-review` or moves it to the PR's current `headRefOid`, so a branch left by a previous review is reused idempotently instead of fought over — note in your output that an existing review branch was reused. If the checkout is refused because another worktree has that branch checked out, a concurrent review holds it: report that and stop rather than moving the branch underneath it.
 
 ## Step 3: Handle Existing Feedback
 
@@ -183,12 +185,14 @@ Parse `changed_file_paths` to determine which conditional agents to enable:
 | `design-consistency-checker` | Conditional | No design system docs AND no CSS/styling files in `changed_file_paths` |
 | `cloud-infrastructure-reviewer` | Conditional | No IaC/config files in `changed_file_paths` |
 | `conventions-reviewer` | Conditional | No CLAUDE.md files found in the repo |
+| `spec-alignment-checker` | Conditional | No product specs found at `{{specs_dir}}/` |
 
-**Skip `spec-alignment-checker`** — it performs internal EARS requirement tracing which is not relevant to PR review.
+`spec-alignment-checker` covers the "did we build the *right thing*" axis: PRs that went through the full lifecycle already had it checked by `validate` (with fix authority); activating it here catches PRs that bypassed the lifecycle — external contributions, manually assembled branches.
 
-Check for architecture and design docs:
+Check for architecture, design, and product-spec docs:
 - Architecture: look for `{{specs_dir}}/architecture.md` or `{{specs_dir}}/architecture/`
 - Design system: look for `{{specs_dir}}/design_system.md` or `{{specs_dir}}/design_system/`
+- Product specs: look for `{{specs_dir}}/product_specs.md` or `{{specs_dir}}/product_specs/`
 
 Record skipped agents with reason in the aggregation table (verdict: `skipped`).
 
@@ -210,6 +214,9 @@ Spawn all active agents **in parallel** using the `Agent` tool with `subagent_ty
 | `groundwork:design-consistency-checker:design-consistency-checker` | `changed_file_paths`, `diff_stat`, `pr_description`, `design_system_path`, `existing_human_feedback` |
 | `groundwork:cloud-infrastructure-reviewer:cloud-infrastructure-reviewer` | `changed_file_paths`, `diff_stat`, `pr_description`, `architecture_path`, `existing_human_feedback` |
 | `groundwork:conventions-reviewer:conventions-reviewer` | `changed_file_paths`, `diff_stat`, `pr_description`, `existing_human_feedback` |
+| `groundwork:spec-alignment-checker:spec-alignment-checker` | `changed_file_paths`, `diff_stat`, `task_definition`, `specs_path`, `existing_human_feedback` |
+
+For `spec-alignment-checker`, `task_definition` is what it traces requirements to, so build it from the best available source. When the head branch is a task branch (`task/TASK-NNN`, or `task/<project>/TASK-NNN` in a monorepo), point the agent at the tasks file and the task ID and have it read that `### TASK-NNN` section itself (goal, action items, acceptance criteria). Otherwise pass the PR title + body as the definition and say that the PR's stated intent is the scope. `specs_path` is the product-specs file or directory found in Step 4.
 
 **In each agent prompt, include these instructions:**
 
@@ -218,6 +225,10 @@ Spawn all active agents **in parallel** using the `Agent` tool with `subagent_ty
 > **PR Review context**: You are reviewing a pull request, not a local task implementation. The `pr_description` below replaces `task_definition`. Focus ONLY on code within the PR diff. Do not flag issues in unchanged code unless the change directly impacts it.
 >
 > **Existing feedback**: Other reviewers have already raised the points summarized below. Do not restate these — focus on issues not yet covered.
+>
+> **Tooling boundary**: Skip anything the project's tooling already enforces — linter, typechecker, formatter, CI gates. A finding must be actionable judgment beyond what a deterministic check catches; "the linter would flag this" is not a finding.
+>
+> **Review mode**: `review_mode: initial-audit`. Your baseline is the PR diff (the changed files below) together with the PR's stated intent: make one comprehensive pass over it and report every supported finding with concrete evidence.
 
 Where `pr_description` is the PR title + body concatenated.
 
@@ -248,7 +259,9 @@ Each agent returns standard JSON:
 | Housekeeper | 90 | approve | 0 | 1 | 0 |
 | Architecture | -- | skipped | -- | -- | -- |
 | Design | -- | skipped | -- | -- | -- |
+| Cloud Infrastructure | -- | skipped | -- | -- | -- |
 | Conventions | 95 | approve | 0 | 0 | 1 |
+| Spec Alignment | -- | skipped | -- | -- | -- |
 ```
 
 ### 6b: Deduplication Pass (LLM-driven)
@@ -263,7 +276,7 @@ If running in **incremental mode** (from Step 3a), also exclude findings that ma
 
 ### 6c: Diff Mapping
 
-Parse `pr_diff` to determine which finding lines fall within diff hunks. Use the `@@` hunk headers to map original/new line numbers.
+Use `pr_hunk_headers` (from Step 2) to determine which finding lines fall within diff hunks. Each `@@ -a,b +c,d @@` header places that hunk's new-side lines at `c` through `c+d-1` of the file named by the preceding `diff --git` line.
 
 - Findings whose `line` falls within a diff hunk on the RIGHT side → `inline_findings[]` (will be posted as inline review comments)
 - Findings whose `line` falls outside any diff hunk → `general_findings[]` (will be included in review body)
@@ -388,11 +401,15 @@ REVIEW_PAYLOAD
    ```bash
    git checkout -
    ```
-2. If a temporary branch was created during checkout, delete it:
+2. Delete the review branch created in Step 2:
    ```bash
    git branch -D pr-<pr_number>-review 2>/dev/null || true
    ```
-   If the branch already existed when you started (another review of the same PR in this clone), you reused it — still safe to delete it here, since a later review recreates it from the PR HEAD.
+   A later review recreates it from the PR head, so this is safe even when you reused a branch a previous review left behind.
+3. Remove the temp diff file:
+   ```bash
+   rm -f "$PR_DIFF_FILE"
+   ```
 3. Display final summary:
    ```markdown
    ## PR Review Posted

@@ -3,6 +3,7 @@ name: design-product
 description: Create detailed product requirements document (PRD) for a feature. Usage /groundwork:design-product
 argument-hint: "[product-name]"
 allowed-tools: ["Read", "Edit", "Write", "Glob", "Grep", "Task", "Skill"]
+disable-model-invocation: true
 ---
 
 # Product Design Skill
@@ -99,7 +100,7 @@ Before clarifying the request, load existing specs so you can detect contradicti
 **Check for and read (if they exist):**
 - `{{specs_dir}}/architecture.md` (or `{{specs_dir}}/architecture/` directory) — technology choices, component boundaries, decision records. Use to catch architecturally infeasible requirements early.
 - `{{specs_dir}}/design_system.md` — design principles, brand decisions, UX patterns. Use to ensure new features align with established design language.
-- `{{specs_dir}}/product_specs.md` (or `{{specs_dir}}/product_specs/` directory) — already loaded implicitly by the contradiction check, but read it explicitly here for full cross-feature context.
+- `{{specs_dir}}/product_specs.md` (or `{{specs_dir}}/product_specs/` directory) — read for full cross-feature context.
 
 For each, check single file first, then directory. If a directory, aggregate all `.md` files.
 
@@ -107,18 +108,19 @@ If none exist, that's fine — proceed without them.
 
 ## Step 1: Understand the Request
 
-Invoke the `groundwork:understanding-feature-requests` skill to clarify the feature and check for contradictions.
+Invoke the `groundwork:understanding-feature-requests` skill to clarify the feature.
 
-If architecture and design system were loaded in Step 0.5, provide them as context so the clarification can also check for:
-- **Architectural feasibility** — requirements that conflict with technology choices or component boundaries
-- **Design consistency** — features that would require patterns contradicting the established design system
+That skill will:
+1. Run the clarifying interview in rounds — core, exploratory, and conditional questions, each with a recommended answer
+2. Check for contradictions within the request, and resolve them with the user
 
-This skill will:
-1. Ask clarifying questions (core, exploratory, conditional)
-2. Check for internal, cross-feature, and technical contradictions
-3. Resolve any conflicts before proceeding
+It checks the request on its own. The cross-document checks are yours, because you are the one holding the other specs loaded in Step 0c. Once the interview settles the requirements, check them yourself for:
 
-Once understanding is complete and conflicts resolved, continue to Step 2.
+- **Architectural feasibility** — requirements that conflict with the technology choices or component boundaries in the architecture
+- **Design consistency** — requirements that need patterns the design system does not allow
+- **Cross-feature consistency** — requirements that contradict or duplicate existing PRD requirements
+
+Surface each conflict to the user with a recommended resolution. Once understanding is complete and every conflict is resolved, continue to Step 2.
 
 ## Step 2: Design EARS Requirements
 
@@ -323,8 +325,8 @@ After successfully updating the PRD, use the `AskUserQuestion` tool to present t
 **Handle the response:**
 
 - **Design architecture**: Invoke the `groundwork:design-architecture` skill to design the technical approach
-- **Design UX**: Run `/groundwork:ux-design` to create UX designs
-- **Create tasks**: Run `/groundwork:create-tasks` to generate implementation tasks for the new feature
+- **Design UX**: Recommend the user run `/groundwork:ux-design` (a user-run skill) to create UX designs, and stop
+- **Create tasks**: Recommend the user run `/groundwork:create-tasks` (a user-run skill) to generate implementation tasks for the new feature, and stop
 - **Add another feature**: Clear context by summarizing what was just added, then restart from Step 1 with a fresh feature request. Ask: "What feature would you like to add next?"
 
 ## Conversation Patterns

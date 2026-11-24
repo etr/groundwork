@@ -161,15 +161,25 @@ Personal skills with the same name as plugin skills take precedence.
 3. **Actionable steps** - Avoid vague instructions
 4. **Exit criteria** - Define what "done" looks like
 5. **Error handling** - Include what to do when stuck
+6. **Fresh context for subagents** - Every `Agent()` dispatch says to start the subagent with a fresh context window. Some harnesses (Codex among them) fork the parent conversation by default, and a fork inherits the parent's context — which is what the subagent was meant to escape. `lib/transform-agents.js` carries the target-specific wording on export (`fork_turns="none"` for Codex) for every dispatch form except Pi's `groundwork_agent()` tool call, which carries none — so the source skill should carry the instruction too.
 
 ## Authoring Discipline
 
 Skills create **predictability** — the agent runs the same process every time. Two failure modes erode that: **sprawl** (so long the agent skims) and **sediment** (stale lines nobody pruned). Edit ruthlessly.
 
-- **The no-op test.** For each sentence ask: "Does this change behavior versus the model's default?" If the model already does it unprompted, delete the sentence — don't rewrite it. No-ops are the main cause of sprawl.
+- **The no-op test.** For each sentence ask: "Does this change behavior versus the model's default?" If the model already does it unprompted, delete the sentence — don't rewrite it. No-ops are the main cause of sprawl. The test is *model-relative*, not reader-relative: two people disagreeing about a no-op disagree about the default, and settle it by running the skill, not by debate.
 - **Single source of truth.** One authoritative place per fact. If a rule lives in another skill or a reference, link to it (`[[skill-name]]`, `references/...`) instead of restating it. Duplication rots out of sync.
-- **Leading words.** Anchor behavior with a compact concept the model already knows ("deep module", "Chesterton's Fence", "tight") rather than three sentences of explanation.
+- **The environment is a source of truth too.** `package.json` scripts, config files, `--help` output. A skill that restates the environment is a cache, and earns its load only when the lookup is expensive. Cache what the agent cannot find by looking (the unwritten convention, the reason behind a choice); leave one-command lookups to the environment, where they cannot go stale.
+- **Leading words.** Anchor behavior with a compact concept the model already knows ("deep module", "Chesterton's Fence", "tight") rather than three sentences of explanation. A made-up word recruits no priors: you pay in definition tokens what a pretrained word gives free — reach for an existing word first.
+- **Phrase positively.** Prohibition drags the forbidden behavior into context and makes it *more* available ("don't think of an elephant"). State the target behavior so the banned one is never spoken; a prohibition earns its place only as a hard guardrail, paired with the positive target.
+- **Completion criteria need clarity and demand.** *Clarity*: can the agent tell done from not-done? A vague bound ("understanding reached") invites premature completion — attention slips to *being done*, pulled by the visible steps still ahead. Sharpen the bound before anything else. *Demand*: "every modified model accounted for" forces legwork where "produce a change list" does not. The strongest criteria are both checkable and exhaustive.
 - **Front-load the description.** For model-invocable skills the description loads every turn — every word costs. Lead with the trigger word; one trigger per genuine branch; cut identity already obvious from the body.
+
+## The Two Loads
+
+Every skill spends one of two budgets. **Context load** is always-loaded material — descriptions, hook-injected lines — paid on every turn whether or not it fires. **Cognitive load** is the human cost of remembering which skill exists: for user-only leaves the human *is* the index. Tiers are the trade: user-only leaves pay zero context load and full cognitive load; library skills pay a description to be reachable by the model and by other skills. When choosing a tier, you are choosing which load to pay — and a router skill exists to consolidate cognitive load into one place.
+
+**Thin orchestrators.** A user-invoked orchestrator should be thin: dispatch to library skills that hold the reusable discipline, rather than restating it. `ship` is the model — its whole body is two ordered dispatches and a human gate. A fat user-tier skill that duplicates what a library skill could hold pays both loads at once.
 
 ## Progressive Disclosure
 
@@ -183,9 +193,34 @@ skills/my-skill/
 
 Name each sibling and the condition for opening it ("When producing the report, follow `FORMAT.md`"). Inline only what *every* run needs. Split into a *separate skill* (not just a sibling) only when the cut earns its context cost: a distinct leading word worth independent invocation.
 
+## Docs Pages
+
+Every skill gets a page at `docs/skills/<skill-name>.md`, written for the person deciding whether to run it. Create it when a skill is added, and re-sync it whenever the skill's behavior changes — a page that describes last year's skill is worse than none.
+
+The header states the tier in one of three fixed spellings — `user-run`, `user-run or model-invoked`, `library` — read from the frontmatter (`disable-model-invocation: true`, neither flag, `user-invocable: false`). A library page drops the **Run it** field and says who uses the skill instead.
+
+A page has four sections, in this order (start from `docs/skills/TEMPLATE.md`):
+
+1. **What it does** — the outcome and the shape of the work, in a few sentences. Not a step list; that lives in the skill.
+2. **When to reach for it** — the situations where it fits, and the near-miss situations where another skill fits instead.
+3. **Common questions** — the questions people actually ask. Hunt for them in sessions and reviews, not in imagination.
+4. **It's working if** — observable signals that the skill did its job: what you can see in the transcript, the files, or the result. Intentions are not signals ("the agent was thorough"); artifacts and behaviors are ("every test was seen failing first").
+
+Check each page's claims against the skill text before writing it down — a page that misdescribes a skill teaches the wrong expectation. `tests/docs-parity.test.js` fails when a page names a skill that does not exist, drops a section, is missing from the `docs/skills/README.md` index, or states a tier its skill's frontmatter contradicts.
+
 ## Router Discoverability
 
-A user-only leaf (`disable-model-invocation: true`) is invisible to the model — it can be surfaced only through the lifecycle router in `using-groundwork`. When you add a leaf, add its router entry too, or it's a dead end.
+A user-only leaf (`disable-model-invocation: true`) is invisible to the model — it can be surfaced only through the lifecycle router in `using-groundwork`. When you add a leaf, add its router entry too, or it's a dead end. A router entry that names a skill that no longer exists, or a skill the router never mentions, is a router that lies: `tests/router-parity.test.js` fails the build on both, so run it whenever you add, rename, or remove a skill.
+
+## Credits
+
+When a skill borrows a named pattern from an external source — a book, another skills library, a talk — say so in the skill body, as a one-line HTML comment directly under the frontmatter:
+
+```markdown
+<!-- Interview protocol adapted from the "grilling" skill in github.com/mattpocock/skills (MIT). -->
+```
+
+A body comment travels with every export and costs one line. Keep credits out of frontmatter: the ZCode marketplace contract allows exactly `name` and `description` (`tests/zcode-marketplace.test.js` fails on any other key), `lib/validate-plugin.js` reports unknown fields, and `lib/frontmatter.js` does not parse nested blocks. Credit the *pattern's* origin, not every idea that rhymes with something you once read — and when the borrowed text is close to verbatim, the source's license notice belongs in the repository's third-party notices as well.
 
 ## Validation
 

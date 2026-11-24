@@ -19,3 +19,9 @@ Thumbs.db
 
 # Generated ZCode marketplace bundle (published to the zcode-marketplace branch)
 dist/
+
+# Node dev tooling (changesets). The test suites themselves have no dependencies.
+node_modules/
+
+# Per-invocation research artifacts (the reserved research directory)
+.architecture/

@@ -111,7 +111,7 @@ This is where swarm architecture diverges from the base skill. Instead of a sing
 At the start of Step 3, check whether the Agent tool is available by attempting to use it. If Agent is unavailable, fall back gracefully (see Graceful Fallback section).
 
 Also check for agent teams availability. If agent teams is not available:
-> "Agent teams not enabled — running parallel research without debate round. Enable with `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=true` for adversarial debate between advocates."
+> "Agent teams not enabled — running parallel research without debate round. Enable with `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS="1"` for adversarial debate between advocates."
 
 ### 3.2 — Triage Decision Areas
 
@@ -249,7 +249,7 @@ Return your findings as JSON:
 
 ### 3.4 — Debate Round (When Agent Teams Available)
 
-If agent teams is enabled (`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=true`), run a structured debate after Phase 1 research completes:
+If agent teams is enabled (`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS="1"`), run a structured debate after Phase 1 research completes:
 
 1. Share each advocate's Phase 1 findings with all other advocates for the same decision area
 2. Each advocate must challenge at least one specific claim from a competitor with new evidence
@@ -377,12 +377,16 @@ Invoke `Skill(skill="groundwork:design-it-twice")` for any non-trivial new modul
 
 Follow the `groundwork:design-architecture` skill's Step 5 exactly.
 
-Write the architecture document using the template in `${CLAUDE_PLUGIN_ROOT}/references/architecture/architecture-template.md`. Include ALL decision records with discarded options and reasoning. Run the prd-architecture-checker validation.
+Write the architecture document using the template in `${CLAUDE_PLUGIN_ROOT}/references/architecture/architecture-template.md`. Include every decision record that passes the decision-record gate, each with its discarded options and reasoning. Run the prd-architecture-checker validation.
 
 **Additional:** In each Decision Record, add a "Research" section linking to the research journal entry for that decision area:
 ```markdown
 **Research:** See `{{research_dir}}/{slug}-xxxxxx/research.md` (the literal generated path) — {N} advocates evaluated {options list}
 ```
+
+## Step 5a: Auto-Split Check
+
+Follow the `groundwork:design-architecture` skill's Step 5a exactly: once the document is written, count its lines and its decision records, and invoke `Skill(skill="groundwork:split-architecture")` when it reaches 500 lines or 10 decision records.
 
 ## Step 6: Suggest Next Step
 

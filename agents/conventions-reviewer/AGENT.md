@@ -28,7 +28,7 @@ Use Glob to find all `**/CLAUDE.md` files in the repository:
 Glob(pattern="**/CLAUDE.md")
 ```
 
-**Edge case — no CLAUDE.md files found:** Return `approve` immediately with summary "No CLAUDE.md files found in the repository" and score 100. Skip all remaining steps.
+**Edge case — no CLAUDE.md files found:** Return `approve` immediately with summary "No CLAUDE.md files found in the repository" and score 100. Skip all remaining steps. In file mode, first write the assigned findings file as that approve review with no findings (the coordinator's manifest step reads it), then return the compact line.
 
 ## Step 2: Extract Conventions
 
@@ -145,7 +145,7 @@ Your conversational response in file mode is exactly one JSON line (no findings 
 
 `counts` reflects how many findings of each severity you wrote to the file.
 
-**Inline mode** — if your prompt does NOT include a `findings_file:` line, return the full JSON inline (the original shape shown above, with no `agent`/`iteration` header and no `id`s). This mode is used by `pr-reviewing`.
+**Inline mode** — if your prompt does NOT include a `findings_file:` line, return the full JSON inline (the original shape shown above, with no `agent`/`iteration` header and no `id`s). This mode is used by `review-pr`.
 
 ## Severity Definitions
 

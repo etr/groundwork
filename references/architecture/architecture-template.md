@@ -162,7 +162,7 @@ Use this template when creating `{{specs_dir}}/architecture.md`.
 
 ## 11) Decision Records
 
-[Include ALL decisions made during architecture design]
+[Include every decision that passes the decision-record gate — hard to reverse, surprising without context, a real trade-off — with its discarded options and reasoning]
 
 ### DR-001: [First Decision]
 [Full ADR-lite format as specified in SKILL.md]
@@ -174,16 +174,34 @@ Use this template when creating `{{specs_dir}}/architecture.md`.
 
 ## 12) Open Questions & Risks
 
-| ID | Question/Risk | Impact | Mitigation | Owner |
-|----|---------------|--------|------------|-------|
+Unsettled items are recorded here — never silently resolved to make the document look complete. Three kinds, kept apart:
+
+### Risks
+
+| ID | Risk | Impact | Mitigation | Owner |
+|----|------|--------|------------|-------|
 | AR-001 | [description] | [H/M/L] | [plan] | [who] |
+
+### Open decisions (sharp)
+
+Questions you can state precisely now, even though this session didn't settle them. Each is specific enough to hand to a future session as-is.
+
+| ID | Open decision | Impact | What would settle it | Owner |
+|----|---------------|--------|----------------------|-------|
+| AR-002 | [description] | [H/M/L] | [the decision, prototype, or fact that resolves it] | [who] |
+
+### Fog
+
+Decisions you can sense coming but cannot yet phrase sharply — they hang on open decisions above. Write them loosely (the suspected question, the area to revisit); do not pre-slice fog into fake-sharp questions, and clear each entry when it graduates into an open decision or a decision record.
+
+- [Area/question in whatever sharpness the current view allows]
 
 ---
 
 ## 13) Appendices
 
 ### A. Glossary
-[Domain terms]
+[Domain terms live in `{{specs_dir}}/glossary.md` (see the domain-modeling skill) — link to it here rather than restating terms, so each term keeps one authoritative definition]
 
 ### B. References
 - PRD: `{{specs_dir}}/product_specs.md`

@@ -99,7 +99,7 @@ Parse the input from the caller's conversation context. Three modes:
    Search for `### TASK-NNN:` pattern.
    **Error:** Task not found → Output `RESULT: FAILURE | TASK-NNN not found in {{specs_dir}}/tasks/` and stop.
 
-2. **Read task definition** — only the `### TASK-NNN:` section (goal, action items, acceptance criteria, dependencies, status). Do NOT read full specs/architecture/design files.
+2. **Read task definition** — only the `### TASK-NNN:` section (goal, action items, acceptance criteria, test seams, dependencies, status). Do NOT read full specs/architecture/design files.
 
 3. **Validate task is workable:**
    - Status `Complete` → Output `RESULT: FAILURE | TASK-NNN is already Complete.` and stop.
@@ -158,7 +158,7 @@ Agent(
   prompt="Plan the implementation of a task.
 
   TASK DEFINITION:
-  [Paste the task section read in Step 2 — goal, action items, acceptance criteria]
+  [Paste the task section read in Step 2 — goal, action items, acceptance criteria, test seams]
 
   [If mode=task+blurb, add:]
   ADDITIONAL CONTEXT FROM USER:
@@ -173,8 +173,9 @@ Agent(
   CONSTRAINTS:
   1. Work happens in an isolated git worktree — the plan must instruct the implementer to resolve it with `node ${CLAUDE_PLUGIN_ROOT}/lib/worktree-identity.js <task-id>` and use the returned `path` and `branch` verbatim (never hand-derived `.worktrees/TASK-NNN` paths)
   2. Implementation must follow TDD — write failing tests first, then make them pass
-  3. Plan covers implementation only — validation and merge are handled separately by the caller
-  4. If a design system is present, the plan must reference design tokens, colors, and component patterns from it
+  3. Tests target the task's recorded Test Seams. If the task records none, or a recorded seam cannot reach the behavior, plan tests at the highest existing seam that reaches it — the plan states this choice so the implementer never has to ask
+  4. Plan covers implementation only — validation and merge are handled separately by the caller
+  5. If a design system is present, the plan must reference design tokens, colors, and component patterns from it
   "
 )
 ```
@@ -208,8 +209,9 @@ Agent(
   CONSTRAINTS:
   1. Work happens in an isolated git worktree — the plan must instruct the implementer to resolve it with `node ${CLAUDE_PLUGIN_ROOT}/lib/worktree-identity.js <feature-id>` and use the returned `path` and `branch` verbatim (never hand-derived `.worktrees/FEATURE-slug` paths)
   2. Implementation must follow TDD — write failing tests first, then make them pass
-  3. Plan covers implementation only — validation and merge are handled separately by the caller
-  4. If a design system is present, the plan must reference design tokens, colors, and component patterns from it
+  3. Tests are planned at the highest existing seam that reaches each behavior — the plan names those seams, so the implementer never has to ask
+  4. Plan covers implementation only — validation and merge are handled separately by the caller
+  5. If a design system is present, the plan must reference design tokens, colors, and component patterns from it
   "
 )
 ```

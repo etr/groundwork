@@ -34,13 +34,13 @@ Dispatch the two disciplines **in order** via the `Skill` tool. Each is dual-tie
 (Architecture decisions are recorded earlier, during `design-architecture` — there is no decision-capture step here.)
 
 1. `Skill(skill="groundwork:instrument-observability")` — make the change observable (structured logs, RED metrics, trace spans, symptom alerts). Run before rollout: the rollout's monitoring window watches these signals.
-2. `Skill(skill="groundwork:staged-rollout")` — produce the pre-launch checklist, feature-flag gating, the staged/canary ramp, and the written rollback plan.
+2. `Skill(skill="groundwork:staged-rollout")` — produce the pre-launch checklist, feature-flag gating, the staged/canary ramp, and the written rollback plan. In this step that skill stops at the **plan**: nothing is advanced and no traffic shifts here — the first stage begins only after the gate in Step 3 says go.
 
 Carry each skill's verification result forward. If any reports its Verification incomplete, surface that to the user at Step 3 rather than silently proceeding.
 
 ## Step 3: Final Go / No-Go Gate
 
-Before **any** outward-facing deploy step (flipping the canary flag on, promoting a stage, releasing), stop and ask the user with `AskUserQuestion`:
+Before **any** outward-facing deploy step (flipping the canary flag on, promoting a stage, releasing), stop and ask the user with `AskUserQuestion`. Ask only once the plan is a file rather than a conversation: confirm `{{specs_dir}}/rollouts/<feature-slug>-rollback.md` exists. If it does not, do not ask yet — report the missing plan and stop; the gate stays No-Go until the file exists:
 
 ```json
 {
@@ -58,6 +58,8 @@ Before **any** outward-facing deploy step (flipping the canary flag on, promotin
 
 - **No-Go** → stop. Report what's outstanding; do not deploy.
 - **Go** → proceed to begin the staged rollout (the canary stage) per the plan from Step 2. Never skip this gate, even if every prior step is green — a human owns the decision to expose the change to users.
+
+Once the rollout is underway, recommend the lifecycle's closing step: `/groundwork:retro` — this session just exercised the whole workflow, which is the best evidence a retro will get.
 
 ## Verification
 

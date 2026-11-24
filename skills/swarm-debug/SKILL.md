@@ -47,7 +47,7 @@ If the user selects "Cancel — I'll switch first": output the switching command
 This skill requires the **agent teams** experimental feature.
 
 **To enable:**
-1. Set the environment variable: `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=true`
+1. Set the environment variable: `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS="1"`
 2. Or add to your Claude Code settings: `"experimentalAgentTeams": true`
 
 **If agent teams is not available:** Fall back to the standard `groundwork:debug` skill and run Phase 3 sequentially. Note to the user that enabling agent teams would allow parallel investigation.
@@ -101,11 +101,13 @@ From the evidence gathered in Phases 1-2, generate **3-5 falsifiable hypotheses*
 - **Falsifiable**: Has a concrete test that would disprove it
 - **Independent**: Each hypothesis explains the bug through a different mechanism
 
-Record all hypotheses in the debug journal under `### Swarm Hypotheses`.
+Record all hypotheses in the debug journal's `## Hypotheses` section now, as its **Active** list — before any teammate is spawned — so a resumed swarm finds them.
 
 **Example:**
 ```markdown
-### Swarm Hypotheses
+## Hypotheses
+
+### Active
 1. Race condition in session middleware — concurrent requests overwrite session data
 2. Database connection leak — pool exhaustion causes timeouts under load
 3. Cache invalidation bug — stale user record served after profile update
@@ -116,7 +118,7 @@ Record all hypotheses in the debug journal under `### Swarm Hypotheses`.
 
 Create one teammate per hypothesis. Each teammate's prompt must include:
 
-1. **Context**: The reproduction steps and debug journal from Phases 1-2
+1. **Context**: The reproduction steps, plus the **literal journal path** — each teammate reads the journal itself; never paste it into the prompt
 2. **Assignment**: Their specific hypothesis to investigate
 3. **All hypotheses**: The full list, so they know what others are investigating
 4. **Adversarial mandate**: Explicit instructions to:
@@ -131,7 +133,8 @@ Create one teammate per hypothesis. Each teammate's prompt must include:
 You are investigating a bug as part of a swarm debugging team.
 
 ## Bug Context
-[Paste reproduction steps and debug journal]
+Reproduction steps: [the steps, briefly]
+JOURNAL PATH: <the literal `$RUN_DIR/journal.md` allocated in Phase 1> — read it first, in full
 
 ## Your Hypothesis (#N of M)
 [The specific hypothesis assigned to this teammate]
@@ -244,7 +247,7 @@ Use the same invocation-unique run-directory journal as the debug skill — the 
 [same as debug skill]
 
 ## Hypotheses
-[same as debug skill — but populated from swarm results]
+[same as debug skill: the ranked hypotheses from Step 1 go under Active before any teammate is spawned; teammate verdicts then move them to Eliminated or confirm the root cause]
 
 ## Swarm Evidence
 
@@ -306,7 +309,7 @@ Use the same invocation-unique run-directory journal as the debug skill — the 
 If agent teams is not available (feature not enabled or not supported):
 
 1. Detect the absence at the start of Phase 3
-2. Notify the user: "Agent teams feature is not enabled. To use swarm debugging, set `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=true`. Falling back to sequential debugging."
+2. Notify the user: "Agent teams feature is not enabled. To use swarm debugging, set `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS="1"`. Falling back to sequential debugging."
 3. Invoke `Skill(skill="groundwork:debug")` and continue with its standard Phase 3 (sequential hypothesis testing)
 4. The debug journal should note that swarm was attempted but unavailable
 

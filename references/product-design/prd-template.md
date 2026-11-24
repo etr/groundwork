@@ -13,7 +13,8 @@ Use this template when `{{specs_dir}}/product_specs.md` does not exist.
 ---
 
 ## 0) How we'll write requirements (EARS cheat sheet)
-- **Ubiquitous form:** "When <trigger> then the system shall <response>."
+- **Ubiquitous form:** "The system shall <response>."
+- **Event-driven form:** "When <trigger>, the system shall <response>."
 - **Optional elements:** [when/while/until/as soon as] <trigger>, [the] system shall <response> [<object>].
 - **Style:** Clear, atomic, testable, technology-agnostic.
 

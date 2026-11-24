@@ -106,11 +106,7 @@ Comments generated as decoration rather than information. Each pattern reads as 
 
 ## Tests
 
-1. One assert per test.
-2. Readable.
-3. Fast.
-4. Independent.
-5. Repeatable.
+The standard for tests is `checklists/testing.md` in this `references/` directory — the rubric the test-quality reviewer and the TDD skill share. In short: one logical assertion per test (several asserts on one object are fine), and each test readable, fast, independent, and repeatable.
 
 ## Code smells
 

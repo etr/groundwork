@@ -3,6 +3,7 @@ name: create-tasks
 description: Generate implementation tasks from architecture document. Usage /groundwork:create-tasks
 argument-hint: "[filter]"
 allowed-tools: ["Read", "Edit", "Write", "Glob", "Grep", "Task", "Skill"]
+disable-model-invocation: true
 ---
 
 # Task Generation Skill
@@ -233,6 +234,9 @@ Every task MUST follow this exact format to ensure compatibility with `/groundwo
 - [Testable criterion 1]
 - [Testable criterion 2]
 
+**Test Seams:**
+- [Seam where tests for this task live] — catches: [what it catches]; misses: [what it misses]
+
 **Related Requirements:** PRD-XXX-REQ-NNN
 **Related Decisions:** DR-NNN, DP-NNN, BRD-NNN, UXD-NNN
 
@@ -251,6 +255,7 @@ Every task MUST follow this exact format to ensure compatibility with `/groundwo
 | Action Items | Yes | Checkbox list |
 | Dependencies | Yes | Task IDs or "None" |
 | Acceptance Criteria | Yes | Testable statements |
+| Test Seams | Recommended | One line per seam: seam + catches/misses, or "None recorded" |
 | Related Requirements | Recommended | PRD IDs |
 | Related Decisions | Recommended | DR/DP/BRD/UXD IDs |
 | Status | Yes | Exactly one of the four values |
@@ -263,6 +268,28 @@ Every task MUST follow this exact format to ensure compatibility with `/groundwo
 - `**Status:** Blocked` - Cannot proceed due to dependencies
 
 **Important:** `/groundwork:work-on-next-task` parses these status values exactly. Any variation will cause parse errors.
+
+### Choosing Test Seams
+
+A **seam** is the public boundary tests are written against — the interface where behavior is observable without reaching inside the implementation. You can't test every behavior at every level, so *which seams a task's tests target* is a deliberate decision, and **this skill is where it gets made**: the user is in the room during task creation, and everything downstream (plan-task, implement-task, TDD) runs agent-side and must never re-ask.
+
+For each task, record one line per seam: the seam itself plus what testing there **catches** and what it **misses**:
+
+```
+**Test Seams:**
+- Checkout reducer (pure function) — catches: pricing rules, edge-case totals; misses: HTTP wiring
+- POST /api/checkout (integration) — catches: auth, status codes, serialization; misses: UI error states
+```
+
+Rules of thumb:
+- Prefer **existing** seams over new ones; the fewer seams across a codebase, the better
+- Use the **highest** seam that still reaches the behavior under test (a pure-function seam for pure logic, an HTTP/integration seam for wiring, one E2E seam for critical journeys)
+- If the task needs a seam that doesn't exist yet, that's a design fact — name it in the task and let [[design-it-twice]] decide the interface
+- `**Test Seams:** None recorded` is valid (trivial tasks) — executors then fall back to the default rule in [[test-driven-development]]
+
+### Domain Vocabulary
+
+Write task titles, goals, and acceptance criteria in the project's domain language. If `{{specs_dir}}/glossary.md` exists, use its canonical terms and honor its `_Avoid_` lists. A concept missing from the glossary is a signal to flag for [[domain-modeling]] — never invent a synonym the project doesn't use.
 
 ## Task Generation Principles
 
@@ -431,14 +458,14 @@ When `{{specs_dir}}/design_system.md` exists, include design-specific tasks:
 | Task Type | Related Decisions | Example |
 |-----------|-------------------|---------|
 | Token setup | DP-NNN | Configure CSS variables/Tailwind theme |
-| Color system | BRD-001-005 | Implement brand palette, semantic colors |
-| Typography | BRD-006-008 | Font loading, type scale utilities |
+| Color system | The color decisions under §2.1 Color System (BRD-NNN) | Implement brand palette, semantic colors |
+| Typography | The typography decisions under §2.2 Typography (BRD-NNN) | Font loading, type scale utilities |
 | Component styling | BRD-NNN, UXD-NNN | Button variants, form controls |
-| Loading states | UXD-003-004 | Skeleton screens, spinners |
-| Error handling | UXD-005-006 | Toast system, error boundaries |
-| Empty states | UXD-007 | First-run, no-data components |
-| Responsive layout | UXD-010-011 | Breakpoint utilities, layout adaptation |
-| Motion system | UXD-012 | Animation utilities, reduced motion |
+| Loading states | The UXD decisions under §3.2 Loading States | Skeleton screens, spinners |
+| Error handling | The UXD decisions under §3.3 Error Handling | Toast system, error boundaries |
+| Empty states | The UXD decisions under §3.4 Empty States | First-run, no-data components |
+| Responsive layout | The UXD decisions under §3.6 Responsive Behavior | Breakpoint utilities, layout adaptation |
+| Motion system | The UXD decisions under §3.7 Motion & Interaction Character | Animation utilities, reduced motion |
 
 Reference design decisions in task Related Decisions field to ensure traceability.
 

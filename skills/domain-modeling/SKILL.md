@@ -44,7 +44,7 @@ A glossary entry records *what a word means*, not *why a path was chosen*. When 
 |--------|---------|
 | "I'll add the schema/endpoint so it's all in one place" | That makes it a spec. The glossary holds meaning only; implementation rots the entry out of sync. |
 | "I'll collect all the terms at the end in one pass" | The precision came from the context you had when the term crystallized. Batching loses it. |
-| "Both teams use the word slightly differently — I'll note both" | Two meanings is the bug, not the entry. One authoritative definition; redirect the rest. |
+| "Both teams use the word slightly differently — I'll note both" | Two meanings is the bug, not the entry. One authoritative definition; retire the rival words under its **Avoid** line. |
 | "I'll explain *why* we defined it this way here" | Rationale belongs in the architecture decision record, not the glossary. The definition states what, not why. |
 | "Let me stub an empty glossary so it exists" | Empty file = sediment. Create on the first resolved term. |
 
@@ -60,9 +60,9 @@ A glossary entry records *what a word means*, not *why a path was chosen*. When 
 ## Verification
 
 - [ ] `glossary.md` exists only because at least one term has resolved; no placeholder entries
-- [ ] Every entry follows `CONTEXT-FORMAT.md` (Term, Definition, Relationships, Edge cases; alphabetical)
+- [ ] Every entry follows `CONTEXT-FORMAT.md` (Definition, an **Avoid** line where rival words exist, Relationships, Edge cases; alphabetical)
 - [ ] No entry contains implementation detail or decision rationale
-- [ ] Each concept appears exactly once; no synonym has its own definition
+- [ ] Each concept appears exactly once; no synonym has its own definition — the rivals are retired under the canonical entry's **Avoid** line
 - [ ] Every term was stress-tested against at least one concrete edge-case scenario
 - [ ] Terms checked against the code; no name or meaning contradicts the codebase
 - [ ] Any trade-off uncovered while resolving a term is recorded as an architecture decision (see [[design-architecture]]), not inside the definition

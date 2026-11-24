@@ -4,6 +4,8 @@ description: This skill should be used when investigating bugs, unexpected behav
 argument-hint: "[bug description]"
 ---
 
+<!-- Reproduction-loop menu, ranked hypotheses, and instrumentation tagging adapted from the "diagnosing-bugs" skill in github.com/mattpocock/skills (MIT). -->
+
 # Debugging
 
 ## Overview
@@ -70,6 +72,14 @@ Think you know the fix? Prove the root cause first. Then fix.
 - Don't skip reproduction because "it's obvious"
 
 Understand first. Fix second. Period.
+
+## Redact Before You Show or Store
+
+This skill has you execute commands, paste outputs, and persist captured artifacts into the journal, subagent prompts, and escalation reports. **Redact every secret first** — API keys, tokens, credentials, PII — writing `[REDACTED]` in its place. Build reproductions against environment variables, so the credential stays in the environment instead of in what you show. Captured artifacts (HAR files, headers, logs) carry auth material: quote only the lines that carry the signal. If redacted output is not enough to diagnose, say so and ask your human partner — never widen the redaction on your own.
+
+## Instrumentation Tagging
+
+Every temporary log line you add — in any phase — carries a unique prefix for this run, e.g. `[DEBUG-a4f2]`. Cleanup becomes a single grep for the prefix; untagged debug logs survive forever.
 
 ## Five-Phase Workflow
 
@@ -170,6 +180,24 @@ If you can't reproduce it, you can't prove you fixed it. Observation before theo
 4. Add instrumentation (logging, breakpoints) if the failure path is unclear
 5. Document the reproduction steps in the debug journal
 
+**Ways to construct a reproduction, roughly in order:**
+1. Failing test at whatever seam reaches the bug
+2. `curl` / HTTP script against a running dev server
+3. CLI invocation with a fixture input, diffing stdout against a known-good snapshot
+4. Headless browser script (Playwright/Puppeteer) asserting on DOM/console/network
+5. Replay a captured trace — save the real request/payload/event log to disk and replay it through the code path in isolation
+6. Throwaway harness — minimal subset of the system (one service, stubbed deps) exercising the bug path with a single call
+7. Property/fuzz loop — for "sometimes wrong output", run 1000 random inputs and look for the failure mode
+8. Bisection harness — if the bug appeared between two known states, automate "boot at state X, check, repeat" so `git bisect run` can drive it
+9. Differential loop — same input through old vs. new version (or two configs), diff the outputs
+
+**Treat the reproduction as a product — tighten it:**
+- Faster? (cache setup, skip unrelated init, narrow scope)
+- Sharper signal? (assert the specific symptom, not "didn't crash")
+- More deterministic? (pin time, seed RNG, isolate filesystem, freeze network)
+
+A 30-second flaky reproduction is barely better than none; a 2-second deterministic one is a debugging superpower. For intermittent bugs, the goal is not a clean repro but a **higher reproduction rate** — loop the trigger 100×, parallelize, stress it, narrow timing windows — until the failure is frequent enough to debug against.
+
 **Reproduction checklist:**
 - [ ] Can trigger the bug on demand
 - [ ] Same failure every time (or documented intermittent pattern)
@@ -207,9 +235,15 @@ Narrow the search space. One variable at a time.
 
 Form hypotheses. Make them falsifiable. Test them. Eliminate possibilities systematically — don't jump to conclusions.
 
+**Generate 3–5 ranked hypotheses BEFORE testing any of them.** Testing the first plausible idea anchors the investigation on it; a ranked field of candidates is the cure. Each hypothesis must be falsifiable — state the prediction it makes:
+
+> Format: "If X is the cause, then changing Y will make the bug disappear / changing Z will make it worse."
+
+A hypothesis whose prediction you cannot state is a vibe — sharpen it or drop it. Record the ranked list in the journal's Active section before the first test. When a human partner is present, show them the ranking before you start — they often re-rank instantly ("we just changed #3's area") or rule out hypotheses they've already tested; don't block on their reply in an unattended run, proceed with your ranking.
+
 **Required steps:**
-1. Form a specific, falsifiable hypothesis: "The bug occurs because X. If I do Y, I should see Z."
-2. Test the hypothesis. One change at a time.
+1. Generate 3–5 ranked, falsifiable hypotheses ("the bug occurs because X; if I do Y, I should see Z")
+2. Test them in rank order. One change at a time.
 3. Record the result: confirmed or eliminated.
 4. Repeat until the root cause is isolated.
 
@@ -264,7 +298,7 @@ You've isolated the root cause. Now prove it with a test, then fix it.
 
 **Required steps:**
 1. **State the root cause** — Write it in the debug journal with a verification level (see Verification Levels below)
-2. **Write a failing test** — Invoke `Skill(skill="groundwork:test-driven-development")` and follow the TDD cycle. The test must reproduce the exact bug.
+2. **Write a failing test** — Invoke `Skill(skill="groundwork:test-driven-development")` and follow the TDD cycle. The test must reproduce the exact bug, at a **correct seam**: one where the test exercises the real bug pattern as it occurs at the call site. If the only available seam is too shallow to replicate the chain that triggered the bug, a regression test there gives false confidence — **the absence of a correct seam is itself a finding**: record it in the journal, flag it for architecture review, and say so in the fix report instead of forcing a hollow test.
 3. **Minimal fix only** — Change the least amount of code to fix the root cause. Don't refactor. Don't "improve" nearby code. Don't fix other bugs you noticed.
 4. **One change at a time** — If the fix requires multiple changes, make them incrementally.
 
@@ -303,12 +337,15 @@ Prove the fix works. Prove nothing else broke. Get a fresh perspective.
 5. Check for related code paths — could the same bug exist elsewhere?
 
 **Verification checklist:**
-- [ ] Failing test now passes
+- [ ] Failing test now passes (or the no-correct-seam finding is recorded and reported)
 - [ ] Full test suite passes
 - [ ] Original reproduction no longer triggers the bug
 - [ ] Fix addresses root cause (not symptoms)
 - [ ] No unrelated changes included
 - [ ] Related code paths checked for same bug
+- [ ] The commit message states the confirmed root cause and the evidence that confirmed it, so the next debugger of this area starts from the answer
+- [ ] All `[DEBUG-xxxx]` instrumentation removed (grep the run's tag)
+- [ ] Throwaway harnesses and capture files deleted or left inside the run's journal directory
 
 **Fix didn't work?** Go back to Phase 3. Your root cause analysis was wrong. Don't patch the patch — re-investigate.
 
@@ -347,6 +384,8 @@ Three failed fixes means your root cause analysis is wrong. More attempts won't 
 ```
 
 Revert all failed fix attempts. Leave the codebase clean.
+
+**After a resolved bug — and after every escalation — recommend `/groundwork:retro`:** a bug that needed this workflow is the strongest signal the environment needs a deterministic check, a navigation pointer, or a seam fix. Run it in this session while the evidence is still here.
 
 ## Debug Journal
 
@@ -392,7 +431,7 @@ mv .debug/{slug}.md "$RUN_DIR/journal.md" # legacy location migration
 [The exact command you ran — NOT theoretical steps, NOT code you read]
 
 ### Actual Output
-[Paste the exact error/output you observed when you ran it]
+[The exact error/output you observed when you ran it, secrets redacted — same rule as everything else you show or store]
 
 ### Expected Output
 [What should have happened instead]
@@ -403,7 +442,8 @@ mv .debug/{slug}.md "$RUN_DIR/journal.md" # legacy location migration
 ## Hypotheses
 
 ### Active
-- [ ] [Hypothesis]: [How to test it]
+Ranked before the first test; each with the prediction that would confirm or refute it.
+- [ ] [Hypothesis]: if X is the cause, then [Y] will make the bug disappear / [Z] will make it worse
 
 ### Eliminated
 - [x] [Hypothesis]: Eliminated because [evidence]
@@ -552,17 +592,25 @@ Error log: `TypeError: Cannot read property 'theme' of null`
 
 ### Phase 3: ISOLATE
 
-**Hypothesis 1:** User 107 has a null `preferences` record.
-**Test:** Query the database directly.
+**Ranked hypotheses, written down before testing any:**
+1. User 107 has no `preferences` row, and the profile query assumes one exists.
+2. The row exists but the JOIN drops it (wrong join key or filter).
+3. A stale cache serves an older, incompatible profile shape for this user.
+
+**Test #1:** Query the database directly.
 ```sql
 SELECT * FROM preferences WHERE user_id = 107;
 -- Empty result set
 ```
-**Result:** Confirmed — user 107 has no preferences row.
+**Result:** Confirmed — user 107 has no preferences row. The same query eliminates #2 (there is no row to join).
 
-**Hypothesis 2:** The JOIN returns null for preferences, and the code doesn't handle it.
-**Test:** Read `getUserProfile` — it does `user.preferences.theme` with no null check.
-**Result:** Confirmed. The LEFT JOIN returns null preferences, and the code assumes it exists.
+**Test #2:** Re-run the reproduction with a full stack trace.
+```text
+TypeError: Cannot read property 'theme' of null
+    at getUserProfile (src/users/profile.ts:42)
+    at handler (src/api/profile.ts:18)
+```
+**Result:** Confirmed. The failing access is the `user.preferences.theme` line read in Phase 1, which has no null check, and the call reaches it straight from the handler — no cache on the stack, so #3 drops out.
 
 **Root cause:** `getUserProfile` accesses `preferences.theme` without null-checking the join result. Users without a preferences row trigger a TypeError.
 
@@ -590,11 +638,17 @@ Test passes.
 
 ### Phase 5: VERIFY
 
-- [ ] Failing test passes: yes
-- [ ] Full test suite: all green
-- [ ] `curl localhost:3000/api/profile/107`: 200 OK, theme is "default"
-- [ ] Fix addresses root cause: null preferences handled
-- [ ] Checked other code paths: `preferences.language` has same bug — filed separate issue
+Every box in the Phase 5 checklist ticked:
+
+- [x] Failing test passes
+- [x] Full test suite: all green
+- [x] `curl localhost:3000/api/profile/107`: 200 OK, theme is "default" — the original reproduction no longer fails
+- [x] Fix addresses root cause: null preferences handled
+- [x] No unrelated changes included
+- [x] Checked other code paths: `preferences.language` has same bug — filed separate issue
+- [x] Commit message states the root cause: the LEFT JOIN returns null `preferences` and the code assumed it exists
+- [x] No `[DEBUG-xxxx]` lines remain (grepped for this run's tag)
+- [x] Throwaway capture files deleted
 
 Done.
 

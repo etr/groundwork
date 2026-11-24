@@ -123,7 +123,7 @@ Your conversational response in file mode is exactly one JSON line (no findings 
 
 `counts` reflects how many findings of each severity you wrote to the file.
 
-**Inline mode** — if your prompt does NOT include a `findings_file:` line, return the full JSON inline (the original shape shown above, with no `agent`/`iteration` header and no `id`s). This mode is used by `pr-reviewing`.
+**Inline mode** — if your prompt does NOT include a `findings_file:` line, return the full JSON inline (the original shape shown above, with no `agent`/`iteration` header and no `id`s). This mode is used by `review-pr`.
 
 ## Severity Definitions
 

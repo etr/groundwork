@@ -76,6 +76,28 @@ Spend test effort where it pays. Classify the code under test:
 - Implementation details that change freely without changing behavior
 - **Redundant tests:** duplicate assertions, subset tests (B passing implies A always passes), copy-pasted tests that add maintenance burden without catching additional bugs
 
+<!-- Adapted from the tautological-test examples in github.com/mattpocock/skills (MIT). -->
+## Tautological Tests
+
+A **tautological test** derives its expected value the same way the code under test does, so it passes by construction and can never disagree with the implementation.
+
+- [ ] Expected values come from an **independent source of truth** — a known-good literal, a worked example, the spec — never from recomputing the answer with the same logic
+- [ ] No `expect(sum(items)).toBe(items.reduce(...))` shapes: the assertion restates the implementation
+- [ ] No constant asserted equal to itself (or to a copy of itself renamed as a "fixture")
+
+```typescript
+// BAD: expected value recomputed the way the code computes it
+test('calculateTotal sums line items', () => {
+  const items = [{ price: 10 }, { price: 5 }];
+  expect(calculateTotal(items)).toBe(items.reduce((s, i) => s + i.price, 0));
+});
+
+// GOOD: expected value is an independent, known literal
+test('calculateTotal sums line items', () => {
+  expect(calculateTotal([{ price: 10 }, { price: 5 }])).toBe(15);
+});
+```
+
 ## Determinism & Isolation
 
 - [ ] No dependence on wall-clock time, timezone, locale, random seed, or test execution order

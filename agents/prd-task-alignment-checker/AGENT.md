@@ -126,9 +126,9 @@ Return your review as JSON:
 ## Verdict Rules
 
 - `request-changes`: Any critical finding
-- `request-changes`: 3 or more major findings
+- `request-changes`: Any major finding — the validation loop treats every major as must-fix and re-runs only on `request-changes`
 - `request-changes`: Coverage percentage below 90%
-- `approve`: All requirements covered with minor issues only
+- `approve`: All requirements covered, with no critical or major findings (minor issues only)
 
 ## Coverage Calculation
 

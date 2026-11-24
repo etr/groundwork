@@ -90,7 +90,7 @@ Use this template when creating `{{specs_dir}}/design_system.md`.
 
 ## 2) Brand Identity
 
-[Populated by branding skill]
+[Populated at `ux-design` Steps 4–6: identity options, visual comparison, and brand voice]
 
 ### 2.1 Color System
 
@@ -172,7 +172,7 @@ Use this template when creating `{{specs_dir}}/design_system.md`.
 
 ## 3) UX Patterns
 
-[Populated by ux-patterns skill]
+[Populated at `ux-design` Step 7: patterns, atmosphere, and layout architecture]
 
 **Modality:** the pattern sections below are web-shaped; for `tui`/`mobile`, populate them with the modality pattern sets from the per-modality guides (Layout & Screen Architecture / Navigation & Layout), keeping the same section names.
 

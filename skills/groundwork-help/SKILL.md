@@ -30,54 +30,25 @@ invocation tier from the frontmatter:
 
 ### Step 3: Group and Present
 
-Present the skills grouped by purpose. Hide `user-invocable: false` library skills from the
-user-facing list (they are internal). Example grouping:
+Build the list from what Step 1 and Step 2 found — never from memory. A memorized list goes stale the moment a skill is added, and a partial one hides skills the user cannot discover any other way.
+
+- **User-invocable skills** — every scanned skill *without* `user-invocable: false` in its frontmatter — go in the user-facing list, grouped by purpose, each shown as `/groundwork:<name> [args] - <first sentence of its description>`. Before presenting, count the entries against the scan: the list carries exactly as many as there are user-invocable skills.
+- **Hidden library skills** — those with `user-invocable: false` — are summarized in one sentence, not listed one by one.
+
+Group by purpose (the lifecycle order is a reliable default). Shape of the output:
 
 #### User-invocable skills (`/groundwork:<name>`)
-
-List skills organized by purpose:
 
 **Spec-Driven Development:**
 - `/groundwork:design-product` - Define product requirements
 - `/groundwork:design-architecture` - Design technical approach
-- `/groundwork:create-tasks` - Generate implementation tasks
 
-**Task Execution:**
-- `/groundwork:work-on [N]` - Work on a specific task by number
-- `/groundwork:work-on-next-task` - Work on the next task
-- `/groundwork:plan-task [N or description]` - Plan a task or feature without implementing
-- `/groundwork:implement-task [N or plan-path]` - Implement a previously planned task
-- `/groundwork:validate` - Validate and autonomously fix the task worktree
-- `/groundwork:finalize-task [N]` - Commit, merge, and clean up a validated task worktree
-
-**Quick Development:**
-- `/groundwork:build-unplanned [description]` - Build a feature from description with worktree isolation and TDD
-
-**Sync & Alignment:**
-- `/groundwork:source-product-specs-from-code` - Sync specs with code changes
-- `/groundwork:source-architecture-from-code` - Update architecture docs
-- `/groundwork:check-specs-alignment` - Verify spec alignment (full audit)
-- `/groundwork:split-specs` - Convert single-file PRD into directory format
-- `/groundwork:split-architecture` - Convert single-file architecture doc into directory format
-
-**Plugin Management:**
-- `/groundwork:groundwork-check` - Validate plugin health
-- `/groundwork:groundwork-help` - Show this help
-- `/groundwork:skills` - List available skills
-
-**Debugging:**
-- `/groundwork:debug [description]` - Systematic root-cause debugging
-- `/groundwork:swarm-debug [description]` - Parallel adversarial hypothesis investigation
-
-**Design & UX:**
-- `/groundwork:ux-design` - Establish a design system
+**…**
+(one group per purpose, in the same shape)
 
 #### Hidden library skills
 
-Some skills (e.g. `test-driven-development`, `understanding-feature-requests`,
-`use-git-worktree`, `using-groundwork`, `task-validation-loop`) are `user-invocable: false`:
-they are not on the slash menu and are invoked only by other skills or by the model. Use
-`/groundwork:skills` to see the full list of skills.
+Summarize the `user-invocable: false` skills the scan found (for example `test-driven-development`, `use-git-worktree`, `using-groundwork`): they are not on the slash menu and are invoked only by other skills or by the model. Use `/groundwork:skills` to see the full list of skills.
 
 ### Step 4: Usage Examples
 

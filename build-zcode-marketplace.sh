@@ -168,6 +168,19 @@ Skills are invoked as \`groundwork-<name>\` (bare) or
   after the \`zcode-marketplace\` branch moves.
 EOF
 
+# The attribution — sources and third-party license notices — is maintained in
+# the source README and carried verbatim, so the bundle cannot drift from it.
+# Fail closed: a bundle that silently dropped its notices must not be published.
+ATTRIBUTION="$(awk '/^## Attribution$/{copy=1} /^## License$/{copy=0} copy' "$SCRIPT_DIR/README.md")"
+if [[ -z "$ATTRIBUTION" || "$ATTRIBUTION" != *"Permission is hereby granted"* ]]; then
+    echo "Error: could not read the Attribution section (with its license notices) from README.md" >&2
+    exit 1
+fi
+{
+    printf '\n'
+    printf '%s\n' "$ATTRIBUTION"
+} >> "$OUT_DIR/README.md"
+
 # --- 5. Fail-closed sanity checks ---------------------------------------------
 
 # lib/model-override.js is the model-policy transform engine: its token table

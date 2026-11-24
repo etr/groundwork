@@ -2,7 +2,7 @@
 
 Use the `review_mode` supplied by the validation coordinator. The modes grant different authority.
 
-In file mode, copy the supplied mode into the review artifact as top-level `"review_mode": "initial-audit"` or `"review_mode": "closure-review"`. Do not infer or omit it.
+In file mode, copy the supplied mode into the review artifact as top-level `"review_mode": "initial-audit"` or `"review_mode": "closure-review"`. Do not infer or omit it. A caller that names no mode (inline use outside validation, such as a pull-request review) gets an `initial-audit` over the baseline it supplied.
 
 ## Verification Scope and Dependencies
 

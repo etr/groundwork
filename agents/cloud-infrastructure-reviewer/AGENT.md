@@ -36,7 +36,7 @@ Enumerate IaC / config files in `changed_file_paths` by extension plus content s
 | Container | `Dockerfile`, `Dockerfile.*`, `docker-compose.y?ml` |
 | Cloud config | `serverless.yml`, `sam-template.yml`, `.gcloudignore`, `cloudbuild.yaml` |
 
-**Empty-scope fast path.** If no IaC file is in scope, return approve without opening any file:
+**Empty-scope fast path.** If no IaC file is in scope, approve without opening any file. In file mode the coordinator has already assigned your findings file and its next step reads it, so the fast path still writes it — the full review with an empty `findings` array — before returning the compact line. Inline mode returns:
 
 ```json
 {"verdict":"approve","score":100,"summary":"No cloud infrastructure files in this change.","counts":{"critical":0,"major":0,"minor":0}}
@@ -328,7 +328,7 @@ Your conversational response in file mode is exactly one JSON line (no findings 
 
 `counts` reflects how many findings of each severity you wrote to the file.
 
-**Inline mode** — if your prompt does NOT include a `findings_file:` line, return the full JSON inline (the original shape, with no `agent`/`iteration` header and no `id`s). This mode is used by `pr-reviewing`.
+**Inline mode** — if your prompt does NOT include a `findings_file:` line, return the full JSON inline (the original shape, with no `agent`/`iteration` header and no `id`s). This mode is used by `review-pr`.
 
 ## Verdict Rules
 

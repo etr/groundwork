@@ -219,7 +219,7 @@ Minor suggestions (optional):
 - ...
 ```
 
-Return control to calling skill (tasks skill).
+Return control to the calling skill (`create-tasks`).
 
 ## Severity Reference
 
@@ -232,7 +232,7 @@ Return control to calling skill (tasks skill).
 ## Edge Cases
 
 **No design system:**
-- Design agent still runs (checks accessibility)
+- The design agent runs only when the task list has UI/frontend tasks — it checks their accessibility; with none, it is `skipped`, as in the table above
 - Note in summary: "Design system not found"
 
 **Agent returns error:**

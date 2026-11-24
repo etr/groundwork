@@ -176,7 +176,7 @@ Determine execution mode from the user's argument or request:
 
 Create an agent team. Then for each remaining task in dependency order:
 
-1. **Read the task section** from `{{specs_dir}}/tasks.md` (or aggregated from `{{specs_dir}}/tasks/`) to extract the full task definition (goal, action items, acceptance criteria, dependencies).
+1. **Read the task section** from `{{specs_dir}}/tasks.md` (or aggregated from `{{specs_dir}}/tasks/`) to extract the full task definition (goal, action items, acceptance criteria, test seams, dependencies).
 
 2. **Announce start:** "Starting TASK-NNN: [Title] (teammate session)"
 
@@ -199,7 +199,7 @@ Create an agent team. Then for each remaining task in dependency order:
    TASK TITLE: [Title]
 
    TASK DEFINITION:
-   [Full task section from tasks file: goal, action items, acceptance criteria, dependencies]
+   [Full task section from tasks file: goal, action items, acceptance criteria, test seams, dependencies — a recorded test seam is where this task's tests are written; when none is recorded the teammate follows the seam rule in the TDD skill and never asks]
 
    EXECUTE-TASK WORKFLOW:
    [EXECUTE_TASK_WORKFLOW loaded in Step 2.7]
@@ -209,16 +209,16 @@ Create an agent team. Then for each remaining task in dependency order:
       - Skip Step 0 (context already resolved by the lead) — but still run its
         resume gate item for this task: `node ${CLAUDE_PLUGIN_ROOT}/lib/task-resume.js check TASK-NNN`
         (add `--project <name>` in monorepos) and act on the one-line JSON per
-        `${CLAUDE_PLUGIN_ROOT}/references/task-resume-protocol.md` (skip the
-        phases it says are done; stand down when live_owner is not none).
+        `${CLAUDE_PLUGIN_ROOT}/references/task-resume-protocol.md`. One `check` returns only
+        the next action, so re-run it after each recorded phase to fetch the one after
+        (skip the phases it says are done; stand down when live_owner is not none).
       - TASK IDENTIFIER and TASK DEFINITION are provided above — use them directly.
       - GROUNDWORK_BATCH_MODE is true — auto-proceed all confirmations.
    2. When all the steps of the workflow are complete, report:
       - Success: "TASK-NNN: SUCCESS — [one-line summary]"
-        Include validation results per agent:
-        VALIDATION: code-quality=[N] test-quality=[N] security=[N] spec-alignment=[N] architecture=[N] simplification=[N] housekeeping=[N] performance=[N] design-consistency=[N]
-        (where [N] is the number of iterations each agent required to pass)
-        When validation returned PASSED-WITH-WAIVERS, also include one WAIVED line per waived gate
+        Include the validation evidence by quoting the validate skill's terminal line verbatim:
+        VALIDATION: <the terminal line, e.g. `Validation PASSED (2 iter, 3 fixed, 0 unworked)`>
+        When it returned PASSED-WITH-WAIVERS, also include one WAIVED line per waived gate
         (`WAIVED: <gate> — <one-line evidence>`) so the lead can report it; never present a waived gate as passed.
       - Failure: "TASK-NNN: FAILURE — [one-line reason]"
    ```
@@ -228,13 +228,13 @@ Create an agent team. Then for each remaining task in dependency order:
 6. **Collect result** from the teammate's completion message.
 
 7. **Verify workflow compliance:** Parse the teammate's completion message for validation evidence.
-   - Look for the `VALIDATION:` line with per-agent iteration counts (e.g., `code-quality=2 test-quality=1 ...`).
+   - Look for the `VALIDATION:` line quoting the validate skill's terminal result — it begins `Validation PASSED (` or `Validation PASSED-WITH-WAIVERS (`.
    - If the validation line is **present**: proceed to step 8.
-   - If the validation line is **missing**: send the teammate a correction via `SendMessage`:
-     > "Your completion report is missing the VALIDATION line with per-agent iteration counts. Run the validation loop (Step 7.5 of the work-on workflow) and report back with:
-     > VALIDATION: code-quality=[N] test-quality=[N] security=[N] spec-alignment=[N] architecture=[N] simplification=[N] housekeeping=[N] performance=[N] design-consistency=[N]"
+   - If it is **missing**: send the teammate a correction via `SendMessage`:
+     > "Your completion report is missing the VALIDATION line. Run the validation step (Step 4: Validate of the work-on workflow) and report back with its terminal line, verbatim:
+     > VALIDATION: Validation PASSED (...) — or `Validation PASSED-WITH-WAIVERS (...)` plus one WAIVED line per waived gate"
    - Wait for the teammate to respond and re-collect the result.
-   - If the teammate's second response still lacks the validation line: mark the task as failed with reason "Teammate did not complete validation".
+   - If the teammate's second response still lacks the validation line, or validation did not pass: mark the task as failed with reason "Teammate did not complete validation".
 
 8. **Update task status:**
    - Success → `**Status:** Complete` in the tasks file
@@ -263,13 +263,13 @@ Create an agent team. Then for each remaining task in dependency order:
    d. **Wait for all teammates in this level to complete.** As teammates finish, collect results. If any task fails, stop spawning new teammates but let running teammates finish.
 
    e. **Verify workflow compliance** for each teammate before shutting it down:
-      - Parse the teammate's completion message for the `VALIDATION:` line with per-agent iteration counts.
+      - Parse the teammate's completion message for the `VALIDATION:` line quoting the validate skill's terminal result (it begins `Validation PASSED (` or `Validation PASSED-WITH-WAIVERS (`).
       - If **present**: update task status to Complete.
       - If **missing**: send the teammate a correction via `SendMessage`:
-        > "Your completion report is missing the VALIDATION line with per-agent iteration counts. Run the validation loop (Step 7.5 of the work-on workflow) and report back with:
-        > VALIDATION: code-quality=[N] test-quality=[N] security=[N] spec-alignment=[N] architecture=[N] simplification=[N] housekeeping=[N] performance=[N] design-consistency=[N]"
+        > "Your completion report is missing the VALIDATION line. Run the validation step (Step 4: Validate of the work-on workflow) and report back with its terminal line, verbatim:
+        > VALIDATION: Validation PASSED (...) — or `Validation PASSED-WITH-WAIVERS (...)` plus one WAIVED line per waived gate"
       - Wait for the teammate to respond and re-check.
-      - If the teammate's second response still lacks the validation line: mark the task as failed with reason "Teammate did not complete validation".
+      - If the teammate's second response still lacks the validation line, or validation did not pass: mark the task as failed with reason "Teammate did not complete validation".
 
    f. **Shut down all teammates** in this level before proceeding to the next.
 

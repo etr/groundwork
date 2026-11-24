@@ -314,7 +314,7 @@ Analyze existing code to generate initial specifications:
 
 ## Skills
 
-Every Groundwork capability is a skill. The examples below use Claude Code's slash syntax: `/groundwork:<name>` (the prefix can be omitted if no other plugin uses the same name). The other installs discover the same capabilities as `groundwork-<name>` skills. Some skills are also invoked automatically by the model when relevant, and a few low-level "library" skills are used only by other skills (not listed below).
+Every Groundwork capability is a skill. The examples below use Claude Code's slash syntax: `/groundwork:<name>` (the prefix can be omitted if no other plugin uses the same name). The other installs discover the same capabilities as `groundwork-<name>` skills. Some skills are also invoked automatically by the model when relevant, and a few low-level "library" skills are used only by other skills (not listed below). Every skill has a [docs page](docs/skills/README.md): what it does, when to reach for it, common questions, and the signals that it worked.
 
 ### Planning Skills
 
@@ -339,6 +339,7 @@ Sharpen a design or de-risk an approach before committing to it.
 | `/groundwork:design-it-twice` | — | Generate 2–3 divergent interface designs and compare on depth/locality/seam | Before committing to a non-trivial module, service boundary, or public API |
 | `/groundwork:doubt-driven-development` | — | Adversarially refute the chosen approach before building | High-stakes/hard-to-reverse change — migrations, auth, payments, destructive ops |
 | `/groundwork:vertical-slice` | — | Structure work as thin, end-to-end, independently-shippable slices behind a flag | Feature large enough to span multiple layers |
+| `/groundwork:improve-codebase-architecture` | `[module or pain-point] [--project name]` | Survey for deepening opportunities (shallow module clusters → deep modules), present them in chat and as a visual HTML report, take the chosen one through design-it-twice | Codebase upkeep — the codebase resists change more than the changes warrant |
 
 ### Implementation Skills
 
@@ -411,6 +412,7 @@ Plugin management and reference.
 | Skill | Args | Description | When to Use |
 |---------|------|-------------|-------------|
 | `/groundwork:handoff` | `[focus]` | Produce a compact handoff document transferring context, state, and next objective | Ending a session or passing work to another agent |
+| `/groundwork:retro` | `[session]` | Suggest improvements to the agent's environment — checks, standards, steering files, tooling — most severe first | After a session, especially one that went sideways; closes the loop for the next session |
 | `/groundwork:statusline` | `[install\|uninstall]` | Install or remove Groundwork's optional statusline (requires `jq` and `curl`) | Wanting task/PR state in the Claude Code statusline |
 | `/groundwork:skills` | — | List all available Groundwork skills | Discovering available capabilities |
 | `/groundwork:groundwork-check` | — | Validate plugin installation | Troubleshooting issues |
@@ -660,6 +662,7 @@ You can also pass a project name directly: `/groundwork:select-project api-serve
 ### How It Works
 
 - Specs are stored per-project: `<project-path>/specs/`
+- The specs artifact set: `product_specs.md` (PRD with EARS requirements, from `design-product`), `architecture.md` (components and decision records, from `design-architecture`), `glossary.md` (the project's domain vocabulary with `Avoid` lists, from `domain-modeling` — created lazily on the first resolved term), `design_system.md` (from `ux-design`), and `tasks.md` or `tasks/` (from `create-tasks`). `glossary.md` is the one created lazily — on the first resolved term; the others are written when their skill runs, and it is the single home for domain terms (the architecture document links to it rather than restating them).
 - All planning, implementation, and sync skills are monorepo-aware
 - Project selection persists per terminal pane in the active harness's state directory (for example, `$CODEX_HOME/groundwork-state` or the corresponding Claude, OpenCode, Kiro, or Pi home). Tmux identity comes from stable environment metadata, so Codex keeps tabs isolated even when its sandbox cannot access the tmux server socket.
 - Exported skills use their bundled resolver to derive the active project name, project root, and specs directory from that harness-scoped selection
@@ -774,6 +777,30 @@ This plugin has sourced learnings and code from multiple sources:
 ### Research Methodology
 - **[get-shit-done](https://github.com/glittercowboy/get-shit-done)** by glittercowboy
   - The researcher agent's "Training as Hypothesis" guidance is adapted from this project's research methodology
+
+### Skills for Real Engineers
+- **[mattpocock/skills](https://github.com/mattpocock/skills)** by Matt Pocock
+  - License: MIT, Copyright (c) 2026 Matt Pocock — notice under [Third-party MIT notices](#third-party-mit-notices)
+  - The interview protocol in `understanding-feature-requests` is adapted from its `grilling` skill
+  - The `retro` and `improve-codebase-architecture` skills are adapted from the skills of the same names, and the deep-module vocabulary from `codebase-design`
+  - In `debug`, the reproduction-loop menu, ranked hypotheses, and instrumentation tagging are adapted from `diagnosing-bugs`; the tautological-test rubric is adapted from `tdd`
+  - The pull-request body shape in `finalize-task` follows its `pr` skill
+  - The skill-authoring guidance in `docs/developing-skills.md` draws on its `writing-for-agents` skill
+
+### HumanLayer
+- **[humanlayer/skills](https://github.com/humanlayer/skills)** by HumanLayer
+  - License: MIT, Copyright (c) 2026 HumanLayer — notice under [Third-party MIT notices](#third-party-mit-notices)
+  - The summary-as-visual, before/after evidence, and merge-danger shape of the pull-request body in `finalize-task` originates with its `show-me` skill (by Dex Horthy)
+
+### Third-party MIT notices
+
+The portions adapted from [mattpocock/skills](https://github.com/mattpocock/skills) (Copyright (c) 2026 Matt Pocock) and [humanlayer/skills](https://github.com/humanlayer/skills) (Copyright (c) 2026 HumanLayer) are used under the MIT License:
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files, to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ## License
 

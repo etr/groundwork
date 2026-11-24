@@ -38,7 +38,7 @@ Keep notes concise and actionable. Focus on facts that save time on the next tas
 
 ### 0. Read Inputs
 
-If the calling prompt supplies `PLAN FILE: <path>`, Read that file before beginning TDD — it contains your validated implementation plan. If the prompt supplies `TASK: task_id` and `tasks_path`, Read the `### <task_id>:` section from `tasks_path` for goal, action items, and acceptance criteria. The orchestrator passes paths instead of inlined content to keep its context lean — never ask the caller for task or plan details.
+If the calling prompt supplies `PLAN FILE: <path>`, Read that file before beginning TDD — it contains your validated implementation plan. If the prompt supplies `TASK: task_id` and `tasks_path`, Read the `### <task_id>:` section from `tasks_path` for goal, action items, acceptance criteria, and test seams (when recorded). Seams were chosen at planning time with the human in the room: write tests at the recorded seams, and when none is recorded or a recorded seam cannot reach the behavior, choose the highest existing seam yourself and note the choice — never ask about seams. The orchestrator passes paths instead of inlined content to keep its context lean — never ask the caller for task or plan details.
 
 ### 1. Create Worktree
 
@@ -85,7 +85,7 @@ Read `${CLAUDE_PLUGIN_ROOT}/references/clean-code-principles.md` and apply its g
 
 ### 4b. Frontend Visual Polish
 
-**For UI/frontend tasks**, apply visual polish before handing off. Read the design system spec (`{{specs_dir}}/design_system.md`) if it exists.
+**For UI/frontend tasks**, apply visual polish before handing off. Read the design system spec at the `DESIGN SYSTEM PATH:` the dispatch supplies, when it supplies one.
 
 **Rule of thumb:** Every view should have at least one element that makes it visually distinctive. If everything is the same white card with the same border, it needs more visual variety.
 

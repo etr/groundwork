@@ -87,6 +87,8 @@ Read the product specs (may be single file or directory) and extract:
 
 If PRD doesn't exist, prompt user to run `/groundwork:design-product` first.
 
+**On a repeat run, load the existing architecture first.** When `{{specs_dir}}/architecture.md` (or the `{{specs_dir}}/architecture/` directory) already exists, read its decision records and its section 12 before deciding anything. Settled decisions are constraints, not candidates to re-litigate; the open decisions and fog recorded there are this session's agenda, in order.
+
 Summarize key architectural drivers:
 > "Based on your PRD, the key architectural drivers are:
 > - [Driver 1 from NFRs]
@@ -181,6 +183,8 @@ What are your thoughts? Any constraints I should know about?
 
 **Presentation style:**
 - Present one decision at a time, wait for resolution before moving on
+- Order decision areas so prerequisites settle first — a decision that hangs on an open one comes after it, not before (work the frontier, same as [[understanding-feature-requests]])
+- Facts are your job, decisions are the user's: when a decision needs a fact from the codebase or docs (does our runtime already support X? what does module Y actually do?), look it up yourself — dispatch a subagent rather than asking the user, and don't stall the other decisions on it
 - For complex options, break explanation into digestible chunks (200-300 words)
 - Prefer multiple-choice follow-up questions when gathering constraints
 
@@ -235,11 +239,15 @@ Invoke `Skill(skill="groundwork:design-it-twice")`: frame the problem, generate 
 
 ## Step 5: Document Architecture
 
-When all major decisions are made, create the architecture document using template in `${CLAUDE_PLUGIN_ROOT}/references/architecture/architecture-template.md`.
+When all major decisions are made, write the architecture document using template in `${CLAUDE_PLUGIN_ROOT}/references/architecture/architecture-template.md` — created on a first run, updated in place on a repeat run (earlier decision records stay; each open decision or patch of fog this session settled leaves section 12 and becomes a decision record).
 
 **Output location:** `{{specs_dir}}/architecture.md` (single file by default)
 
-**Critical:** Include ALL decision records with discarded options and reasoning. This is essential for future maintainers to understand *why* choices were made.
+**Critical:** Include every decision record that passes the gate — no fewer — each with its discarded options and reasoning. This is essential for future maintainers to understand *why* choices were made.
+
+Write it in the project's domain language: when `{{specs_dir}}/glossary.md` exists, use its canonical terms and honor its `Avoid` lists, in decision records and component names alike. A concept the glossary lacks is one to flag for [[domain-modeling]], not a synonym to invent.
+
+**Record what you couldn't settle.** Fill section 12 honestly: every question this session left unresolved goes in as an **open decision** (sharp enough to state precisely) or **fog** (sensed but not yet phraseable — never pre-sliced into fake-sharp questions). A question silently resolved to move on is a decision record without its rationale, and the next session will re-litigate it blind. An effort whose fog outweighs its decisions is too large for one session — say so in the document and route it through the lifecycle router rather than forcing task creation.
 
 Present the complete document for review before writing.
 
@@ -315,8 +323,10 @@ After successfully updating the architecture document, ask what should be the ne
 
 **Handle the response:**
 
-- **Design UX**: Run `/groundwork:ux-design` to create UX designs
-- **Create tasks**: Run `/groundwork:create-tasks` to create a list of executable tasks
+- **Design UX**: Recommend the user run `/groundwork:ux-design` (a user-run skill) to create UX designs, and stop
+- **Create tasks**: Recommend the user run `/groundwork:create-tasks` (a user-run skill) to create a list of executable tasks, and stop
+
+Before offering **Create tasks**, check section 12: when open decisions remain that the tasks would depend on, say so in the question. Tasks built on an open decision are guesses; the next step is another design session that settles them first.
 
 ## Decision Record Format (ADR-lite)
 

@@ -47,6 +47,8 @@ The **stable global ID** of each finding is `{agent}-iter{iteration}-{id}` (e.g.
 
 Address only the critical and major findings authorized by the coordinator's repair envelope. Skip minor findings. The repair envelope is authoritative about the intended invariant, allowed change, preserved contracts, forbidden changes, and verification evidence.
 
+An envelope entry keyed by `gate` (a failed project gate) is repaired like any other authorized entry. It has no finding ID, so it appears in the result file's `files_touched` and `contracts_changed`, never in `findings_fixed`.
+
 ## Fix Classification
 
 Before editing, classify every authorized finding by repair scope:
@@ -100,7 +102,7 @@ Record a non-repair classification with its evidence. Do not invent requirements
 
 ## Semantic Handoff
 
-For every fixed finding, report:
+For every fixed finding, record in the result file (see Output Format) a repair claim carrying:
 
 - `root_cause` — why the invariant failed
 - `change` — the minimal repair made
@@ -109,6 +111,14 @@ For every fixed finding, report:
 The coordinator uses this handoff to write the closure brief and select every reviewer whose previously cleared invariant was disturbed. `contracts_changed` is descriptive, not a rejection condition: a baseline-required repair may legitimately change implementation contracts.
 
 ## Output Format
+
+**The result file is the authoritative handoff.** When the calling prompt supplies `fixer_result_file: <path>`, write it with the `Write` tool before your last line, then keep the `RESULT:` line consistent with it. The coordinator validates this file before any re-review, and its semantic content cannot travel in a one-line result:
+
+```json
+{ "status": "fixed" | "partial", "files_touched": ["..."], "findings_fixed": ["<global-id>"], "findings_skipped": [{ "id": "<global-id>", "classification": "conflicts-with-baseline" | "requires-clarification" | "not-reproduced", "reason": "..." }], "repair_claims": [{ "id": "<global-id>", "root_cause": "...", "change": "...", "evidence": ["..."] }], "contracts_changed": ["..."] }
+```
+
+For a run where nothing could be fixed, write `{ "status": "failure", "reason": "..." }`. Every requested finding must appear exactly once, fixed or skipped; every fixed finding needs one repair claim with non-empty evidence.
 
 Your **last line** of output MUST be one of these formats. `findings_fixed` and `findings_skipped` lists use **global IDs** of the form `{agent}-iter{N}-{id}` (e.g. `code-quality-reviewer-iter1-2`):
 
@@ -124,7 +134,7 @@ RESULT: PARTIAL | files_touched: src/auth.ts,src/login.ts | findings_fixed: code
 ```
 
 - Each global ID in `findings_fixed`/`findings_skipped` must come directly from the JSON files you read (build it as `{agent}-iter{iteration}-{id}` from each file's header + finding `id`).
-- Use `FIXED` when all critical/major findings across all files were addressed
+- Use `FIXED` when every finding the repair envelope authorized was fixed. Findings outside the envelope — majors from approved reviews, baseline-rejected findings — are not yours to address and do not make the result `PARTIAL`.
 - Use `PARTIAL` when some findings were fixed but others were skipped
 - Use `FAILURE` only when no findings could be fixed at all
 

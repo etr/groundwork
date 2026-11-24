@@ -3,6 +3,7 @@ name: ux-design
 description: Create design system with foundations, brand identity, and UX patterns for web, TUI, or mobile app surfaces. Usage /groundwork:ux-design
 argument-hint: "[product-name]"
 allowed-tools: ["Read", "Edit", "Write", "Glob", "Grep", "Task", "Skill"]
+disable-model-invocation: true
 ---
 
 # Design System Skill
@@ -393,7 +394,7 @@ See `${CLAUDE_PLUGIN_ROOT}/references/design-system/ux-writing-guide.md` for the
 
 ### Step 7: Define Patterns and Atmosphere
 
-Derive from architecture + PRD (minimal questions needed). This step has three phases: propose patterns and atmosphere candidates (7a), visually compare atmosphere options (7b), and showcase the complete system (7d).
+Derive from architecture + PRD (minimal questions needed). This step has four phases: propose patterns and atmosphere candidates (7a), visually compare atmosphere options (7b), decide the layout architecture (7c), and showcase the complete system (7d).
 
 #### Step 7a: Propose Patterns and Atmosphere Candidates
 
@@ -466,7 +467,7 @@ See `${CLAUDE_PLUGIN_ROOT}/references/design-system/interaction-design-guide.md`
 **Handle Feedback:**
 - User agrees with functional patterns → Document as UXD-001 through UXD-00N, proceed to 7b
 - User questions a pattern → Explain reasoning, adjust if needed
-- User has strong atmosphere preference already → Skip 7b, go to 7d
+- User has strong atmosphere preference already → Skip 7b, go to 7c (the layout decision still needs making)
 
 #### Step 7b: Generate Atmosphere Comparison (`{{specs_dir}}/proposed-designs/atmosphere-comparison.html`)
 
@@ -500,7 +501,7 @@ Generate a self-contained HTML file that renders the same identity (colors, font
 > "Open `{{specs_dir}}/proposed-designs/atmosphere-comparison.html` to see the atmosphere directions side-by-side. Same identity in every column — different feel."
 
 **Handle evaluation feedback:**
-- User picks a winner → Document as UXD decisions (linking `proposed-designs/atmosphere-comparison.html` for the rejected directions), proceed to 7d
+- User picks a winner → Document as UXD decisions (linking `proposed-designs/atmosphere-comparison.html` for the rejected directions), proceed to 7c
 - User wants tweaks → Regenerate with adjustments
 - User likes elements from multiple → Regenerate a mixed option
 
@@ -740,7 +741,7 @@ After successfully writing the design system document, ask what should be the ne
 **Handle the response:**
 
 - **Design architecture**: Invoke the `groundwork:design-architecture` skill to design the technical approach
-- **Create tasks**: Run `/groundwork:create-tasks` to create a list of executable tasks
+- **Create tasks**: Recommend the user run `/groundwork:create-tasks` (a user-run skill) to create a list of executable tasks, and stop
 
 ---
 

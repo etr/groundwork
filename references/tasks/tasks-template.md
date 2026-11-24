@@ -100,6 +100,9 @@ TASK-001 → TASK-002 → TASK-003 → TASK-006 → TASK-007
 - [Testable criterion 1]
 - [Testable criterion 2]
 
+**Test Seams:**
+- [Seam where tests for this task live] — catches: [what it catches]; misses: [what it misses]
+
 **Related Requirements:** PRD-XXX-REQ-NNN
 **Related Decisions:** DR-NNN, DP-NNN, BRD-NNN, UXD-NNN
 

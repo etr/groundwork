@@ -99,7 +99,7 @@ gates-complete        -> review-batch-complete
 Use:
 
 ```text
-validation-session.js checkpoint --run-dir <run_dir> --expected-stage <stage> --next-stage <stage> --iteration <N> --coordinator-file <absolute-direct-child-path>
+validation-session.js checkpoint --run-dir <run_dir> --expected-stage <stage> --next-stage <stage> --iteration <N> --coordinator-file <absolute-direct-child-path> --capability-file <file>
 ```
 
 The coordinator file is the compact restart contract. It must contain semantic closure records, not only finding IDs.
@@ -133,13 +133,13 @@ A **waived** gate — a failed gate with a recorded waiver receipt — may trans
 Write `repair-envelope-iter<N>.json` directly inside `run_dir`, then record the semantic `fixer-inflight` transition before spawning the fixer:
 
 ```text
-validation-session.js begin-fixer --run-dir <run_dir> --iteration <N> --envelope-file <absolute-direct-child-path>
+validation-session.js begin-fixer --run-dir <run_dir> --iteration <N> --envelope-file <absolute-direct-child-path> --capability-file <file>
 ```
 
 After the normal fixer-result validator accepts `fixer-result-iter<N>.json`, record that result:
 
 ```text
-validation-session.js complete-fixer --run-dir <run_dir> --iteration <N> --result-file <absolute-direct-child-path>
+validation-session.js complete-fixer --run-dir <run_dir> --iteration <N> --result-file <absolute-direct-child-path> --capability-file <file>
 ```
 
 If execution stops in `fixer-inflight`, partial changes are never treated as a completed result. After confirming the prior fixer process ended, reopening with your capability changes the stage to `fixer-prepared` and reruns the same envelope against the preserved current worktree. The replacement fixer must reconcile any partial implementation idempotently.
@@ -151,7 +151,7 @@ Never spawn a replacement fixer while the prior fixer process may still be live.
 After approval, required gates, and unworked-finding persistence are complete, record the exact reusable result (this also marks ownership terminal, which stops the heartbeat worker):
 
 ```text
-validation-session.js complete --run-dir <run_dir> --expected-stage review-batch-complete --iterations <N> --fixed <M> --unworked <K> --action <commit|none> [--commit-subject <subject> --commit-body <body>]
+validation-session.js complete --run-dir <run_dir> --expected-stage review-batch-complete --iterations <N> --fixed <M> --unworked <K> --action <commit|none> --capability-file <file> [--commit-subject <subject> --commit-body <body>]
 ```
 
 Retain the session directory. A completed session is intentionally replayable; cleanup is eventual maintenance, not part of validation correctness.

@@ -53,6 +53,7 @@ GROUNDWORK_RUNNER_EVENT {"v":1,"type":"next","text":"launch closure review"}
 
 - Emit `validation.stage` immediately before `project gates`, `review batch`, `repair`, `closure review`, and `persistence` work. Iterations start at 1.
 - Emit `gate.finished` immediately after every named project gate. Use a lowercase kebab-case `gate`; `outcome` is exactly `pass`, `task_fail`, `baseline_fail`, or `skipped`; optional `summary` is one bounded evidence sentence without a newline.
+- Classify a failure by the *Incidental Check Failures* assessment: `task_fail` when the task's change or its own project could have caused it, or the assessment is uncertain; `baseline_fail` only when it is confidently `Unrelated`.
 - Emit `repair.finished` only after the accepted fixer result is durable. Counts are non-negative integers.
 - Emit `next` only when the next transition is known. Keep `text` under 200 characters and free of newlines.
 - Never claim a marker before its underlying action completes. Do not place paths, prompts, findings, secrets, or credentials in markers.
@@ -109,7 +110,7 @@ A failed gate is evidence, not permission to repair its entire owning subsystem.
 
 | Assessment | Action |
 |---|---|
-| Caused by the task, or repair required by its accepted baseline | Use the existing in-scope repair and closure process |
+| Caused by the task, or repair required by its accepted baseline | Carry it into the next repair envelope as a gate entry (step 4.2), run it through the fixer transaction, and re-run the gate as closure evidence (step 4.4) |
 | Required execution setup is broken | Correct supported setup through its owner and repeat affected checks; preserve the failed receipt |
 | Unrelated | Record evidence and continue independent, already-authorized validation work, then apply the invocation's unrelated-failure mode (see the policy table below) |
 | Causality still uncertain after the bounded check | Keep the assessment uncertain, stop that investigation and continue independent, already-authorized validation work; never eligible for the unrelated-failure modes |
@@ -255,6 +256,8 @@ An incomplete reviewer batch has no checkpoint. Rerun only the pending batch for
 
 Freeze `validation_baseline` now: task definition, original changed paths/diff, applicable specs/architecture/design paths, and declared security, compatibility, and operational assumptions. Fixer changes never expand its requirements, but may change any implementation surface needed to satisfy them.
 
+**Project gates (before the review batch).** Run each required project gate once on the current worktree — the checks the repository itself requires of a change, as the project's own instructions name them (tests, typecheck, lint, build). Emit the runner's `project gates` stage marker first and a `gate.finished` marker after each, and record every outcome in your working notes. This first run is what makes a failure classifiable: assess each one under *Incidental Check Failures* right away. An `Unrelated` failure follows the invocation's unrelated-failure mode now; a task-caused one is carried into the first repair envelope (step 4.2) once the review batch is checkpointed. Re-run a gate later only when a repair could have affected what it covers.
+
 **Maintain orchestrator working notes** (in your in-context working state, NOT in any spec file) of the form:
 
 ```
@@ -396,7 +399,7 @@ After every assigned findings artifact in the batch is complete and validated, u
 }
 ```
 
-Populate the arrays with the complete compact semantic state needed to resume; do not store only IDs where closure requires invariant/evidence/outcome. For the initial batch checkpoint `initial-audit-pending -> review-batch-complete`. For a post-fix closure batch checkpoint `gates-complete -> review-batch-complete`:
+Populate the arrays with the complete compact semantic state needed to resume; do not store only IDs where closure requires invariant/evidence/outcome. For the initial batch checkpoint `initial-audit-pending -> review-batch-complete`. For a post-fix closure batch checkpoint `gates-complete -> review-batch-complete`. When a post-fix gate fails in scope, checkpoint `fixer-result-ready -> review-batch-complete` instead — the failure becomes the next repair batch — and never record a failed gate as `gates-complete`:
 
 ```bash
 node ${CLAUDE_PLUGIN_ROOT}/lib/validation-session.js checkpoint \
@@ -436,7 +439,7 @@ Continue until every valid baseline finding is closed and all impacted reviewers
    }
    ```
 
-   If a finding contradicts or expands the frozen baseline, do not send it to the fixer; reject or persist it according to the review protocol. If the baseline is genuinely missing or contradictory, use the existing user-clarification/failure path. Otherwise write the envelope as `{run_dir}/repair-envelope-iter{N}.json`. Before spawning the validation-fixer, record the durable semantic transition to `fixer-inflight`:
+   If a finding contradicts or expands the frozen baseline, do not send it to the fixer; reject or persist it according to the review protocol. If the baseline is genuinely missing or contradictory, use the existing user-clarification/failure path. A task-caused gate failure rides in the same envelope as an entry with `"gate": "<kebab-gate>"` in place of `finding_id` and the same fields; it has no reviewer finding, so the fixer records it only in `files_touched` and `contracts_changed`. Otherwise write the envelope as `{run_dir}/repair-envelope-iter{N}.json`. Before spawning the validation-fixer, record the durable semantic transition to `fixer-inflight`:
 
    ```bash
    node ${CLAUDE_PLUGIN_ROOT}/lib/validation-session.js begin-fixer \
@@ -462,7 +465,10 @@ Continue until every valid baseline finding is closed and all impacted reviewers
    REPAIR ENVELOPE:
    [coordinator-authored envelopes]
 
-   Classify scope before mutation. Apply every baseline-compatible repair, regardless of size. Return semantic repair claims for every fixed ID."
+   RESULT FILE:
+   fixer_result_file: <run_dir>/fixer-result-iter<N>.json
+
+   Classify scope before mutation. Apply every baseline-compatible repair, regardless of size. Write the result file before your last line — every requested finding either fixed or classified, a repair claim for every fixed ID, the contracts changed — keep the RESULT line consistent with it, and return semantic repair claims for every fixed ID."
    )
    ```
 
@@ -494,7 +500,8 @@ Continue until every valid baseline finding is closed and all impacted reviewers
      --expected-stage "fixer-result-ready" \
      --next-stage "gates-complete" \
      --iteration "<N>" \
-     --coordinator-file "<run_dir>/coordinator-iter<N>.json"
+     --coordinator-file "<run_dir>/coordinator-iter<N>.json" \
+     --capability-file "<capability_file>"
    ```
 
    Then bump `iteration_number`, set `review_mode: closure-review`, and write a coordinator-authored closure brief for each impacted reviewer:

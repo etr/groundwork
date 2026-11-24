@@ -1,0 +1,19 @@
+{
+  "name": "groundwork",
+  "version": "3.11.0",
+  "private": true,
+  "description": "Skills library for structured development workflows, shipped as a Claude Code plugin and exported to other coding harnesses.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/etr/groundwork.git"
+  },
+  "scripts": {
+    "changeset": "changeset",
+    "changeset:status": "changeset status",
+    "release:version": "changeset version && node lib/sync-plugin-version.js"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^3.0.3"
+  }
+}

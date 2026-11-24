@@ -69,7 +69,7 @@ If the user selects "Cancel — I'll switch first": output the switching command
 
 ## When to Trigger
 
-This skill should activate when:
+Run this skill at the end of a session in which:
 - User explicitly invokes `/groundwork:source-product-specs-from-code`
 - Session involved product decisions (new features, requirement changes)
 - User feedback changed scope or priorities
@@ -238,7 +238,7 @@ Focus on strong signals. For weak signals, ask: "Should this be captured as a pr
 
 ## Session Summary Format
 
-At session end, provide summary:
+When done, report:
 
 ```markdown
 ## PRD Sync Summary

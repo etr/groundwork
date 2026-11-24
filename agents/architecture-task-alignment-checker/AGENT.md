@@ -130,8 +130,8 @@ Return your review as JSON:
 ## Verdict Rules
 
 - `request-changes`: Any critical finding
-- `request-changes`: 3 or more major findings
-- `approve`: Tasks reasonably follow architecture (minors ok)
+- `request-changes`: Any major finding — the validation loop treats every major as must-fix and re-runs only on `request-changes`
+- `approve`: Tasks reasonably follow architecture, with no critical or major findings (minors ok)
 
 ## Architecture Patterns to Verify
 

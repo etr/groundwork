@@ -28,7 +28,7 @@ Skip only for trivially reversible, low-blast-radius changes (a copy fix, an int
    - The feature flag exists and defaults to **off**
    - The rollback plan is written (step 4)
 2. **Feature-flag gating.** Put the new behavior behind a flag, default off. The flag must be flippable at runtime without a redeploy — that is what makes rollback fast.
-3. **Staged / canary rollout.** Advance through stages, not in one jump. A typical ramp:
+3. **Staged / canary rollout.** Define the ramp now; advance through its stages only after the gate below has said go — never in one jump. A typical ramp:
 
    | Stage | Audience | Hold for |
    |-------|----------|----------|
@@ -40,6 +40,8 @@ Skip only for trivially reversible, low-blast-radius changes (a copy fix, an int
    **Monitoring window:** between each stage, watch the RED metrics and alerts long enough to span real traffic before promoting. Do not promote on a clean dashboard you've watched for thirty seconds. If a symptom breaches, **stop and roll back** — do not push forward hoping it settles.
 4. **Written rollback plan.** Before launch, document: the exact trigger conditions (which metric/alert at which threshold), the precise rollback action (flip flag `X` to off; revert migration `Y`), who can execute it, and the expected recovery time. A rollback that requires a redeploy is too slow — prefer the flag.
 5. **Conventional artifact locations.** Write the rollback plan to `{{specs_dir}}/rollouts/<feature-slug>-rollback.md` and the pre-launch checklist to `{{specs_dir}}/rollouts/<feature-slug>-prelaunch.md` (create the directory; the feature slug is the kebab-case change name). `{{specs_dir}}` is project-scoped, so same-named changes in two monorepo projects cannot overwrite each other. Never leave these "somewhere in the conversation" — the ship gate checks the file.
+
+**The gate comes before the first stage.** Writing the plan and executing it are two separate things. When `ship` dispatches this skill, it ends here: `ship` asks its go/no-go question, and only a **Go** begins the canary stage. Invoked on its own, ask the user the same question — with `AskUserQuestion`, before any traffic shifts — and treat No-Go as stop. Until then the flag stays at its default of off.
 
 ## Rationalizations
 
@@ -66,3 +68,4 @@ Skip only for trivially reversible, low-blast-radius changes (a copy fix, an int
 - [ ] A staged/canary ramp is defined with a monitoring window between stages
 - [ ] A written rollback plan exists at `{{specs_dir}}/rollouts/<feature-slug>-rollback.md` naming trigger conditions, the exact rollback action, the owner, and expected recovery time
 - [ ] The plan was written before launch, not after the first stage
+- [ ] No stage was advanced before the go/no-go gate said go: the flag was still at its default when the question was asked

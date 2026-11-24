@@ -14,7 +14,7 @@ This is not negotiable. This is not optional. You cannot rationalize your way ou
 
 ## How to Access Skills
 
-**In Claude Code:** Use the `Skill` tool. When you invoke a skill, its content is loaded and presented to you—follow it directly. Never use the Read tool on skill files.
+**In Claude Code:** Use the `Skill` tool. When you invoke a skill, its content is loaded and presented to you—follow it directly. Never use the Read tool on a skill file *in order to follow it*; reading one to list, compare, or embed it (as `just-do-it-swarming` does) is fine.
 
 **In other environments:** Check your platform's documentation for how skills are loaded.
 
@@ -94,6 +94,14 @@ Find the work, invoke the skill. **Dispatch tier matters:**
 | Review a GitHub PR | `/groundwork:review-pr` (user runs) |
 | Investigate a bug systematically | `debug` (auto), `/groundwork:swarm-debug` (user runs) |
 
+### Improve / Upkeep
+Not feature work — keeping the codebase and the agent's environment cheap to work in.
+
+| Work | Skill |
+|------|-------|
+| Survey for deepening opportunities (shallow modules → deep) | `/groundwork:improve-codebase-architecture` (user runs) |
+| Improve the agent's environment after a session (checks, standards, steering) | `/groundwork:retro` (user runs) |
+
 ### Ship
 | Work | Skill |
 |------|-------|
@@ -107,7 +115,7 @@ Find the work, invoke the skill. **Dispatch tier matters:**
 | Configure repo / switch project | `setup-repo`, `select-project` (auto) |
 | Hand off work to another session | `handoff` (auto) |
 | Install or remove the optional statusline | `/groundwork:statusline [install\|uninstall]` (user runs) |
-| List skills / health-check the plugin | `/groundwork:groundwork-help`, `/groundwork:groundwork-check` (user runs) |
+| List skills / health-check the plugin | `/groundwork:skills`, `/groundwork:groundwork-help`, `/groundwork:groundwork-check` (user runs) |
 
 ## Red Flags
 
@@ -137,7 +145,14 @@ When multiple skills could apply, use this order:
 1. **Process skills first** (design-product, design-architecture) - these determine HOW to approach the task
 2. **Implementation skills second** (tasks, test-driven-development) - these guide execution
 
-"Let's build X" -> design-product first, then implementation skills.
+"Let's build X" -> the process skill comes first: recommend `/groundwork:design-product` (user-run) and let the user start it; once requirements exist, the implementation skills follow.
+
+## Sizing the Effort
+
+Before planning, size the effort:
+
+- **Fits one session** → the normal route: design-product → design-architecture → create-tasks.
+- **Too big or too foggy for one session** (open decisions outweigh settled ones; you can't yet name the tasks without guessing) → do NOT force create-tasks: a task list built on fog is a list of guesses. Route through design-architecture and let its **Open decisions / fog** section carry what's unsettled across sessions; come back to create-tasks when the fog graduates into decisions. Multiple sessions of this = work the open decisions one at a time, recording each as it settles.
 
 ## Skill Types
 

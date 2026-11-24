@@ -140,7 +140,7 @@ For every harness, this coordinator conversation owns the phase transitions belo
 
 For each remaining task in dependency order:
 
-1. **Read the task section** from `{{specs_dir}}/tasks.md` (or aggregated from `{{specs_dir}}/tasks/`) to extract the full task definition (goal, action items, acceptance criteria, dependencies).
+1. **Read the task section** from `{{specs_dir}}/tasks.md` (or aggregated from `{{specs_dir}}/tasks/`) to extract the full task definition (goal, action items, acceptance criteria, test seams, dependencies).
 
 2. **Announce start:** "Starting TASK-NNN: [Title]"
 
@@ -151,9 +151,9 @@ For each remaining task in dependency order:
    - `resume_at: conflict` → surface the `evidence` and stop the batch; the worktree is preserved.
    - Skip every phase listed in `skip_phases`: when `plan.present` is true, reuse `plan.file` as `plan_file_path` instead of Phase A; when `validate` or beyond is done, jump straight to that phase.
    - `resume_at: done` → run the `clear-checkpoint` action, log the task complete, advance.
-   - Run each `actions` command verbatim at its annotated moment (`record … --phase plan` right after persisting the plan; `record … --phase implemented` right after a successful Phase B; `clear` after Phase E lands).
+   - Run each `actions` command verbatim at its annotated moment. One `check` returns only the next action, so re-run it after each recorded phase to fetch the one after: on a fresh task it returns `record … --phase plan` (run it right after persisting the plan); that re-run returns `record … --phase implemented` (run it right after a successful Phase B); once Phase E lands, the last re-run returns `clear`.
 
-4. **Keep task status changes inside the active task worktree.** Implementation records `In Progress`; validation/finalization record `Complete`. The batch does not premark queued tasks.
+4. **Keep task status changes inside the active task worktree.** Implementation records `In Progress`; validation/finalization record `Complete`. The batch does not premark queued tasks. (An interactive `work-on` run differs: there `implement-task` marks the task `In Progress` in the base catalog, which is what `work-on-next-task` reads to offer it for resume.)
 
 #### Phase A: Plan
 
@@ -164,7 +164,7 @@ Agent(
   prompt="Create implementation plan for TASK-NNN: [task title]
 
 Task definition:
-[goal, action items, acceptance criteria from task file]
+[goal, action items, acceptance criteria, test seams from task file]
 
 Relevant product specs:
 [extracted from {{specs_dir}}/product_specs.md or {{specs_dir}}/product_specs/]
@@ -175,7 +175,8 @@ Relevant architecture:
 REQUIREMENTS FOR THE PLAN:
 1. All work happens in the task worktree reported by the executor (not main workspace)
 2. Must follow TDD: write test → implement → verify cycle
-3. Plan covers implementation only — validation and merge are handled separately by the caller
+3. Tests target the task's recorded test seams; when the task records none, the plan names the highest existing seam it chose, so the implementer never has to ask
+4. Plan covers implementation only — validation and merge are handled separately by the caller
 "
 )
 ```
@@ -189,8 +190,16 @@ After validation, persist the plan to disk in the **same turn** as receiving the
    ```markdown
    # Implementation Plan: TASK-NNN [Title]
 
+   ## Context
+   - Mode: task
+   - Identifier: TASK-NNN
+   - Branch prefix: task
+   - Specs dir: {{specs_dir}}
+   - Tasks path: {path to the tasks file}
+
    <verbatim Plan agent output>
    ```
+   The `## Context` header is required: `implement-task` reads it to resolve the identifier, and the plan-check helper reads it to confirm the plan belongs to the selected project.
 3. From this point on, refer only to `plan_file_path`. Do NOT re-quote the plan in subsequent turns.
 
 #### Phase B: Implement
@@ -202,13 +211,16 @@ Agent(
   prompt="You are implementing a task as part of an automated batch run.
 
 PROJECT ROOT: [absolute path to project root]
+DESIGN SYSTEM PATH: [absolute path to {{specs_dir}}/design_system.md when it exists; otherwise `none` — the executor cannot resolve template variables itself]
 
 TASK:
 - task_id: [TASK-NNN]
 - tasks_path: [absolute path to {{specs_dir}}/tasks.md or {{specs_dir}}/tasks/]
 
 Read the '### TASK-NNN:' section from tasks_path for goal, action items,
-and acceptance criteria. Do not ask the caller for task details.
+acceptance criteria, and test seams (when recorded). Tests target the recorded
+seams; when none are recorded or a recorded seam cannot reach the behavior,
+follow the seam rule in your TDD skill. Do not ask the caller for task details.
 
 PLAN FILE: [plan_file_path]
 Read this file first with the Read tool — it contains the validated implementation plan.
@@ -221,8 +233,9 @@ RESUME EXISTING WORKTREE=true
 INSTRUCTIONS:
 1. Follow your preloaded skills to create a worktree, implement with TDD, and commit.
 2. Read the task section from tasks_path and the plan from PLAN FILE — they provide all session context.
-3. Do NOT use AskUserQuestion — proceed automatically.
-4. When complete, output your final line in EXACTLY this format:
+3. Record this task as `**Status:** In Progress` in its task file inside the worktree — never in the base checkout — and include that bookkeeping in your commit.
+4. Do NOT use AskUserQuestion — proceed automatically.
+5. When complete, output your final line in EXACTLY this format:
    RESULT: IMPLEMENTED | <worktree_path> | <branch> | <base_branch>
    OR:
    RESULT: FAILURE | [one-line reason]

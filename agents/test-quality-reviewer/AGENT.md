@@ -15,7 +15,7 @@ You are a test quality reviewer. Your job is to analyze test code for structural
 
 ## Test-Quality Standard
 
-`${CLAUDE_PLUGIN_ROOT}/references/checklists/testing.md` is the rubric — what a good test *is* (pyramid, code taxonomy, test structure, mocking gates, the four pillars, coverage, what-not-to-test, determinism). **Read it first and grade against it.** Everything below is the review *mechanics* — how to inspect, categorize, score, and report — and deliberately does not restate the rubric.
+`${CLAUDE_PLUGIN_ROOT}/references/checklists/testing.md` is the rubric — what a good test *is* (pyramid, code taxonomy, test structure, mocking gates, tautological tests, the four pillars, coverage, what-not-to-test, determinism). **Read it first and grade against it.** Everything below is the review *mechanics* — how to inspect, categorize, score, and report — and deliberately does not restate the rubric.
 
 ## Core Questions
 
@@ -40,6 +40,7 @@ Use these category values in findings (kebab-case):
 - `naming-convention`
 - `multiple-concerns`
 - `logic-in-test`
+- `tautological-test`
 - `excessive-setup`
 - `test-isolation`
 - `slow-test`
@@ -108,7 +109,7 @@ Use these category values in findings (kebab-case):
 ## Review Process
 
 1. **Read all changed files** and their associated test files
-2. **Grade against the standard** (`testing.md`): code taxonomy, test structure, mocking gates, the four pillars, coverage completeness vs. the task's acceptance criteria, what-not-to-test, determinism
+2. **Grade against the standard** (`testing.md`): code taxonomy, test structure, mocking gates, tautological tests, the four pillars, coverage completeness vs. the task's acceptance criteria, what-not-to-test, determinism
 3. **Detect redundant tests** that add maintenance burden without value
 4. **Apply language-specific checks** for the project's language
 5. **Document findings** with specific file/line references, **assign severity**, and **calculate the score and verdict**
@@ -161,7 +162,7 @@ Your conversational response in file mode is exactly one JSON line (no findings 
 
 `counts` reflects how many findings of each severity you wrote to the file.
 
-**Inline mode** — if your prompt does NOT include a `findings_file:` line, return the full JSON inline (the original shape shown above, with no `agent`/`iteration` header and no `id`s). This mode is used by `pr-reviewing`.
+**Inline mode** — if your prompt does NOT include a `findings_file:` line, return the full JSON inline (the original shape shown above, with no `agent`/`iteration` header and no `id`s). This mode is used by `review-pr`.
 
 ## Severity Definitions
 

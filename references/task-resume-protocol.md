@@ -110,8 +110,9 @@ ambiguities, and only a user decision resolves them.
 
 Interactive runs write exactly two checkpoint records — after the plan is
 persisted, and after the executor reports implementation — and clear once
-the task lands. Do not invent other writes. The `actions` array carries the
-exact argv tails with substituted values:
+the task lands. Do not invent other writes. A `check` returns only the next
+action: its `actions` array carries that one exact argv tail with substituted
+values, so re-run `check` after each recorded phase to obtain the next one:
 
 1. After persisting the plan file: run the `record-plan-after-persist`
    action (`record TASK-NNN --phase plan --plan-file <abs>`).

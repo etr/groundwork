@@ -5,6 +5,8 @@ argument-hint: "[task-id] [--project name] [--on-unrelated-failure stop-and-ask|
 allowed-tools: ["Read", "Edit", "Bash", "Glob", "Grep"]
 ---
 
+<!-- The pull-request body shape in step 5a follows Dex Horthy's "show-me" pattern (HumanLayer), via github.com/mattpocock/skills. -->
+
 # Finalize Task
 
 Finalize one validated task. Use judgment for commit and merge messages. Preserve the worktree and branch whenever state is ambiguous.
@@ -72,6 +74,8 @@ If resolution needs product, architecture, or ownership judgment, safely abort t
 
 ### 5. Prepare the merge
 
+**Decide the integration path before anything else (manual mode only).** Take the pull-request path in 5a — instead of merging — only when the user asked for it in this invocation, or the repository's stated policy (its `CLAUDE.md`/`AGENTS.md`, or a standing instruction from the user) names pull requests as the integration path. Every other invocation merges directly, below.
+
 In runner mode:
 
 1. Reconfirm the primary worktree is clean, the task worktree contains only the permitted bookkeeping change, and the base branch is still at the head recorded in step 1.
@@ -79,6 +83,32 @@ In runner mode:
 3. Return the versioned JSON `RESULT: READY_TO_MERGE` receipt with the exact runner token, task identity, bookkeeping commit proposal when needed, and expressive outward merge subject/body. Do not merge outward, remove the worktree, or delete the branch; the runner verifies and commits the prepared tree before performing those operations.
 
 When invoked manually, merge with `--no-ff`, then continue to cleanup below. If an unexpected conflict occurs, abort it when safe and return `RESULT: NEEDS_INPUT`. Do not resolve it on the base branch because the resolution would not have been validated.
+
+A merge rejected by branch protection is not, by itself, permission to open a pull request — pushing a branch and opening a PR publish work outward. Interactive: stop and ask. Unattended (`GROUNDWORK_BATCH_MODE=true`): return `RESULT: NEEDS_INPUT | reason=direct merge rejected; pull-request integration is not authorized` and leave the worktree and branch untouched.
+
+### 5a. The pull-request path
+
+Taken only as decided at the top of step 5 (never in runner mode, where the runner owns publication). Push the task branch, open (or update) the PR against the base branch instead of merging, and write its body in this shape:
+
+```markdown
+## Summary
+<the smallest visual that makes the change clear — pseudocode for logic,
+a call tree for control flow, a component/file tree for structure,
+or a diff matched to the topic; one short paragraph at most>
+
+## Evidence
+- **Before:** <screenshot / output / failing test run>
+  **After:** <screenshot / output / passing test run>
+<Test runs are the default; screenshots when the change is visual>
+
+## Merge Danger
+**Door:** <one-way or two-way — can this be walked back cheaply?>
+**Blast radius:** <one phrase — what breaks if this is wrong>
+```
+
+State the confirmed root-cause or decision in the body when one exists (from the debug journal or a decision record), so the reviewer starts from the answer. Use the project's domain vocabulary from `{{specs_dir}}/glossary.md` when it exists. The merge/PR message rules above (waived gates named as waived, incidental fixes mentioned) still apply to the body.
+
+This path ends with the PR open, not with a merge: skip step 6, keep the worktree and the branch until the PR merges, and report `RESULT: NEEDS_INPUT | reason=pull request <URL> awaiting review and merge; worktree and branch preserved`.
 
 ### 6. Verify and clean up
 

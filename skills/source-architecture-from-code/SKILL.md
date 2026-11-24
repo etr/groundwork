@@ -69,7 +69,7 @@ If the user selects "Cancel — I'll switch first": output the switching command
 
 ## When to Trigger
 
-This skill should activate when:
+Run this skill at the end of a session in which:
 - User explicitly invokes `/groundwork:source-architecture-from-code`
 - Session involved architectural decisions (new tech choices, pattern changes)
 - Implementation deviated from documented architecture
@@ -227,7 +227,7 @@ Focus on strong signals. Ask about weak signals only if they seem significant.
 
 ## Session Summary Format
 
-At session end, provide summary:
+When done, report:
 
 ```markdown
 ## Architecture Sync Summary

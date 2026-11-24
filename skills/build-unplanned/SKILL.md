@@ -131,7 +131,7 @@ Use `AskUserQuestion`:
     2. `cd <worktree_path>`
     3. Run `/groundwork:validate`
 
-    After validation passes, merge manually from the project root:
+    After validation passes (commit any uncommitted validation fixes inside the worktree first — the fixer never commits), merge manually from the project root:
 
         cd <project_root>
         git checkout <base_branch>
@@ -165,15 +165,16 @@ Use `AskUserQuestion` to ask:
 
 **If merging:**
 
-1. Ensure you are in the project root (cd out of worktree if needed)
-2. Checkout base branch: `git checkout <base-branch>`
-3. Merge: `git merge --no-ff <branch> -m "Merge <branch>: [Feature Title]"`
-4. If success: Remove worktree and delete branch:
+1. **Commit validation repairs first.** The validation fixer edits files but never commits. Check the worktree (`git -C <worktree_path> status --porcelain`); if anything is uncommitted, commit it on the feature branch (`git -C <worktree_path> add -A && git -C <worktree_path> commit -m "<identifier>: validation fixes"`), so the merge carries the repairs and removing the worktree loses nothing.
+2. Ensure you are in the project root (cd out of worktree if needed)
+3. Checkout base branch: `git checkout <base_branch>`
+4. Merge: `git merge --no-ff <branch> -m "Merge <branch>: [Feature Title]"`
+5. If success: Remove worktree and delete branch:
    ```bash
    git worktree remove <worktree_path>
    git branch -d <branch>
    ```
-5. If conflicts: Report conflicts and keep worktree for manual resolution
+6. If conflicts: Report conflicts and keep worktree for manual resolution
 
 **If not merging or conflicts occurred:**
 
@@ -181,9 +182,9 @@ Use `AskUserQuestion` to ask:
 ## Implementation Complete in Worktree
 
 **Location:** `<worktree_path>`
-**Branch:** feature/<identifier>
+**Branch:** `<branch>`
 
-When ready to merge:
+When ready to merge (commit any uncommitted validation fixes inside the worktree first — the fixer never commits):
 ```bash
 git checkout [base-branch]
 git merge --no-ff <branch>
@@ -224,9 +225,7 @@ RESULT: SUCCESS | [one-line summary]
 
 ### Branch Naming
 
-This skill uses `feature/` prefix (not `task/`) to distinguish ad-hoc features from planned tasks:
-- Planned tasks: branch convention from the worktree-identity helper (`task/TASK-NNN` single-project, `task/<project>/TASK-NNN` monorepo)
-- Ad-hoc features: `feature/FEATURE-<slug>`
+Branch and worktree names come from the shared worktree-identity helper (`node ${CLAUDE_PLUGIN_ROOT}/lib/worktree-identity.js <identifier>`), used verbatim. It names both planned tasks and ad-hoc features the same way: `task/<identifier>` in a single-project repo, `task/<project>/<identifier>` in a monorepo — so `task/TASK-NNN` for a planned task and `task/FEATURE-<slug>` for an ad-hoc feature.
 
 ### Standalone Usage
 

@@ -47,6 +47,21 @@ Write code before the test? Delete it. Start over.
 
 Implement fresh from tests. Period.
 
+## Where Tests Live: Seams
+
+A **seam** is the public boundary a test is written against — the interface where behavior is observable without reaching inside the implementation. Tests live at seams, never against internals.
+
+**Start from the recorded seams.** When the task or plan records `Test Seams`, that choice was made during planning with the human in the room: write the cycle's tests there.
+
+**The fallback — when no seams are recorded, or a recorded seam turns out not to reach the behavior:**
+- Pick the **highest existing seam** that reaches the behavior (a pure-function seam for pure logic, an HTTP/integration seam for wiring, one E2E seam for critical journeys)
+- Prefer existing seams over inventing new ones; the fewer seams across a codebase, the better
+- Record the choice where the next session will find it (task file, plan, or the commit message when neither is writable) so it stops being a decision
+
+**In a planned or unattended run (a task, a plan, batch or runner mode), choosing is yours — never stop to ask.** In a free-form interactive session with no task or plan, name the seams you chose in one line before the first test; the user can redirect, and no question is needed.
+
+Testing *past* an interface — mocking internal collaborators, testing private methods, verifying through a side channel — couples the test to implementation. If you feel the need to test past the seam, the module is probably the wrong shape; note it for review instead.
+
 ## Red-Green-Refactor
 
 ```dot
@@ -110,7 +125,7 @@ Vague name, tests mock not code
 
 **Requirements:**
 - One behavior
-- Clear name
+- Clear name — in the project's domain language: when the project's glossary exists (`glossary.md` in the specs directory the dispatch names), name tests with its canonical terms and honor its `Avoid` lists; a missing term is one to report for `domain-modeling`, never a synonym to invent
 - Real code (no mocks unless unavoidable)
 
 ### Verify RED - Watch It Fail
@@ -244,6 +259,10 @@ Manual testing is ad-hoc. You think you tested everything but:
 
 Automated tests are systematic. They run the same way every time.
 
+**"I'll write all the tests first, then the implementation"**
+
+That's **horizontal slicing**, and bulk tests verify *imagined* behavior: they test the shape of things rather than what users see, and they lock in a test structure before the implementation has taught you anything. Work in vertical slices instead: one test → one implementation → repeat, each test a **tracer bullet** that responds to what the last cycle taught you.
+
 **"Deleting X hours of work is wasteful"**
 
 Sunk cost fallacy. The time is already gone. Your choice now:
@@ -278,6 +297,7 @@ Tests-first force edge case discovery before implementing. Tests-after verify yo
 |--------|---------|
 | "Too simple to test" | Simple code breaks. Test takes 30 seconds. |
 | "I'll test after" | Tests passing immediately prove nothing. |
+| "I'll write all the tests first" | Horizontal slicing: bulk tests verify imagined behavior. One test → one implementation → repeat. |
 | "Tests after achieve same goals" | Tests-after = "what does this do?" Tests-first = "what should this do?" |
 | "Already manually tested" | Ad-hoc ≠ systematic. No record, can't re-run. |
 | "Deleting X hours is wasteful" | Sunk cost fallacy. Keeping unverified code is technical debt. |
@@ -347,14 +367,15 @@ Extract validation for multiple fields if needed.
 
 Before marking work complete:
 
-- [ ] Every function/method with logic (conditionals, computation, side effects) has a test
+- [ ] Every new public function with logic (conditionals, computation, side effects) has a test; private helpers are covered through the public interface that calls them
+- [ ] Tests sit at the recorded test seams, or at the highest existing seam chosen when none was recorded
 - [ ] Watched each test fail before implementing
 - [ ] Each test failed for expected reason (feature missing, not typo)
 - [ ] Wrote minimal code to pass each test
 - [ ] All tests pass
 - [ ] Output pristine (no errors, warnings)
 - [ ] Tests use real code (mocks only if unavoidable)
-- [ ] Edge cases and errors covered
+- [ ] Each acceptance criterion maps to at least one test, including its error paths and boundary cases (empty, null, max, off-by-one)
 
 Can't check all boxes? You skipped TDD. Start over.
 
@@ -452,12 +473,15 @@ test('renders sidebar', () => {
   expect(screen.getByTestId('sidebar-mock')).toBeInTheDocument();
 });
 
-// ✅ GOOD: If sidebar must be mocked, assert on Page's behavior
-test('page passes user data to sidebar', () => {
+// ✅ GOOD: If the sidebar must be replaced, replace it with a tiny fake and
+// assert on what the user sees — never on the replacement's call arguments
+vi.mock('./Sidebar', () => ({
+  Sidebar: ({ user }: { user: User }) => <aside aria-label="Sidebar">{user.name}</aside>,
+}));
+
+test('page shows the signed-in user in the sidebar', () => {
   render(<Page user={testUser} />);
-  expect(Sidebar).toHaveBeenCalledWith(
-    expect.objectContaining({ user: testUser }), expect.anything()
-  );
+  expect(screen.getByRole('complementary', { name: 'Sidebar' })).toHaveTextContent(testUser.name);
 });
 ```
 

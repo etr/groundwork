@@ -18,38 +18,16 @@ Git worktrees provide complete isolation for task work:
 
 ## Workflow
 
-### Step 1: Determine Worktree Directory
+### Step 1: Know Where the Worktree Lives
 
-Find or create the worktree directory using this priority order:
+The directory is fixed, not chosen: the shared worktree-identity helper (Step 3) places every task worktree under `.worktrees/` at the repository root — `<repo>/.worktrees/TASK-NNN` in a single-project repo, `<repo>/.worktrees/<project>-TASK-NNN` in a monorepo — so interactive sessions and runner runs share one location and can never silently collide. A `worktree-dir:` directive in `CLAUDE.md`, a README convention, or a preferred alternative such as `worktrees/` does not move it; Step 3 uses the helper's `path` verbatim.
 
-1. **Check for existing directory:**
-   ```bash
-   # Preferred (hidden, less clutter)
-   ls -d .worktrees 2>/dev/null
-   # Alternative
-   ls -d worktrees 2>/dev/null
-   ```
-
-2. **Check CLAUDE.md for directive:**
-   ```markdown
-   worktree-dir: path/to/worktrees
-   ```
-
-3. **Check README.md for configuration:**
-   Look for worktree or development setup instructions.
-
-4. **Ask user if not found:**
-   > "Where should I create worktrees for isolated task work?
-   > 1. `.worktrees/` (Recommended - hidden, less clutter)
-   > 2. `worktrees/`
-   > 3. Custom location"
-
-### Step 2: Verify Directory is Gitignored
+### Step 2: Verify the Directory is Gitignored
 
 **Critical:** Ensure the worktree directory won't be committed.
 
 ```bash
-git check-ignore -q <worktree-dir>
+git check-ignore -q .worktrees
 ```
 
 **If not ignored:**
@@ -57,7 +35,7 @@ git check-ignore -q <worktree-dir>
 - Report the change
 
 ```bash
-echo "<worktree-dir>/" >> .gitignore
+echo ".worktrees/" >> .gitignore
 ```
 
 ### Step 3: Create Branch and Worktree

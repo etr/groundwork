@@ -4,7 +4,7 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 
 ## Project Overview
 
-Groundwork is a Claude Code plugin that provides a skills library for structured development workflows. It contains 40 skills spanning the full lifecycle — discovery, domain modeling, architecture, planning, TDD, debugging, validation, and shipping. Every capability is a skill; there is no separate commands layer (skills are both user-invocable via `/groundwork:<name>` and, where appropriate, model-invocable).
+Groundwork is a Claude Code plugin that provides a skills library for structured development workflows. It contains 44 skills spanning the full lifecycle — discovery, domain modeling, architecture, planning, TDD, debugging, validation, shipping, and upkeep. Every capability is a skill; there is no separate commands layer (skills are both user-invocable via `/groundwork:<name>` and, where appropriate, model-invocable).
 
 The `using-groundwork` skill is the **lifecycle router**: it maps work → skill across every phase and is the only way the model can surface user-only leaves (which are invisible to it at call time). When authoring or editing a skill, see `docs/developing-skills.md` (contributor guide: anatomy, frontmatter, tier selection, authoring discipline, progressive disclosure).
 
@@ -75,6 +75,9 @@ Skills replaced the old commands layer. Three tiers, set via frontmatter:
 2. Add YAML frontmatter with `name` and `description`; set the invocation tier (see table above)
 3. Write the skill content following existing patterns
 4. Test with `/groundwork:<skill-name>` or the Skill tool
+5. Finish it: add its row to the lifecycle map in `skills/using-groundwork/SKILL.md` (`tests/router-parity.test.js` fails until you do), its row in the README, a page under `docs/skills/`, and a changeset. `CONTRIBUTING.md` → *Making a change* has the full checklist.
+
+Before filing an issue in this repository — or on its behalf — read *Issues written with AI* in `CONTRIBUTING.md`.
 
 ### Running Tests
 
